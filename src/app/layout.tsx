@@ -22,11 +22,20 @@ export const metadata: Metadata = {
     description: "The computer, at the speed of human thought.",
     type: "website",
     url: "https://getdawn.io",
+    images: [
+      {
+        url: "https://getdawn.io/assets/dawn-logo.png",
+        width: 512,
+        height: 512,
+        alt: "dawn logo",
+      },
+    ],
   },
   twitter: {
-    card: "summary_large_image",
+    card: "summary",
     title: "dawn — personal computing, reimagined",
     description: "The computer, at the speed of human thought.",
+    images: ["https://getdawn.io/assets/dawn-logo.png"],
   },
 };
 
