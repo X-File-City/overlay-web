@@ -6,6 +6,7 @@ import { useRef } from "react";
 import { VoiceDemo } from "@/components/VoiceDemo";
 import { OverlayDemo } from "@/components/OverlayDemo";
 import { AllInOnePlace } from "@/components/AllInOnePlace";
+import { useLatestRelease } from "@/hooks/useLatestRelease";
 
 export default function Home() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -59,6 +60,8 @@ export default function Home() {
   const downloadOpacity = useTransform(scrollYProgress, [0.81, 0.88, 1.0], [0, 1, 1]);
   const downloadPointer = useTransform(scrollYProgress, (v) => v >= 0.81 ? "auto" : "none");
 
+  const { downloadUrl } = useLatestRelease();
+
   return (
     <div ref={containerRef} className="bg-[#fafafa] text-[#0a0a0a]">
       {/* Liquid Glass Background */}
@@ -96,7 +99,7 @@ export default function Home() {
 
         {/* Download Button */}
         <a
-          href="https://github.com/DevelopedByDev/dawn-landing/releases/download/v1.0.0/dawn-1.0.0.dmg"
+          href={downloadUrl}
           className="inline-flex items-center gap-3 px-6 py-3 bg-[#0a0a0a] text-white rounded-full text-sm font-medium hover:bg-[#27272a] transition-all duration-300"
         >
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
@@ -247,7 +250,7 @@ export default function Home() {
             begin
           </h2>
           <a
-            href="https://github.com/DevelopedByDev/dawn-landing/releases/download/v1.0.0/dawn-1.0.0.dmg"
+            href={downloadUrl}
             className="group inline-flex items-center gap-3 px-8 py-4 bg-[#0a0a0a] text-white rounded-full text-sm font-medium hover:bg-[#27272a] transition-all duration-300"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
