@@ -8,7 +8,12 @@ const WAVEFORM_BAR_WIDTH = 3;
 const WAVEFORM_BAR_MAX_HEIGHT = 14;
 const WAVEFORM_GAP = 2;
 
-export function VoiceDemo() {
+interface VoiceDemoProps {
+  scrollProgress?: number; // 0-1 progress within the voice section
+  isActive?: boolean;
+}
+
+export function VoiceDemo({ scrollProgress = 0, isActive = false }: VoiceDemoProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputText, setInputText] = useState("");
@@ -17,8 +22,30 @@ export function VoiceDemo() {
   const [audioLevels, setAudioLevels] = useState<number[]>(
     Array(WAVEFORM_BAR_COUNT).fill(0)
   );
+  const [hasUserActivated, setHasUserActivated] = useState(false);
   const recordingStartTime = useRef<number>(0);
   const animationRef = useRef<number | null>(null);
+
+  // Scroll-triggered text fill when user hasn't activated
+  const scrollText = "omw be there in 5";
+  const scrollFillStart = 0.10; // Start text fill early in section
+  const scrollFillEnd = 0.50; // End text fill
+  const scrollFillRange = scrollFillEnd - scrollFillStart;
+  
+  // Calculate how much text to show based on scroll progress
+  const textFillProgress = !hasUserActivated && isActive && scrollProgress > scrollFillStart
+    ? Math.min(1, (scrollProgress - scrollFillStart) / scrollFillRange)
+    : 0;
+  const scrollFilledText = textFillProgress > 0
+    ? scrollText.slice(0, Math.floor(textFillProgress * scrollText.length))
+    : "";
+  
+  // Text is complete - trigger "send" after 0.60 progress (sets sentMessage)
+  const isTextComplete = scrollFilledText.length === scrollText.length;
+  const shouldTriggerSend = !hasUserActivated && isActive && scrollProgress > 0.60 && isTextComplete;
+  
+  // Show waveform animation while scroll-filling
+  const isScrollFilling = !hasUserActivated && isActive && scrollProgress > scrollFillStart && scrollProgress < scrollFillEnd;
 
   // Cursor blink effect
   useEffect(() => {
@@ -31,9 +58,9 @@ export function VoiceDemo() {
     setShowCursor(true);
   }, [isRecording, isProcessing, inputText]);
 
-  // Simulate audio levels during recording
+  // Simulate audio levels during recording or scroll-filling
   useEffect(() => {
-    if (isRecording) {
+    if (isRecording || isScrollFilling) {
       let lastUpdate = 0;
       const updateLevels = (timestamp: number) => {
         // Throttle to ~8fps for slower, smoother oscillation
@@ -61,7 +88,14 @@ export function VoiceDemo() {
     } else {
       setAudioLevels(Array(WAVEFORM_BAR_COUNT).fill(0));
     }
-  }, [isRecording]);
+  }, [isRecording, isScrollFilling]);
+
+  // Trigger send when scroll reaches threshold
+  useEffect(() => {
+    if (shouldTriggerSend && !sentMessage) {
+      setSentMessage(scrollText);
+    }
+  }, [shouldTriggerSend, sentMessage, scrollText]);
 
   // Handle key events
   const handleKeyDown = useCallback(
@@ -69,6 +103,7 @@ export function VoiceDemo() {
       // Check for Option/Alt + Space
       if (e.altKey && e.code === "Space" && !isRecording && !isProcessing) {
         e.preventDefault();
+        setHasUserActivated(true);
         setIsRecording(true);
         recordingStartTime.current = Date.now();
       }
@@ -183,23 +218,26 @@ export function VoiceDemo() {
 
             {/* Text Input */}
             <div className="flex-1 relative bg-transparent border-2 border-[#3a3a3c] rounded-full px-5 py-3.5 flex items-center min-h-[52px]">
-              {!inputText && !isRecording && !isProcessing && (
+              {!inputText && !isRecording && !isProcessing && !scrollFilledText && (
                 <span className="text-[17px] text-[#8e8e93] absolute left-[28px]">iMessage</span>
               )}
               <span className="text-[17px] text-white flex items-center">
-                {!isRecording && !isProcessing && inputText === "" && (
+                {!isRecording && !isProcessing && inputText === "" && !scrollFilledText && (
                   <span
                     className={`inline-block w-[2px] h-[22px] bg-[#007aff] transition-opacity ${
                       showCursor ? "opacity-100" : "opacity-0"
                     }`}
                   />
                 )}
-                {inputText}
+                {inputText || scrollFilledText}
+                {scrollFilledText && !inputText && !isTextComplete && (
+                  <span className="inline-block w-[2px] h-[22px] bg-[#007aff] animate-pulse" />
+                )}
               </span>
               
-              {/* Waveform Overlay */}
+              {/* Waveform Overlay - show during recording, processing, OR scroll filling */}
               <AnimatePresence>
-                {(isRecording || isProcessing) && (
+                {(isRecording || isProcessing || isScrollFilling) && (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -312,6 +350,7 @@ export function VoiceDemo() {
                   to{" "}
                   <button
                     onClick={() => {
+                      setHasUserActivated(true);
                       setIsRecording(true);
                       recordingStartTime.current = Date.now();
                       // Auto-release after 1.5s for demo

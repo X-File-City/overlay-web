@@ -69,7 +69,12 @@ const PlayIcon = () => (
   </svg>
 );
 
-export function AllInOnePlace() {
+interface AllInOnePlaceProps {
+  scrollProgress?: number; // 0-1 progress within this section for sequential overlay reveal
+  isActive?: boolean;
+}
+
+export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOnePlaceProps) {
   const [activeOverlays, setActiveOverlays] = useState<Set<OverlayType>>(new Set());
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -77,10 +82,67 @@ export function AllInOnePlace() {
   const [isHovered, setIsHovered] = useState(false);
   const [showButtons, setShowButtons] = useState(false);
   const [showAllOverlays, setShowAllOverlays] = useState(false);
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [audioLevels, setAudioLevels] = useState<number[]>(
     Array(WAVEFORM_BAR_COUNT).fill(0)
   );
   const animationRef = useRef<number | null>(null);
+  const prevProgressRef = useRef(scrollProgress);
+
+  // Scroll-triggered sequential overlay reveal (clockwise: transcription -> notes -> chat -> browser)
+  // On scroll up, hide in anticlockwise order (browser -> chat -> notes -> transcription)
+  useEffect(() => {
+    if (!isActive || hasUserInteracted) return;
+
+    const isScrollingDown = scrollProgress > prevProgressRef.current;
+    const isScrollingUp = scrollProgress < prevProgressRef.current;
+    prevProgressRef.current = scrollProgress;
+
+    // Sequential reveal on scroll down
+    // Transcription at 15%, Notes at 30%, Chat at 45%, Browser at 60%
+    if (isScrollingDown) {
+      if (scrollProgress > 0.15 && !showTranscription) {
+        setTimeout(() => setShowTranscription(true), 0);
+      }
+      if (scrollProgress > 0.30 && !activeOverlays.has("note")) {
+        setTimeout(() => setActiveOverlays(prev => new Set(prev).add("note")), 0);
+      }
+      if (scrollProgress > 0.45 && !activeOverlays.has("chat")) {
+        setTimeout(() => setActiveOverlays(prev => new Set(prev).add("chat")), 0);
+      }
+      if (scrollProgress > 0.60 && !activeOverlays.has("browser")) {
+        setTimeout(() => setActiveOverlays(prev => new Set(prev).add("browser")), 0);
+      }
+    }
+    
+    // Sequential hide on scroll up (anticlockwise: browser -> chat -> notes -> transcription)
+    if (isScrollingUp) {
+      if (scrollProgress < 0.55 && activeOverlays.has("browser")) {
+        setTimeout(() => setActiveOverlays(prev => {
+          const next = new Set(prev);
+          next.delete("browser");
+          return next;
+        }), 0);
+      }
+      if (scrollProgress < 0.40 && activeOverlays.has("chat")) {
+        setTimeout(() => setActiveOverlays(prev => {
+          const next = new Set(prev);
+          next.delete("chat");
+          return next;
+        }), 0);
+      }
+      if (scrollProgress < 0.25 && activeOverlays.has("note")) {
+        setTimeout(() => setActiveOverlays(prev => {
+          const next = new Set(prev);
+          next.delete("note");
+          return next;
+        }), 0);
+      }
+      if (scrollProgress < 0.10 && showTranscription) {
+        setTimeout(() => setShowTranscription(false), 0);
+      }
+    }
+  }, [scrollProgress, isActive, hasUserInteracted, showTranscription, activeOverlays]);
 
   // Simulate audio levels during recording
   useEffect(() => {
@@ -111,6 +173,7 @@ export function AllInOnePlace() {
   }, [isRecording, isPaused]);
 
   const toggleOverlay = (type: OverlayType) => {
+    setHasUserInteracted(true);
     if (type === "transcription") {
       if (isRecording) {
         return;
@@ -155,6 +218,7 @@ export function AllInOnePlace() {
   };
 
   const toggleAllOverlays = () => {
+    setHasUserInteracted(true);
     if (showAllOverlays) {
       setActiveOverlays(new Set());
       setShowAllOverlays(false);
@@ -167,19 +231,25 @@ export function AllInOnePlace() {
     }
   };
 
-  // Get dimensions based on state
+  // Count active overlays for determining if pill should show buttons
+  const activeOverlayCount = activeOverlays.size + (showTranscription ? 1 : 0);
+  const hasScrollTriggeredOverlays = !hasUserInteracted && isActive && activeOverlayCount > 0;
+  
+  // Get dimensions based on state - expand to show buttons when overlays appear
   const getDimensions = () => {
     if (isRecording) {
       return { width: EXPANDED_WIDTH, height: EXPANDED_HEIGHT };
     }
-    if (isHovered) {
+    if (isHovered || hasScrollTriggeredOverlays) {
       return { width: EXPANDED_WIDTH, height: EXPANDED_HEIGHT };
     }
     return { width: IDLE_WIDTH, height: IDLE_HEIGHT };
   };
 
   const { width, height } = getDimensions();
-  const isExpanded = isHovered || isRecording;
+  const isExpanded = isHovered || isRecording || hasScrollTriggeredOverlays;
+  // Show buttons when expanded (either by hover or scroll-triggered overlays)
+  const shouldShowButtons = showButtons || hasScrollTriggeredOverlays;
 
   return (
     <>
@@ -272,18 +342,16 @@ export function AllInOnePlace() {
         )}
       </AnimatePresence>
 
-      <div className="relative w-full max-w-4xl mx-auto">
-        {/* Main Content */}
-        <div className="flex flex-col items-center">
-          {/* "all in" text */}
-          <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a] mb-6">
-            all in
-          </p>
+      <div className="relative flex flex-col items-center justify-center">
+        {/* "all in" text - positioned above pill */}
+        <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a] mb-6">
+          all in
+        </p>
 
-          {/* Bean Control Panel - matching OverlayWindow */}
-          <div
-            className="relative z-30"
-            style={{ width: EXPANDED_WIDTH + 32, height: EXPANDED_HEIGHT + 32 }}
+        {/* Bean Control Panel - at dead center */}
+        <div
+          className="relative z-30"
+          style={{ width: EXPANDED_WIDTH + 32, height: EXPANDED_HEIGHT + 32 }}
             onMouseEnter={() => {
               if (!isRecording) {
                 setIsHovered(true);
@@ -358,17 +426,32 @@ export function AllInOnePlace() {
                       </span>
                     </button>
                   </>
-                ) : isExpanded && showButtons ? (
+                ) : isExpanded && shouldShowButtons ? (
                   <>
+                    <button
+                      onClick={() => toggleOverlay("transcription")}
+                      className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
+                      style={{
+                        background: showTranscription ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
+                        border: showTranscription ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
+                        animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
+                        animationDelay: hasScrollTriggeredOverlays ? "0ms" : "180ms",
+                        opacity: hasScrollTriggeredOverlays ? 1 : 0,
+                      }}
+                    >
+                      <span style={{ color: showTranscription ? "#fff" : "rgba(255,255,255,0.7)" }}>
+                        <MicIcon />
+                      </span>
+                    </button>
                     <button
                       onClick={() => toggleOverlay("note")}
                       className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
                       style={{
                         background: activeOverlays.has("note") ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
                         border: activeOverlays.has("note") ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
-                        animation: "buttonFadeIn 0.12s ease-out forwards",
-                        animationDelay: "180ms",
-                        opacity: 0,
+                        animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
+                        animationDelay: hasScrollTriggeredOverlays ? "0ms" : "200ms",
+                        opacity: hasScrollTriggeredOverlays ? 1 : 0,
                       }}
                     >
                       <span style={{ color: activeOverlays.has("note") ? "#fff" : "rgba(255,255,255,0.7)" }}>
@@ -376,27 +459,14 @@ export function AllInOnePlace() {
                       </span>
                     </button>
                     <button
-                      onClick={() => toggleOverlay("transcription")}
-                      className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
-                      style={{
-                        background: "rgba(255, 255, 255, 0.08)",
-                        border: "1px solid rgba(255, 255, 255, 0.12)",
-                        animation: "buttonFadeIn 0.12s ease-out forwards",
-                        animationDelay: "200ms",
-                        opacity: 0,
-                      }}
-                    >
-                      <span className="text-white/70"><MicIcon /></span>
-                    </button>
-                    <button
                       onClick={() => toggleOverlay("chat")}
                       className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
                       style={{
                         background: activeOverlays.has("chat") ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
                         border: activeOverlays.has("chat") ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
-                        animation: "buttonFadeIn 0.12s ease-out forwards",
-                        animationDelay: "220ms",
-                        opacity: 0,
+                        animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
+                        animationDelay: hasScrollTriggeredOverlays ? "0ms" : "220ms",
+                        opacity: hasScrollTriggeredOverlays ? 1 : 0,
                       }}
                     >
                       <span style={{ color: activeOverlays.has("chat") ? "#fff" : "rgba(255,255,255,0.7)" }}>
@@ -409,9 +479,9 @@ export function AllInOnePlace() {
                       style={{
                         background: activeOverlays.has("browser") ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
                         border: activeOverlays.has("browser") ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
-                        animation: "buttonFadeIn 0.12s ease-out forwards",
-                        animationDelay: "240ms",
-                        opacity: 0,
+                        animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
+                        animationDelay: hasScrollTriggeredOverlays ? "0ms" : "240ms",
+                        opacity: hasScrollTriggeredOverlays ? 1 : 0,
                       }}
                     >
                       <span style={{ color: activeOverlays.has("browser") ? "#fff" : "rgba(255,255,255,0.7)" }}>
@@ -424,22 +494,21 @@ export function AllInOnePlace() {
             </div>
           </div>
 
-          {/* "one place" text */}
-          <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a] mt-6">
-            one place
-          </p>
+        {/* "one place" text - positioned below pill */}
+        <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a] mt-6">
+          one place
+        </p>
 
-          {/* Subtitle */}
-          <p className="text-sm text-[#71717a] mt-4">
-            hover over and press any of the buttons to{" "}
-            <button
-              onClick={toggleAllOverlays}
-              className="underline hover:text-[#0a0a0a] transition-colors"
-            >
-              {showAllOverlays ? "hide overlays" : "open overlays"}
-            </button>
-          </p>
-        </div>
+        {/* Subtitle */}
+        <p className="text-sm text-[#71717a] mt-4">
+          hover over and press any of the buttons to{" "}
+          <button
+            onClick={toggleAllOverlays}
+            className="underline hover:text-[#0a0a0a] transition-colors"
+          >
+            {showAllOverlays ? "hide overlays" : "open overlays"}
+          </button>
+        </p>
       </div>
 
       {/* CSS for animations */}

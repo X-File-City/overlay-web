@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 
@@ -10,7 +10,16 @@ interface OverlayDemoProps {
   shortcutDisplay: string;
   screenImage: string;
   overlayImage: string;
+  isActive?: boolean;
+  sectionProgress?: number; // 0-1 progress within this section
+  hideAnnotation?: boolean; // Hide annotation (when shown in page.tsx instead)
 }
+
+const overlayAnnotations: Record<string, string> = {
+  notes: "capture ideas instantly without leaving your current task",
+  chat: "get ai help anywhere, no app switching needed",
+  browser: "quick search without disrupting your workflow",
+};
 
 export function OverlayDemo({
   type,
@@ -18,8 +27,64 @@ export function OverlayDemo({
   shortcutDisplay,
   screenImage,
   overlayImage,
+  isActive = false,
+  sectionProgress = 0,
+  hideAnnotation = false,
 }: OverlayDemoProps) {
   const [showOverlay, setShowOverlay] = useState(false);
+  const [showAnnotation, setShowAnnotation] = useState(false);
+  const [hasManuallyToggled, setHasManuallyToggled] = useState(false);
+  const prevProgressRef = useRef(sectionProgress);
+  const hasOpenedRef = useRef(false);
+
+  // Auto-open overlay when scrolled enough within section, hide when scrolling back up
+  useEffect(() => {
+    const isScrollingDown = sectionProgress > prevProgressRef.current;
+    const isScrollingUp = sectionProgress < prevProgressRef.current;
+    prevProgressRef.current = sectionProgress;
+
+    if (!isActive) {
+      // Reset when leaving section - use timeout to avoid sync setState
+      if (!hasManuallyToggled && showOverlay) {
+        const timer = setTimeout(() => setShowOverlay(false), 0);
+        hasOpenedRef.current = false;
+        return () => clearTimeout(timer);
+      }
+      hasOpenedRef.current = false;
+      return;
+    }
+
+    if (hasManuallyToggled) return;
+
+    // Open overlay after 40% progress within the section (gives time to see the screen first)
+    if (isScrollingDown && sectionProgress > 0.4 && !hasOpenedRef.current) {
+      const timer = setTimeout(() => setShowOverlay(true), 0);
+      hasOpenedRef.current = true;
+      return () => clearTimeout(timer);
+    }
+    
+    // Hide overlay when scrolling back up past 30%
+    if (isScrollingUp && sectionProgress < 0.3 && hasOpenedRef.current) {
+      const timer = setTimeout(() => {
+        setShowOverlay(false);
+        setShowAnnotation(false);
+      }, 0);
+      hasOpenedRef.current = false;
+      return () => clearTimeout(timer);
+    }
+    
+    // Show annotation after overlay is shown and more scrolling (70% progress)
+    if (isScrollingDown && sectionProgress > 0.7 && hasOpenedRef.current && !showAnnotation) {
+      const timer = setTimeout(() => setShowAnnotation(true), 0);
+      return () => clearTimeout(timer);
+    }
+    
+    // Hide annotation when scrolling back up past 60%
+    if (isScrollingUp && sectionProgress < 0.6 && showAnnotation) {
+      const timer = setTimeout(() => setShowAnnotation(false), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [isActive, sectionProgress, hasManuallyToggled, showOverlay, showAnnotation]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -59,7 +124,25 @@ export function OverlayDemo({
   };
 
   const toggleOverlay = () => {
+    setHasManuallyToggled(true);
     setShowOverlay((prev) => !prev);
+  };
+
+  // Get annotation positioning based on type (sides of overlay)
+  const getAnnotationClasses = () => {
+    switch (type) {
+      case "notes":
+        // Right side of the notes overlay
+        return "absolute top-1/3 -right-4 translate-x-full";
+      case "chat":
+        // Left side of the chat overlay  
+        return "absolute top-1/3 -left-4 -translate-x-full";
+      case "browser":
+        // Above the browser overlay (at top of overlay, not below screen title)
+        return "absolute top-0 right-[30%] -translate-y-full -mt-3";
+      default:
+        return "absolute top-1/3 -right-4 translate-x-full";
+    }
   };
 
   return (
@@ -97,6 +180,23 @@ export function OverlayDemo({
                 height={600}
                 className="w-full h-auto object-cover"
               />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Annotation - appears after more scrolling (unless hidden) */}
+        <AnimatePresence>
+          {showAnnotation && !hideAnnotation && (
+            <motion.div
+              initial={{ opacity: 0, y: type === "browser" ? -10 : 0, x: type === "notes" ? 10 : type === "chat" ? -10 : 0 }}
+              animate={{ opacity: 1, x: 0, y: 0 }}
+              exit={{ opacity: 0, y: type === "browser" ? -10 : 0, x: type === "notes" ? 10 : type === "chat" ? -10 : 0 }}
+              transition={{ duration: 0.3 }}
+              className={getAnnotationClasses()}
+            >
+              <p className={`text-sm text-[#0a0a0a] font-medium leading-relaxed max-w-[200px] ${type === "browser" ? "text-center" : type === "notes" ? "text-left" : "text-right"}`}>
+                {overlayAnnotations[type]}
+              </p>
             </motion.div>
           )}
         </AnimatePresence>

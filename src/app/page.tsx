@@ -1,8 +1,8 @@
 "use client";
 
-import { motion, useScroll, useTransform } from "framer-motion";
+import { motion, useScroll, useTransform, useMotionValueEvent } from "framer-motion";
+import { useState, useRef } from "react";
 import Image from "next/image";
-import { useRef } from "react";
 import { VoiceDemo } from "@/components/VoiceDemo";
 import { OverlayDemo } from "@/components/OverlayDemo";
 import { AllInOnePlace } from "@/components/AllInOnePlace";
@@ -15,50 +15,104 @@ export default function Home() {
     offset: ["start start", "end end"],
   });
 
-  // Total sections: hero, philosophy, voice, notes, chat, browser, allInOnePlace, flow, welcome, download = 10 content sections
-  // Each section gets ~0.09 of scroll progress with NO overlap between sections
+  // Track section progress for scroll-triggered animations
+  const [voiceProgress, setVoiceProgress] = useState(0);
+  const [notesProgress, setNotesProgress] = useState(0);
+  const [chatProgress, setChatProgress] = useState(0);
+  const [browserProgress, setBrowserProgress] = useState(0);
+  const [allInOnePlaceProgress, setAllInOnePlaceProgress] = useState(0);
+
+  // Track which sections are active
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [notesActive, setNotesActive] = useState(false);
+  const [chatActive, setChatActive] = useState(false);
+  const [browserActive, setBrowserActive] = useState(false);
+  const [allInOnePlaceActive, setAllInOnePlaceActive] = useState(false);
+
+  useMotionValueEvent(scrollYProgress, "change", (latest) => {
+    // Updated section ranges
+    
+    // Voice section: 0.20 - 0.30
+    setVoiceActive(latest >= 0.20 && latest < 0.30);
+    setVoiceProgress(latest >= 0.20 && latest < 0.30 ? (latest - 0.20) / 0.10 : 0);
+    
+    // Notes section: 0.30 - 0.40
+    setNotesActive(latest >= 0.30 && latest < 0.40);
+    setNotesProgress(latest >= 0.30 && latest < 0.40 ? (latest - 0.30) / 0.10 : 0);
+    
+    // Chat section: 0.40 - 0.50
+    setChatActive(latest >= 0.40 && latest < 0.50);
+    setChatProgress(latest >= 0.40 && latest < 0.50 ? (latest - 0.40) / 0.10 : 0);
+    
+    // Browser section: 0.50 - 0.60
+    setBrowserActive(latest >= 0.50 && latest < 0.60);
+    setBrowserProgress(latest >= 0.50 && latest < 0.60 ? (latest - 0.50) / 0.10 : 0);
+    
+    // AllInOnePlace section: 0.68 - 0.80
+    setAllInOnePlaceActive(latest >= 0.68 && latest < 0.80);
+    setAllInOnePlaceProgress(latest >= 0.68 && latest < 0.80 ? (latest - 0.68) / 0.12 : 0);
+  });
+
+  // Total sections: hero, philosophy, voice, notes, chat, browser, combo, allInOnePlace, flow, welcome, download = 11 sections
+  // Each section gets ~0.08 of scroll progress
   
-  // Hero section (0 - 0.09) - starts visible, fades out
-  const logoScale = useTransform(scrollYProgress, [0, 0.045], [1, 0.6]);
-  const logoOpacity = useTransform(scrollYProgress, [0.045, 0.09], [1, 0]);
-  const heroOpacity = useTransform(scrollYProgress, [0.045, 0.09], [1, 0]);
-  const heroPointer = useTransform(scrollYProgress, (v) => v < 0.09 ? "auto" : "none");
+  // Hero section (0 - 0.08) - starts visible, fades out
+  const logoScale = useTransform(scrollYProgress, [0, 0.04], [1, 0.6]);
+  const logoOpacity = useTransform(scrollYProgress, [0.04, 0.08], [1, 0]);
+  const heroOpacity = useTransform(scrollYProgress, [0.04, 0.08], [1, 0]);
+  const heroPointer = useTransform(scrollYProgress, (v) => v < 0.08 ? "auto" : "none");
   
-  // Philosophy section (0.09 - 0.18)
-  const philosophyOpacity = useTransform(scrollYProgress, [0.09, 0.11, 0.16, 0.18], [0, 1, 1, 0]);
-  const philosophyPointer = useTransform(scrollYProgress, (v) => v >= 0.09 && v < 0.18 ? "auto" : "none");
+  // Philosophy section (0.08 - 0.20) - extended for more pause on 'overlays'
+  const philosophyOpacity = useTransform(scrollYProgress, [0.08, 0.10, 0.18, 0.20], [0, 1, 1, 0]);
+  const philosophyPointer = useTransform(scrollYProgress, (v) => v >= 0.08 && v < 0.20 ? "auto" : "none");
+  // "using overlays" text fades in
+  const usingOverlaysOpacity = useTransform(scrollYProgress, [0.10, 0.11], [0, 1]);
+  // Fade out "move execution..." and "using" text, leave only "overlays"
+  const philosophyMainTextOpacity = useTransform(scrollYProgress, [0.12, 0.14], [1, 0]);
+  // "overlays" stays visible longer then fades
+  const overlaysOnlyOpacity = useTransform(scrollYProgress, [0.16, 0.18], [1, 0]);
   
-  // Voice section (0.18 - 0.27)
-  const voiceOpacity = useTransform(scrollYProgress, [0.18, 0.20, 0.25, 0.27], [0, 1, 1, 0]);
-  const voicePointer = useTransform(scrollYProgress, (v) => v >= 0.18 && v < 0.27 ? "auto" : "none");
+  // Voice section (0.20 - 0.30) - extended for slower scroll, delayed fade out
+  const voiceOpacity = useTransform(scrollYProgress, [0.20, 0.22, 0.28, 0.30], [0, 1, 1, 0]);
+  const voicePointer = useTransform(scrollYProgress, (v) => v >= 0.20 && v < 0.30 ? "auto" : "none");
   
-  // Notes section (0.27 - 0.36)
-  const notesOpacity = useTransform(scrollYProgress, [0.27, 0.29, 0.34, 0.36], [0, 1, 1, 0]);
-  const notesPointer = useTransform(scrollYProgress, (v) => v >= 0.27 && v < 0.36 ? "auto" : "none");
+  // Notes section (0.30 - 0.40) - more pause after annotation
+  const notesOpacity = useTransform(scrollYProgress, [0.30, 0.32, 0.38, 0.40], [0, 1, 1, 0]);
+  const notesPointer = useTransform(scrollYProgress, (v) => v >= 0.30 && v < 0.40 ? "auto" : "none");
   
-  // Chat section (0.36 - 0.45)
-  const chatOpacity = useTransform(scrollYProgress, [0.36, 0.38, 0.43, 0.45], [0, 1, 1, 0]);
-  const chatPointer = useTransform(scrollYProgress, (v) => v >= 0.36 && v < 0.45 ? "auto" : "none");
+  // Chat section (0.40 - 0.50) - more pause after annotation
+  const chatOpacity = useTransform(scrollYProgress, [0.40, 0.42, 0.48, 0.50], [0, 1, 1, 0]);
+  const chatPointer = useTransform(scrollYProgress, (v) => v >= 0.40 && v < 0.50 ? "auto" : "none");
   
-  // Browser section (0.45 - 0.54)
-  const browserOpacity = useTransform(scrollYProgress, [0.45, 0.47, 0.52, 0.54], [0, 1, 1, 0]);
-  const browserPointer = useTransform(scrollYProgress, (v) => v >= 0.45 && v < 0.54 ? "auto" : "none");
+  // Browser section (0.50 - 0.60) - more pause after annotation
+  const browserOpacity = useTransform(scrollYProgress, [0.50, 0.52, 0.58, 0.60], [0, 1, 1, 0]);
+  const browserPointer = useTransform(scrollYProgress, (v) => v >= 0.50 && v < 0.60 ? "auto" : "none");
   
-  // All In One Place section (0.54 - 0.63)
-  const allInOnePlaceOpacity = useTransform(scrollYProgress, [0.54, 0.56, 0.61, 0.63], [0, 1, 1, 0]);
-  const allInOnePlacePointer = useTransform(scrollYProgress, (v) => v >= 0.54 && v < 0.63 ? "auto" : "none");
+  // Combo section (0.60 - 0.68) - "voice + notes + chat + browser" text that collapses into pill
+  const comboOpacity = useTransform(scrollYProgress, [0.60, 0.62, 0.66, 0.68], [0, 1, 1, 0]);
+  const comboPointer = useTransform(scrollYProgress, (v) => v >= 0.60 && v < 0.68 ? "auto" : "none");
+  // Text scale/collapse animation - text shrinks and moves to center
+  const comboTextScale = useTransform(scrollYProgress, [0.62, 0.65], [1, 0]);
+  const comboTextOpacity = useTransform(scrollYProgress, [0.62, 0.64], [1, 0]);
+  // Pill appears as text disappears, then fades out
+  const comboPillOpacity = useTransform(scrollYProgress, [0.64, 0.65, 0.66, 0.68], [0, 1, 1, 0]);
+  const comboPillScale = useTransform(scrollYProgress, [0.64, 0.65], [0.5, 1]);
   
-  // Flow section (0.63 - 0.72)
-  const flowOpacity = useTransform(scrollYProgress, [0.63, 0.65, 0.70, 0.72], [0, 1, 1, 0]);
-  const flowPointer = useTransform(scrollYProgress, (v) => v >= 0.63 && v < 0.72 ? "auto" : "none");
+  // All In One Place section (0.68 - 0.80) - extended for overlay reveals
+  const allInOnePlaceOpacity = useTransform(scrollYProgress, [0.68, 0.70, 0.78, 0.80], [0, 1, 1, 0]);
+  const allInOnePlacePointer = useTransform(scrollYProgress, (v) => v >= 0.68 && v < 0.80 ? "auto" : "none");
   
-  // Welcome section (0.72 - 0.81)
-  const welcomeOpacity = useTransform(scrollYProgress, [0.72, 0.74, 0.79, 0.81], [0, 1, 1, 0]);
-  const welcomePointer = useTransform(scrollYProgress, (v) => v >= 0.72 && v < 0.81 ? "auto" : "none");
+  // Flow section (0.80 - 0.86)
+  const flowOpacity = useTransform(scrollYProgress, [0.80, 0.82, 0.84, 0.86], [0, 1, 1, 0]);
+  const flowPointer = useTransform(scrollYProgress, (v) => v >= 0.80 && v < 0.86 ? "auto" : "none");
   
-  // Download section (0.81 - 1.0) - stays visible at end
-  const downloadOpacity = useTransform(scrollYProgress, [0.81, 0.88, 1.0], [0, 1, 1]);
-  const downloadPointer = useTransform(scrollYProgress, (v) => v >= 0.81 ? "auto" : "none");
+  // Welcome section (0.86 - 0.92)
+  const welcomeOpacity = useTransform(scrollYProgress, [0.86, 0.88, 0.90, 0.92], [0, 1, 1, 0]);
+  const welcomePointer = useTransform(scrollYProgress, (v) => v >= 0.86 && v < 0.92 ? "auto" : "none");
+  
+  // Download section (0.92 - 1.0) - stays visible at end
+  const downloadOpacity = useTransform(scrollYProgress, [0.92, 0.96, 1.0], [0, 1, 1]);
+  const downloadPointer = useTransform(scrollYProgress, (v) => v >= 0.92 ? "auto" : "none");
 
   const { downloadUrl } = useLatestRelease();
 
@@ -107,6 +161,16 @@ export default function Home() {
           </svg>
           download for mac
         </a>
+
+        {/* Demo Link */}
+        <a
+          href="https://x.com/dsllwn/status/2015923879668044002"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 px-4 py-6 text-sm text-[#71717a] hover:text-[#0a0a0a] underline transition-colors duration-300"
+        >
+          demo
+        </a>
       </motion.section>
 
       {/* Spacer for scroll */}
@@ -115,14 +179,25 @@ export default function Home() {
       {/* Philosophy Section */}
       <motion.section 
         style={{ opacity: philosophyOpacity, pointerEvents: philosophyPointer }}
-        className="fixed inset-0 flex items-center justify-center px-6 z-10"
+        className="fixed inset-0 flex flex-col items-center justify-center px-6 z-10"
       >
-        <div className="max-w-3xl text-center">
-          <p className="font-serif text-4xl md:text-5xl lg:text-6xl leading-tight text-[#0a0a0a]">
+        <div className="max-w-3xl text-center -mt-16">
+          {/* Main text fades out leaving only "overlays" */}
+          <motion.p 
+            style={{ opacity: philosophyMainTextOpacity }}
+            className="font-serif text-4xl md:text-5xl lg:text-6xl leading-tight text-[#0a0a0a]"
+          >
             move execution to where{" "}<br />
             <span className="text-[#71717a]">intent</span>{" "}
-            first appears
-          </p>
+            first appears,
+          </motion.p>
+          <motion.p 
+            style={{ opacity: usingOverlaysOpacity }}
+            className="font-serif text-4xl md:text-5xl lg:text-6xl leading-tight text-[#0a0a0a]"
+          >
+            <motion.span style={{ opacity: philosophyMainTextOpacity }}>using </motion.span>
+            <motion.span style={{ opacity: overlaysOnlyOpacity }} className="text-[#71717a]">overlays</motion.span>
+          </motion.p>
         </div>
       </motion.section>
 
@@ -137,7 +212,7 @@ export default function Home() {
             <p className="text-lg md:text-xl text-[#71717a]">speak your mind</p>
           </div>
           <div className="w-full">
-            <VoiceDemo />
+            <VoiceDemo scrollProgress={voiceProgress} isActive={voiceActive} />
           </div>
         </div>
       </motion.section>
@@ -148,9 +223,19 @@ export default function Home() {
         className="fixed inset-0 flex items-center justify-center px-6 py-20 z-10"
       >
         <div className="max-w-5xl mx-auto w-full flex flex-col items-center gap-12">
-          <div className="text-center">
+          <div className="relative text-center">
             <h3 className="font-serif text-5xl md:text-6xl lg:text-7xl mb-4">notes</h3>
             <p className="text-lg md:text-xl text-[#71717a]">capture that thought</p>
+            {notesProgress > 0.5 && (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.5 }}
+                className="absolute left-full top-1/2 -translate-y-1/2 ml-8 text-sm text-[#0a0a0a]/70 font-medium whitespace-nowrap text-left"
+              >
+                capture ideas instantly without leaving your current task
+              </motion.p>
+            )}
           </div>
           <div className="w-full">
             <OverlayDemo
@@ -159,6 +244,9 @@ export default function Home() {
               shortcutDisplay="/"
               screenImage="/assets/window-screens/note-screen.png"
               overlayImage="/assets/overlays/note-overlay.png"
+              isActive={notesActive}
+              sectionProgress={notesProgress}
+              hideAnnotation={true}
             />
           </div>
         </div>
@@ -170,9 +258,19 @@ export default function Home() {
         className="fixed inset-0 flex items-center justify-center px-6 py-20 z-10"
       >
         <div className="max-w-5xl mx-auto w-full flex flex-col items-center gap-12">
-          <div className="text-center">
+          <div className="relative text-center">
             <h3 className="font-serif text-5xl md:text-6xl lg:text-7xl mb-4">chat</h3>
             <p className="text-lg md:text-xl text-[#71717a]">ask that question</p>
+            {chatProgress > 0.5 && (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.5 }}
+                className="absolute right-full top-1/2 -translate-y-1/2 mr-8 text-sm text-[#0a0a0a]/70 font-medium whitespace-nowrap text-right"
+              >
+                get ai help anywhere, no app switching needed
+              </motion.p>
+            )}
           </div>
           <div className="w-full">
             <OverlayDemo
@@ -181,6 +279,9 @@ export default function Home() {
               shortcutDisplay="."
               screenImage="/assets/window-screens/chat-screen.png"
               overlayImage="/assets/overlays/chat-overlay.png"
+              isActive={chatActive}
+              sectionProgress={chatProgress}
+              hideAnnotation={true}
             />
           </div>
         </div>
@@ -192,9 +293,19 @@ export default function Home() {
         className="fixed inset-0 flex items-center justify-center px-6 py-20 z-10"
       >
         <div className="max-w-5xl mx-auto w-full flex flex-col items-center gap-12">
-          <div className="text-center">
+          <div className="relative text-center">
             <h3 className="font-serif text-5xl md:text-6xl lg:text-7xl mb-4">browse</h3>
             <p className="text-lg md:text-xl text-[#71717a]">make that search</p>
+            {browserProgress > 0.5 && (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.5 }}
+                className="absolute left-full top-1/2 -translate-y-1/2 ml-8 text-sm text-[#0a0a0a]/70 font-medium whitespace-nowrap text-left"
+              >
+                quick search without disrupting your workflow
+              </motion.p>
+            )}
           </div>
           <div className="w-full">
             <OverlayDemo
@@ -203,8 +314,49 @@ export default function Home() {
               shortcutDisplay="\"
               screenImage="/assets/window-screens/browser-screen.png"
               overlayImage="/assets/overlays/browser-overlay.png"
+              isActive={browserActive}
+              sectionProgress={browserProgress}
+              hideAnnotation={true}
             />
           </div>
+        </div>
+      </motion.section>
+
+      {/* Combo Section - "voice + notes + chat + browser" collapsing into pill */}
+      <motion.section 
+        style={{ opacity: comboOpacity, pointerEvents: comboPointer }}
+        className="fixed inset-0 flex items-center justify-center px-6 z-10"
+      >
+        <div className="relative flex flex-col items-center justify-center" style={{ transform: "translateY(-20px)" }}>
+          {/* Text that shrinks and fades */}
+          <motion.p 
+            style={{ scale: comboTextScale, opacity: comboTextOpacity }}
+            className="font-serif text-3xl md:text-4xl lg:text-5xl text-[#0a0a0a] text-center whitespace-nowrap"
+          >
+            voice{" "}
+            <span className="text-[#71717a]">+</span>{" "}
+            notes{" "}
+            <span className="text-[#71717a]">+</span>{" "}
+            chat{" "}
+            <span className="text-[#71717a]">+</span>{" "}
+            browser
+          </motion.p>
+          
+          {/* Pill that appears */}
+          <motion.div
+            style={{ opacity: comboPillOpacity, scale: comboPillScale }}
+            className="absolute"
+          >
+            <div
+              style={{
+                width: 48,
+                height: 10,
+                borderRadius: 12,
+                background: "rgba(19, 19, 19, 0.8)",
+                border: "1px solid rgba(255, 255, 255, 0.3)",
+              }}
+            />
+          </motion.div>
         </div>
       </motion.section>
 
@@ -213,7 +365,7 @@ export default function Home() {
         style={{ opacity: allInOnePlaceOpacity, pointerEvents: allInOnePlacePointer }}
         className="fixed inset-0 flex items-center justify-center px-6 py-20 z-10"
       >
-        <AllInOnePlace />
+        <AllInOnePlace scrollProgress={allInOnePlaceProgress} isActive={allInOnePlaceActive} />
       </motion.section>
 
       {/* Without Breaking Flow Section */}
@@ -313,8 +465,8 @@ export default function Home() {
         </footer>
       </motion.section>
 
-      {/* Spacer for scroll - 10 sections * 100vh = 1000vh */}
-      <div className="h-[1000vh]" />
+      {/* Spacer for scroll - 11 sections * 100vh = 1100vh */}
+      <div className="h-[1100vh]" />
     </div>
   );
 }
