@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
+import Link from "next/link";
 
 function AuthCallbackContent() {
   const searchParams = useSearchParams();
@@ -126,12 +127,12 @@ function AuthCallbackContent() {
             </div>
             <h1 className="text-2xl font-medium mb-4">Authentication failed</h1>
             <p className="text-[#71717a] mb-6">{errorMessage}</p>
-            <a
+            <Link
               href="/"
               className="inline-block px-6 py-3 bg-white text-black rounded-full text-sm font-medium hover:bg-[#e4e4e7] transition-colors"
             >
               Return to home
-            </a>
+            </Link>
           </>
         )}
       </div>
