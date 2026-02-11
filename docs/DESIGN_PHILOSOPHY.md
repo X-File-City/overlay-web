@@ -1,8 +1,8 @@
-# Dawn Design Philosophy
+# Overlay Design Philosophy
 
 > **Core Principle**: *Move execution to where intent first appears, using overlays.*
 
-This document captures the complete design language of Dawn's landing page to ensure consistent application across all UI surfaces.
+This document captures the complete design language of Overlay's landing page to ensure consistent application across all UI surfaces.
 
 ---
 
@@ -10,7 +10,7 @@ This document captures the complete design language of Dawn's landing page to en
 
 ### The "Overlay-First" Aesthetic
 
-Dawn's design is built on the philosophy of **intentional minimalism with purposeful depth**. The interface should feel:
+Overlay's design is built on the philosophy of **intentional minimalism with purposeful depth**. The interface should feel:
 
 - **Effortless**: Every interaction feels inevitable, like it was always meant to work this way
 - **Floating**: Elements exist in layered space, with the liquid glass background creating ambient depth
@@ -295,7 +295,7 @@ animation: liquid-move 20s ease-in-out infinite;
 
 ### Logo
 
-- **File**: `dawn-logo.png`
+- **File**: `overlay-logo.png`
 - **Resolution**: 512x512px (displayed at 180x180px hero, 24x24px footer)
 - **Style**: Gradient sunrise/sunset gradient
 - **Shadow**: `drop-shadow-2xl` on hero placement
@@ -454,7 +454,7 @@ animation: liquid-move 20s ease-in-out infinite;
 
 ### Naming Conventions
 
-- Lowercase product name: `dawn`
+- Lowercase product name: `overlay`
 - Feature names: `voice`, `notes`, `chat`, `browser`
 - Concept terms: `overlays`, `flow`, `overlay-first computing`
 - Actions: `begin`, `respond`, `capture`
@@ -470,7 +470,7 @@ animation: liquid-move 20s ease-in-out infinite;
 
 ## Summary
 
-Dawn's design is a masterclass in **restrained sophistication**. The aesthetic achieves sophistication not through complexity, but through the considered application of:
+Overlay's design is a masterclass in **restrained sophistication**. The aesthetic achieves sophistication not through complexity, but through the considered application of:
 
 1. **A warm off-white canvas** (`#fafafa`)
 2. **Editorial serif typography** (Instrument Serif)

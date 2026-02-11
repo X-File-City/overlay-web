@@ -132,8 +132,8 @@ export default function Home() {
           className="mb-4"
         >
           <Image
-            src="/assets/dawn-logo.png"
-            alt="Dawn"
+            src="/assets/overlay-logo.png"
+            alt="Overlay"
             width={180}
             height={180}
             className="drop-shadow-2xl"
@@ -143,7 +143,7 @@ export default function Home() {
 
         {/* Title */}
         <h1 className="font-serif text-6xl md:text-8xl tracking-tight mb-4">
-          dawn
+          overlay
         </h1>
 
         {/* Tagline */}
@@ -420,14 +420,14 @@ export default function Home() {
           <div className="max-w-4xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
             <div className="flex items-center gap-3">
               <Image
-                src="/assets/dawn-logo.png"
-                alt="Dawn"
+                src="/assets/overlay-logo.png"
+                alt="Overlay"
                 width={24}
                 height={24}
                 className="opacity-60"
               />
               <p className="text-sm text-[#71717a]">
-                © 2026 dawn
+                © 2026 overlay
               </p>
             </div>
             <p className="text-sm text-[#71717a]">

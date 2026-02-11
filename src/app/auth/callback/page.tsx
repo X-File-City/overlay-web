@@ -28,7 +28,7 @@ function AuthCallbackContent() {
   useEffect(() => {
     if (code && !error) {
       // Redirect to the Electron app via deep link
-      const deepLink = `dawn://auth/callback?code=${encodeURIComponent(code)}`;
+      const deepLink = `overlay://auth/callback?code=${encodeURIComponent(code)}`;
       window.location.href = deepLink;
       
       // Show success message after a short delay
@@ -68,7 +68,7 @@ function AuthCallbackContent() {
             </div>
             <h1 className="text-2xl font-medium mb-4">Signing you in...</h1>
             <p className="text-[#71717a]">
-              Redirecting to Dawn app...
+              Redirecting to Overlay app...
             </p>
           </>
         )}
@@ -92,12 +92,12 @@ function AuthCallbackContent() {
             </div>
             <h1 className="text-2xl font-medium mb-4">Authentication successful!</h1>
             <p className="text-[#71717a] mb-6">
-              You can now return to the Dawn app.
+              You can now return to the Overlay app.
             </p>
             <p className="text-sm text-[#52525b]">
               If the app didn&apos;t open automatically,{" "}
               <a
-                href={`dawn://auth/callback?code=${searchParams.get("code")}`}
+                href={`overlay://auth/callback?code=${searchParams.get("code")}`}
                 className="text-[#3b82f6] hover:underline"
               >
                 click here

@@ -11,13 +11,13 @@ export default function TermsOfService() {
       <header className="py-6 px-6 border-b border-[#e4e4e7]">
         <div className="max-w-4xl mx-auto flex items-center gap-3">
           <Image
-            src="/assets/dawn-logo.png"
-            alt="Dawn"
+            src="/assets/overlay-logo.png"
+            alt="Overlay"
             width={32}
             height={32}
           />
           <Link href="/" className="font-serif text-xl hover:text-[#71717a] transition-colors">
-            dawn
+            overlay
           </Link>
         </div>
       </header>
@@ -35,7 +35,7 @@ export default function TermsOfService() {
 
             <div className="prose prose-zinc max-w-none">
               <p className="text-[#71717a] mb-8">
-                These Terms of Service (&quot;Terms&quot;) constitute a legally binding agreement between you (&quot;you,&quot; &quot;your,&quot; or &quot;User&quot;) and Dawn (&quot;Dawn,&quot; &quot;we,&quot; &quot;us,&quot; or &quot;our&quot;) governing your access to and use of the Dawn desktop application (the &quot;App&quot;), our websites, and all related services (collectively, the &quot;Services&quot;).
+                These Terms of Service (&quot;Terms&quot;) constitute a legally binding agreement between you (&quot;you,&quot; &quot;your,&quot; or &quot;User&quot;) and Overlay (&quot;Overlay,&quot; &quot;we,&quot; &quot;us,&quot; or &quot;our&quot;) governing your access to and use of the Overlay desktop application (the &quot;App&quot;), our websites, and all related services (collectively, the &quot;Services&quot;).
               </p>
 
               <p className="text-[#0a0a0a] font-medium mb-8">
@@ -43,7 +43,7 @@ export default function TermsOfService() {
               </p>
 
               <Section title="1. Who We Are">
-                <p>The Services are provided by Dawn.</p>
+                <p>The Services are provided by Overlay.</p>
                 <p>Contact: <strong>work.dslalwani@gmail.com</strong></p>
               </Section>
 
@@ -53,7 +53,7 @@ export default function TermsOfService() {
               </Section>
 
               <Section title="3. Description of the Services">
-                <p>Dawn provides an OS-level overlay application that may include:</p>
+                <p>Overlay provides an OS-level overlay application that may include:</p>
                 <ul>
                   <li><strong>Speech-to-text transcription</strong> (basic and &quot;smart&quot; transcription with AI-powered formatting)</li>
                   <li><strong>AI-powered chat</strong> functionality</li>
@@ -74,7 +74,7 @@ export default function TermsOfService() {
                 <p>Certain features (transcription, smart transcription, AI chat) rely on third-party AI providers. When you use these features:</p>
                 <ul>
                   <li>Your <strong>input data</strong> (audio for transcription, text prompts for chat) <strong>is transmitted directly to the third-party provider</strong> to process your request.</li>
-                  <li>This transmission occurs <strong>between your device and the third-party provider</strong>—Dawn does not store or have access to this data in transit or after processing.</li>
+                  <li>This transmission occurs <strong>between your device and the third-party provider</strong>—Overlay does not store or have access to this data in transit or after processing.</li>
                   <li>The third-party provider&apos;s terms and privacy policies govern their handling of your data.</li>
                 </ul>
               </Section>
@@ -123,7 +123,7 @@ export default function TermsOfService() {
                   <li><strong>You are solely responsible</strong> for reviewing, verifying, and evaluating all AI-generated content before relying on or using it.</li>
                   <li><strong>You must not</strong> rely on AI-generated content for critical decisions without independent verification.</li>
                   <li><strong>AI outputs do not constitute</strong> professional advice of any kind (medical, legal, financial, psychological, or otherwise).</li>
-                  <li><strong>Dawn is not responsible</strong> for the quality, accuracy, or appropriateness of any AI-generated content.</li>
+                  <li><strong>Overlay is not responsible</strong> for the quality, accuracy, or appropriateness of any AI-generated content.</li>
                 </ul>
               </Section>
 
@@ -165,13 +165,13 @@ export default function TermsOfService() {
 
               <Section title="11. Limitation of Liability">
                 <p className="text-[#0a0a0a] font-medium">
-                TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL DAWN BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS, REVENUE, DATA, GOODWILL, OR BUSINESS OPPORTUNITIES.
+                TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL OVERLAY BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS, REVENUE, DATA, GOODWILL, OR BUSINESS OPPORTUNITIES.
               </p>  <p className="mt-4">OUR TOTAL CUMULATIVE LIABILITY SHALL NOT EXCEED THE GREATER OF THE AMOUNTS YOU HAVE PAID TO US IN THE TWELVE (12) MONTHS PRECEDING THE CLAIM, OR FIFTY UNITED STATES DOLLARS (US $50).</p>
               </Section>
 
               <Section title="12. Dispute Resolution">
                 <p>Before filing any formal legal action, you agree to first contact us at <strong>work.dslalwani@gmail.com</strong> and attempt to resolve any dispute informally for at least <strong>thirty (30) days</strong>.</p>
-                <p className="mt-4">If we cannot resolve a dispute informally, any dispute shall be resolved by binding individual arbitration, rather than in court. You and Dawn each waive the right to a jury trial.</p>
+                <p className="mt-4">If we cannot resolve a dispute informally, any dispute shall be resolved by binding individual arbitration, rather than in court. You and Overlay each waive the right to a jury trial.</p>
               </Section>
 
               <Section title="13. Governing Law">
@@ -205,7 +205,7 @@ export default function TermsOfService() {
       <footer className="py-12 px-6 border-t border-[#e4e4e7]">
         <div className="max-w-4xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
           <p className="text-sm text-[#71717a]">
-            © 2026 dawn 
+            © 2026 overlay 
           </p>
           <div className="flex gap-8">
             <Link href="/terms" className="text-sm text-[#71717a] hover:text-[#0a0a0a] transition-colors">

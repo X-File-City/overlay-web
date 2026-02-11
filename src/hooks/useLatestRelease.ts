@@ -7,7 +7,7 @@ interface ReleaseInfo {
   publishedAt: string;
 }
 
-const FALLBACK_URL = "https://github.com/DevelopedByDev/dawn-releases/releases";
+const FALLBACK_URL = "https://github.com/DevelopedByDev/overlay-releases/releases";
 const REFRESH_INTERVAL = 10 * 60 * 1000; // 10 minutes in milliseconds
 
 export function useLatestRelease() {

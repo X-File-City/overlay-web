@@ -1,8 +1,8 @@
-# Dawn Terms of Service
+# Overlay Terms of Service
 
 **Last updated:** January 23, 2026
 
-These Terms of Service ("Terms") constitute a legally binding agreement between you ("you," "your," or "User") and Dawn ("Dawn," "we," "us," or "our") governing your access to and use of the Dawn desktop application (the "App"), our websites, and all related services (collectively, the "Services").
+These Terms of Service ("Terms") constitute a legally binding agreement between you ("you," "your," or "User") and Overlay ("Overlay," "we," "us," or "our") governing your access to and use of the Overlay desktop application (the "App"), our websites, and all related services (collectively, the "Services").
 
 **BY DOWNLOADING, INSTALLING, ACCESSING, OR USING THE SERVICES, YOU ACKNOWLEDGE THAT YOU HAVE READ, UNDERSTOOD, AND AGREE TO BE BOUND BY THESE TERMS. IF YOU DO NOT AGREE TO THESE TERMS, DO NOT USE THE SERVICES.**
 
@@ -10,7 +10,7 @@ These Terms of Service ("Terms") constitute a legally binding agreement between 
 
 ## 1. Who We Are
 
-The Services are provided by Dawn.  
+The Services are provided by Overlay.  
 Contact: **work.dslalwani@gmail.com**
 
 ---
@@ -25,7 +25,7 @@ By using the Services, you represent and warrant that you meet these eligibility
 
 ## 3. Description of the Services
 
-Dawn provides an OS-level overlay application that may include:
+Overlay provides an OS-level overlay application that may include:
 - **Speech-to-text transcription** (basic and "smart" transcription with AI-powered formatting)
 - **AI-powered chat** functionality
 - **Local notes** creation and management
@@ -43,7 +43,7 @@ Dawn provides an OS-level overlay application that may include:
 
 Certain features (transcription, smart transcription, AI chat) rely on third-party AI providers. When you use these features:
 - Your **input data** (audio for transcription, text prompts for chat) **is transmitted directly to the third-party provider** to process your request.
-- This transmission occurs **between your device and the third-party provider**—Dawn does not store or have access to this data in transit or after processing.
+- This transmission occurs **between your device and the third-party provider**—Overlay does not store or have access to this data in transit or after processing.
 - The third-party provider's terms and privacy policies govern their handling of your data.
 
 ---
@@ -97,10 +97,10 @@ You acknowledge and agree that:
 - **You are solely responsible** for reviewing, verifying, and evaluating all AI-generated content before relying on or using it.
 - **You must not** rely on AI-generated content for critical decisions without independent verification.
 - **AI outputs do not constitute** professional advice of any kind (medical, legal, financial, psychological, or otherwise).
-- **Dawn is not responsible** for the quality, accuracy, or appropriateness of any AI-generated content.
+- **Overlay is not responsible** for the quality, accuracy, or appropriateness of any AI-generated content.
 
 ### 6.3 No Endorsement
-Any AI-generated content does not represent the views, opinions, or endorsements of Dawn. We do not control the outputs of third-party AI models and cannot guarantee their compliance with any particular standards or requirements.
+Any AI-generated content does not represent the views, opinions, or endorsements of Overlay. We do not control the outputs of third-party AI models and cannot guarantee their compliance with any particular standards or requirements.
 
 ### 6.4 Harmful Content
 AI models may occasionally generate content that is offensive, harmful, or inappropriate. **You use AI features at your own risk.** If you encounter such content, you may report it to us, but we cannot guarantee changes to third-party model behavior.
@@ -120,7 +120,7 @@ You agree not to (and not to attempt to):
 - **Bypass, circumvent, or disable** any security features, access controls, or usage limits
 - **Reverse engineer, decompile, disassemble, or derive source code** from the Services, except where such restriction is prohibited by applicable law
 - **Resell, sublicense, or commercially exploit** the Services without our prior written consent
-- Use the Services in any manner that could **damage, disable, overburden, or impair** any Dawn server or network
+- Use the Services in any manner that could **damage, disable, overburden, or impair** any Overlay server or network
 - Use **automated systems** (bots, scrapers, etc.) to access the Services in a manner that exceeds reasonable use
 - **Impersonate** any person or entity, or falsely state or misrepresent your affiliation with any person or entity
 - Attempt to **probe, scan, or test** the vulnerability of the Services or breach any security measures
@@ -160,7 +160,7 @@ The Services and any content generated through them do **not** constitute profes
 
 ## 9. Intellectual Property
 
-### 9.1 Dawn's Rights
+### 9.1 Overlay's Rights
 We and our licensors own all right, title, and interest in and to the Services, including but not limited to:
 - All software, code, and technology
 - All designs, graphics, and user interfaces
@@ -202,7 +202,7 @@ We have no obligation to:
 
 ## 11. Privacy
 
-Our collection, use, and disclosure of personal information is described in the **Dawn Privacy Policy**, which is incorporated into these Terms by reference. By using the Services, you consent to the practices described in the Privacy Policy.
+Our collection, use, and disclosure of personal information is described in the **Overlay Privacy Policy**, which is incorporated into these Terms by reference. By using the Services, you consent to the practices described in the Privacy Policy.
 
 ---
 
@@ -238,7 +238,7 @@ If you provide us with any feedback, suggestions, ideas, comments, or other inpu
 **TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW:**
 
 ### 14.1 Exclusion of Damages
-**IN NO EVENT SHALL DAWN, ITS AFFILIATES, OFFICERS, DIRECTORS, EMPLOYEES, AGENTS, LICENSORS, OR SERVICE PROVIDERS BE LIABLE FOR ANY:**
+**IN NO EVENT SHALL OVERLAY, ITS AFFILIATES, OFFICERS, DIRECTORS, EMPLOYEES, AGENTS, LICENSORS, OR SERVICE PROVIDERS BE LIABLE FOR ANY:**
 - **INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES**
 - **LOSS OF PROFITS, REVENUE, DATA, GOODWILL, OR BUSINESS OPPORTUNITIES**
 - **COST OF PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES**
@@ -261,14 +261,14 @@ If you provide us with any feedback, suggestions, ideas, comments, or other inpu
 Some jurisdictions do not allow the exclusion or limitation of certain warranties or liabilities. In such jurisdictions, our liability shall be limited to the maximum extent permitted by law.
 
 ### 14.5 Basis of the Bargain
-**YOU ACKNOWLEDGE AND AGREE THAT THE DISCLAIMERS AND LIMITATIONS IN SECTIONS 13 AND 14 ARE AN ESSENTIAL BASIS OF THE BARGAIN BETWEEN YOU AND DAWN, AND THAT DAWN WOULD NOT PROVIDE THE SERVICES ABSENT SUCH LIMITATIONS.**
+**YOU ACKNOWLEDGE AND AGREE THAT THE DISCLAIMERS AND LIMITATIONS IN SECTIONS 13 AND 14 ARE AN ESSENTIAL BASIS OF THE BARGAIN BETWEEN YOU AND OVERLAY, AND THAT OVERLAY WOULD NOT PROVIDE THE SERVICES ABSENT SUCH LIMITATIONS.**
 
 ---
 
 ## 15. Indemnification
 
 ### 15.1 Your Indemnification Obligations
-You agree to **defend, indemnify, and hold harmless** Dawn and its affiliates, officers, directors, employees, contractors, agents, licensors, and service providers from and against any and all claims, damages, obligations, losses, liabilities, costs, debts, fines, penalties, and expenses (including but not limited to reasonable attorneys' fees and legal costs) arising from or relating to:
+You agree to **defend, indemnify, and hold harmless** Overlay and its affiliates, officers, directors, employees, contractors, agents, licensors, and service providers from and against any and all claims, damages, obligations, losses, liabilities, costs, debts, fines, penalties, and expenses (including but not limited to reasonable attorneys' fees and legal costs) arising from or relating to:
 - Your access to or use of the Services
 - Your violation of these Terms
 - Your violation of any applicable law, regulation, or third-party right (including intellectual property, privacy, or publicity rights)
@@ -294,10 +294,10 @@ Before filing any formal legal action, you agree to first contact us at **work.d
 - Arbitration shall be administered by a mutually agreed-upon arbitration provider under its then-current rules.
 - The arbitration shall be conducted in English.
 - The arbitrator's decision shall be final and binding and may be entered as a judgment in any court of competent jurisdiction.
-- **You and Dawn each waive the right to a jury trial.**
+- **You and Overlay each waive the right to a jury trial.**
 
 ### 16.3 Class Action Waiver
-**YOU AND DAWN AGREE THAT EACH PARTY MAY BRING CLAIMS AGAINST THE OTHER ONLY IN YOUR OR ITS INDIVIDUAL CAPACITY, AND NOT AS A PLAINTIFF OR CLASS MEMBER IN ANY PURPORTED CLASS, COLLECTIVE, CONSOLIDATED, OR REPRESENTATIVE PROCEEDING.**
+**YOU AND OVERLAY AGREE THAT EACH PARTY MAY BRING CLAIMS AGAINST THE OTHER ONLY IN YOUR OR ITS INDIVIDUAL CAPACITY, AND NOT AS A PLAINTIFF OR CLASS MEMBER IN ANY PURPORTED CLASS, COLLECTIVE, CONSOLIDATED, OR REPRESENTATIVE PROCEEDING.**
 
 **The arbitrator may not consolidate more than one person's claims and may not otherwise preside over any form of representative or class proceeding.**
 
@@ -349,7 +349,7 @@ The following sections shall survive termination: Sections 6 (AI-Generated Conte
 ## 19. General Provisions
 
 ### 19.1 Entire Agreement
-These Terms, together with the Privacy Policy and any other agreements expressly incorporated by reference, constitute the entire agreement between you and Dawn regarding the Services and supersede all prior agreements and understandings.
+These Terms, together with the Privacy Policy and any other agreements expressly incorporated by reference, constitute the entire agreement between you and Overlay regarding the Services and supersede all prior agreements and understandings.
 
 ### 19.2 Severability
 If any provision of these Terms is found to be invalid, illegal, or unenforceable, the remaining provisions shall continue in full force and effect.

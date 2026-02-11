@@ -11,13 +11,13 @@ export default function PrivacyPolicy() {
       <header className="py-6 px-6 border-b border-[#e4e4e7]">
         <div className="max-w-4xl mx-auto flex items-center gap-3">
           <Image
-            src="/assets/dawn-logo.png"
-            alt="Dawn"
+            src="/assets/overlay-logo.png"
+            alt="Overlay"
             width={32}
             height={32}
           />
           <Link href="/" className="font-serif text-xl hover:text-[#71717a] transition-colors">
-            dawn
+            overlay
           </Link>
         </div>
       </header>
@@ -35,7 +35,7 @@ export default function PrivacyPolicy() {
 
             <div className="prose prose-zinc max-w-none">
               <p className="text-[#71717a] mb-8">
-                This Privacy Policy explains how Dawn (&quot;Dawn,&quot; &quot;we,&quot; &quot;us,&quot; or &quot;our&quot;) collects, uses, discloses, and protects information when you use the Dawn desktop application (the &quot;App&quot;) and related services (the &quot;Services&quot;).
+                This Privacy Policy explains how Overlay (&quot;Overlay,&quot; &quot;we,&quot; &quot;us,&quot; or &quot;our&quot;) collects, uses, discloses, and protects information when you use the Overlay desktop application (the &quot;App&quot;) and related services (the &quot;Services&quot;).
               </p>
 
               <p className="text-[#0a0a0a] font-medium mb-8">
@@ -118,14 +118,14 @@ export default function PrivacyPolicy() {
                   <li>Audio is captured on your device</li>
                   <li>Audio is sent <strong>directly</strong> from your device to the third-party provider using <strong>your</strong> API key</li>
                   <li>The transcribed text is returned <strong>directly</strong> to your device</li>
-                  <li><strong>Dawn does not receive, store, or have access to your audio or transcriptions</strong></li>
+                  <li><strong>Overlay does not receive, store, or have access to your audio or transcriptions</strong></li>
                 </ol>
 
                 <h4 className="text-[#0a0a0a] font-medium mt-6 mb-3">3.2 AI Chat (BYO API Key)</h4>
-                <p>Same flow as transcription—your device communicates directly with the third-party provider. Dawn servers are not involved.</p>
+                <p>Same flow as transcription—your device communicates directly with the third-party provider. Overlay servers are not involved.</p>
 
                 <h4 className="text-[#0a0a0a] font-medium mt-6 mb-3">3.3 Local Notes and Data</h4>
-                <p>All notes, chat history, and local data remain on your device unless you explicitly export or share them. Dawn servers are not involved.</p>
+                <p>All notes, chat history, and local data remain on your device unless you explicitly export or share them. Overlay servers are not involved.</p>
               </Section>
 
               <Section title="4. How We Use Information">
@@ -217,7 +217,7 @@ export default function PrivacyPolicy() {
               </Section>
 
               <p className="text-[#71717a] mt-12 pt-8 border-t border-[#e4e4e7]">
-                Thank you for trusting Dawn with your privacy. We are committed to protecting your information and being transparent about our practices.
+                Thank you for trusting Overlay with your privacy. We are committed to protecting your information and being transparent about our practices.
               </p>
             </div>
           </motion.div>
@@ -228,7 +228,7 @@ export default function PrivacyPolicy() {
       <footer className="py-12 px-6 border-t border-[#e4e4e7]">
         <div className="max-w-4xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
           <p className="text-sm text-[#71717a]">
-            © 2026 dawn 
+            © 2026 overlay 
           </p>
           <div className="flex gap-8">
             <Link href="/terms" className="text-sm text-[#71717a] hover:text-[#0a0a0a] transition-colors">

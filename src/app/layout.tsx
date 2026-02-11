@@ -9,7 +9,7 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  title: "dawn",
+  title: "overlay",
   description: "An OS-level, hotkey-activated overlay that moves execution into overlays where intent first appears. Voice-to-text, notes, AI chat, and browsing — all without leaving your flow.",
   keywords: ["productivity", "voice-to-text", "AI assistant", "overlay", "desktop app", "macOS"],
   icons: {
@@ -18,24 +18,24 @@ export const metadata: Metadata = {
     ],
   },
   openGraph: {
-    title: "dawn — personal computing, reimagined",
+    title: "overlay — personal computing, reimagined",
     description: "the computer, at the speed of human thought.",
     type: "website",
-    url: "https://getdawn.io",
+    url: "https://getoverlay.io",
     images: [
       {
-        url: "https://getdawn.io/assets/dawn-logo.png",
+        url: "https://getoverlay.io/assets/overlay-logo.png",
         width: 512,
         height: 512,
-        alt: "dawn logo",
+        alt: "overlay logo",
       },
     ],
   },
   twitter: {
     card: "summary",
-    title: "dawn — personal computing, reimagined",
+    title: "overlay — personal computing, reimagined",
     description: "the computer, at the speed of human thought.",
-    images: ["https://getdawn.io/assets/dawn-logo.png"],
+    images: ["https://getoverlay.io/assets/overlay-logo.png"],
   },
 };
 

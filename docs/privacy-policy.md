@@ -1,8 +1,8 @@
-# Dawn Privacy Policy
+# Overlay Privacy Policy
 
 **Last updated:** January 23, 2025
 
-This Privacy Policy explains how Dawn ("Dawn," "we," "us," or "our") collects, uses, discloses, and protects information when you use the Dawn desktop application (the "App") and related services (the "Services").
+This Privacy Policy explains how Overlay ("Overlay," "we," "us," or "our") collects, uses, discloses, and protects information when you use the Overlay desktop application (the "App") and related services (the "Services").
 
 **BY USING THE SERVICES, YOU ACKNOWLEDGE THAT YOU HAVE READ AND UNDERSTOOD THIS PRIVACY POLICY AND AGREE TO THE COLLECTION, USE, AND DISCLOSURE OF YOUR INFORMATION AS DESCRIBED HEREIN.**
 
@@ -132,14 +132,14 @@ Your Device → [Audio] → Third-Party Provider (e.g., Groq) → [Text] → You
                               ↑
                         Uses YOUR API key
                         
-Dawn servers: NOT INVOLVED in this data flow
+Overlay servers: NOT INVOLVED in this data flow
 ```
 
 When you use transcription:
 1. Audio is captured on your device
 2. Audio is sent **directly** from your device to the third-party provider using **your** API key
 3. The transcribed text is returned **directly** to your device
-4. **Dawn does not receive, store, or have access to your audio or transcriptions**
+4. **Overlay does not receive, store, or have access to your audio or transcriptions**
 
 ### 4.2 AI Chat (BYO API Key)
 
@@ -148,7 +148,7 @@ Your Device → [Prompt] → Third-Party Provider → [Response] → Your Device
                               ↑
                         Uses YOUR API key
                         
-Dawn servers: NOT INVOLVED in this data flow
+Overlay servers: NOT INVOLVED in this data flow
 ```
 
 ### 4.3 Local Notes and Data
@@ -156,7 +156,7 @@ Dawn servers: NOT INVOLVED in this data flow
 ```
 Your Device ←→ Local Storage (on your device only)
 
-Dawn servers: NOT INVOLVED
+Overlay servers: NOT INVOLVED
 ```
 
 All notes, chat history, and local data remain on your device unless you explicitly export or share them.
@@ -216,12 +216,12 @@ We may disclose information if we reasonably believe disclosure is necessary to:
 - Comply with applicable law, regulation, or legal process
 - Respond to lawful requests from public authorities (e.g., law enforcement, national security)
 - Enforce our Terms of Service or other agreements
-- Protect the rights, property, or safety of Dawn, our users, or the public
+- Protect the rights, property, or safety of Overlay, our users, or the public
 - Detect, prevent, or address fraud, security, or technical issues
 
 ### 6.4 Business Transfers
 
-If Dawn is involved in a merger, acquisition, financing, reorganization, bankruptcy, or sale of assets:
+If Overlay is involved in a merger, acquisition, financing, reorganization, bankruptcy, or sale of assets:
 - Information may be transferred as part of that transaction
 - We will notify you of any change in ownership or control
 - This Privacy Policy will continue to apply to your information
@@ -316,7 +316,7 @@ If you are in the EEA, UK, or Switzerland, you have additional rights:
 - **Withdraw consent:** Where processing is based on consent
 - **Lodge complaint:** With your local data protection authority
 
-**Data controller:** Dawn  
+**Data controller:** Overlay  
 **Contact:** work.dslalwani@gmail.com
 
 ### 10.3 California Residents (CCPA/CPRA)
@@ -435,4 +435,4 @@ Our crash reporting is configured to:
 
 ---
 
-**Thank you for trusting Dawn with your privacy. We are committed to protecting your information and being transparent about our practices.**
+**Thank you for trusting Overlay with your privacy. We are committed to protecting your information and being transparent about our practices.**

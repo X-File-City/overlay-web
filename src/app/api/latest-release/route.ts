@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const GITHUB_REPO = "DevelopedByDev/dawn-releases";
+const GITHUB_REPO = "DevelopedByDev/overlay-releases";
 const CACHE_DURATION = 600; // 10 minutes in seconds
 
 export async function GET() {
@@ -10,7 +10,7 @@ export async function GET() {
       {
         headers: {
           Accept: "application/vnd.github.v3+json",
-          "User-Agent": "dawn-landing",
+          "User-Agent": "overlay-landing",
         },
         next: { revalidate: CACHE_DURATION },
       }
