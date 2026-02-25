@@ -16,101 +16,100 @@ export default function Home() {
   });
 
   // Track section progress for scroll-triggered animations
+  const [allInOnePlaceProgress, setAllInOnePlaceProgress] = useState(0);
   const [voiceProgress, setVoiceProgress] = useState(0);
   const [notesProgress, setNotesProgress] = useState(0);
-  const [chatProgress, setChatProgress] = useState(0);
+  const [chatsProgress, setChatsProgress] = useState(0);
   const [browserProgress, setBrowserProgress] = useState(0);
-  const [allInOnePlaceProgress, setAllInOnePlaceProgress] = useState(0);
 
   // Track which sections are active
+  const [allInOnePlaceActive, setAllInOnePlaceActive] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
   const [notesActive, setNotesActive] = useState(false);
-  const [chatActive, setChatActive] = useState(false);
+  const [chatsActive, setChatsActive] = useState(false);
   const [browserActive, setBrowserActive] = useState(false);
-  const [allInOnePlaceActive, setAllInOnePlaceActive] = useState(false);
 
   useMotionValueEvent(scrollYProgress, "change", (latest) => {
-    // Updated section ranges
+    // New section ranges for revised flow (12 sections)
     
-    // Voice section: 0.20 - 0.30
-    setVoiceActive(latest >= 0.20 && latest < 0.30);
-    setVoiceProgress(latest >= 0.20 && latest < 0.30 ? (latest - 0.20) / 0.10 : 0);
+    // AllInOnePlace section: 0.20 - 0.32 (extended for more pause)
+    setAllInOnePlaceActive(latest >= 0.20 && latest < 0.32);
+    setAllInOnePlaceProgress(latest >= 0.20 && latest < 0.32 ? (latest - 0.20) / 0.12 : 0);
     
-    // Notes section: 0.30 - 0.40
-    setNotesActive(latest >= 0.30 && latest < 0.40);
-    setNotesProgress(latest >= 0.30 && latest < 0.40 ? (latest - 0.30) / 0.10 : 0);
+    // Voice section: 0.32 - 0.40
+    setVoiceActive(latest >= 0.32 && latest < 0.40);
+    setVoiceProgress(latest >= 0.32 && latest < 0.40 ? (latest - 0.32) / 0.08 : 0);
     
-    // Chat section: 0.40 - 0.50
-    setChatActive(latest >= 0.40 && latest < 0.50);
-    setChatProgress(latest >= 0.40 && latest < 0.50 ? (latest - 0.40) / 0.10 : 0);
+    // Notes section: 0.40 - 0.48
+    setNotesActive(latest >= 0.40 && latest < 0.48);
+    setNotesProgress(latest >= 0.40 && latest < 0.48 ? (latest - 0.40) / 0.08 : 0);
     
-    // Browser section: 0.50 - 0.60
-    setBrowserActive(latest >= 0.50 && latest < 0.60);
-    setBrowserProgress(latest >= 0.50 && latest < 0.60 ? (latest - 0.50) / 0.10 : 0);
+    // Chats section: 0.48 - 0.56
+    setChatsActive(latest >= 0.48 && latest < 0.56);
+    setChatsProgress(latest >= 0.48 && latest < 0.56 ? (latest - 0.48) / 0.08 : 0);
     
-    // AllInOnePlace section: 0.68 - 0.80
-    setAllInOnePlaceActive(latest >= 0.68 && latest < 0.80);
-    setAllInOnePlaceProgress(latest >= 0.68 && latest < 0.80 ? (latest - 0.68) / 0.12 : 0);
+    // Browser section: 0.56 - 0.64
+    setBrowserActive(latest >= 0.56 && latest < 0.64);
+    setBrowserProgress(latest >= 0.56 && latest < 0.64 ? (latest - 0.56) / 0.08 : 0);
   });
 
-  // Total sections: hero, philosophy, voice, notes, chat, browser, combo, allInOnePlace, flow, welcome, download = 11 sections
-  // Each section gets ~0.08 of scroll progress
+  // Total sections: hero, valueProp, combo, allInOnePlace, voice, notes, chats, browser, agents, friction, welcome, begin = 12 sections
   
-  // Hero section (0 - 0.08) - starts visible, fades out
-  const logoScale = useTransform(scrollYProgress, [0, 0.04], [1, 0.6]);
-  const logoOpacity = useTransform(scrollYProgress, [0.04, 0.08], [1, 0]);
-  const heroOpacity = useTransform(scrollYProgress, [0.04, 0.08], [1, 0]);
-  const heroPointer = useTransform(scrollYProgress, (v) => v < 0.08 ? "auto" : "none");
+  // Hero section (0 - 0.06) - starts visible, fades out
+  const logoScale = useTransform(scrollYProgress, [0, 0.03], [1, 0.6]);
+  const logoOpacity = useTransform(scrollYProgress, [0.03, 0.06], [1, 0]);
+  const heroOpacity = useTransform(scrollYProgress, [0.03, 0.06], [1, 0]);
+  const heroPointer = useTransform(scrollYProgress, (v) => v < 0.06 ? "auto" : "none");
   
-  // Philosophy section (0.08 - 0.20) - extended for more pause on 'overlays'
-  const philosophyOpacity = useTransform(scrollYProgress, [0.08, 0.10, 0.18, 0.20], [0, 1, 1, 0]);
-  const philosophyPointer = useTransform(scrollYProgress, (v) => v >= 0.08 && v < 0.20 ? "auto" : "none");
-  // "using overlays" text fades in
-  const usingOverlaysOpacity = useTransform(scrollYProgress, [0.10, 0.11], [0, 1]);
-  // Fade out "move execution..." and "using" text, leave only "overlays"
-  const philosophyMainTextOpacity = useTransform(scrollYProgress, [0.12, 0.14], [1, 0]);
-  // "overlays" stays visible longer then fades
-  const overlaysOnlyOpacity = useTransform(scrollYProgress, [0.16, 0.18], [1, 0]);
+  // Combo section (0.06 - 0.20) - "everything you need from ai" + "notes + chats + browser + agents" shrink together → "powered by your voice" → AllInOnePlace
+  const comboOpacity = useTransform(scrollYProgress, [0.06, 0.07, 0.19, 0.20], [0, 1, 1, 0]);
+  const comboPointer = useTransform(scrollYProgress, (v) => v >= 0.06 && v < 0.20 ? "auto" : "none");
+  // Both texts shrink and fade together
+  const comboTextScale = useTransform(scrollYProgress, [0.10, 0.13], [1, 0]);
+  const comboTextOpacity = useTransform(scrollYProgress, [0.10, 0.13], [1, 0]);
+  // Pill appears with "powered by your voice"
+  const comboPillOpacity = useTransform(scrollYProgress, [0.12, 0.14, 0.18, 0.20], [0, 1, 1, 0]);
+  const comboPillScale = useTransform(scrollYProgress, [0.12, 0.14], [0.5, 1]);
+  // "powered by" above, "your voice" below the pill
+  const poweredByOpacity = useTransform(scrollYProgress, [0.13, 0.15], [0, 1]);
   
-  // Voice section (0.20 - 0.30) - extended for slower scroll, delayed fade out
-  const voiceOpacity = useTransform(scrollYProgress, [0.20, 0.22, 0.28, 0.30], [0, 1, 1, 0]);
-  const voicePointer = useTransform(scrollYProgress, (v) => v >= 0.20 && v < 0.30 ? "auto" : "none");
+  // All In One Place section (0.20 - 0.32) - extended for more pause
+  const allInOnePlaceOpacity = useTransform(scrollYProgress, [0.20, 0.22, 0.30, 0.32], [0, 1, 1, 0]);
+  const allInOnePlacePointer = useTransform(scrollYProgress, (v) => v >= 0.20 && v < 0.32 ? "auto" : "none");
   
-  // Notes section (0.30 - 0.40) - more pause after annotation
-  const notesOpacity = useTransform(scrollYProgress, [0.30, 0.32, 0.38, 0.40], [0, 1, 1, 0]);
-  const notesPointer = useTransform(scrollYProgress, (v) => v >= 0.30 && v < 0.40 ? "auto" : "none");
+  // Voice section (0.32 - 0.40)
+  const voiceOpacity = useTransform(scrollYProgress, [0.32, 0.34, 0.38, 0.40], [0, 1, 1, 0]);
+  const voicePointer = useTransform(scrollYProgress, (v) => v >= 0.32 && v < 0.40 ? "auto" : "none");
   
-  // Chat section (0.40 - 0.50) - more pause after annotation
-  const chatOpacity = useTransform(scrollYProgress, [0.40, 0.42, 0.48, 0.50], [0, 1, 1, 0]);
-  const chatPointer = useTransform(scrollYProgress, (v) => v >= 0.40 && v < 0.50 ? "auto" : "none");
+  // Notes section (0.40 - 0.48)
+  const notesOpacity = useTransform(scrollYProgress, [0.40, 0.42, 0.46, 0.48], [0, 1, 1, 0]);
+  const notesPointer = useTransform(scrollYProgress, (v) => v >= 0.40 && v < 0.48 ? "auto" : "none");
   
-  // Browser section (0.50 - 0.60) - more pause after annotation
-  const browserOpacity = useTransform(scrollYProgress, [0.50, 0.52, 0.58, 0.60], [0, 1, 1, 0]);
-  const browserPointer = useTransform(scrollYProgress, (v) => v >= 0.50 && v < 0.60 ? "auto" : "none");
+  // Chats section (0.48 - 0.56)
+  const chatsOpacity = useTransform(scrollYProgress, [0.48, 0.50, 0.54, 0.56], [0, 1, 1, 0]);
+  const chatsPointer = useTransform(scrollYProgress, (v) => v >= 0.48 && v < 0.56 ? "auto" : "none");
   
-  // Combo section (0.60 - 0.68) - "voice + notes + chat + browser" text that collapses into pill
-  const comboOpacity = useTransform(scrollYProgress, [0.60, 0.62, 0.66, 0.68], [0, 1, 1, 0]);
-  const comboPointer = useTransform(scrollYProgress, (v) => v >= 0.60 && v < 0.68 ? "auto" : "none");
-  // Text scale/collapse animation - text shrinks and moves to center
-  const comboTextScale = useTransform(scrollYProgress, [0.62, 0.65], [1, 0]);
-  const comboTextOpacity = useTransform(scrollYProgress, [0.62, 0.64], [1, 0]);
-  // Pill appears as text disappears, then fades out
-  const comboPillOpacity = useTransform(scrollYProgress, [0.64, 0.65, 0.66, 0.68], [0, 1, 1, 0]);
-  const comboPillScale = useTransform(scrollYProgress, [0.64, 0.65], [0.5, 1]);
+  // Browser section (0.56 - 0.64)
+  const browserOpacity = useTransform(scrollYProgress, [0.56, 0.58, 0.62, 0.64], [0, 1, 1, 0]);
+  const browserPointer = useTransform(scrollYProgress, (v) => v >= 0.56 && v < 0.64 ? "auto" : "none");
   
-  // All In One Place section (0.68 - 0.80) - extended for overlay reveals
-  const allInOnePlaceOpacity = useTransform(scrollYProgress, [0.68, 0.70, 0.78, 0.80], [0, 1, 1, 0]);
-  const allInOnePlacePointer = useTransform(scrollYProgress, (v) => v >= 0.68 && v < 0.80 ? "auto" : "none");
+  // Agents section (0.64 - 0.72)
+  const agentsOpacity = useTransform(scrollYProgress, [0.64, 0.66, 0.70, 0.72], [0, 1, 1, 0]);
+  const agentsPointer = useTransform(scrollYProgress, (v) => v >= 0.64 && v < 0.72 ? "auto" : "none");
   
-  // Flow section (0.80 - 0.86)
-  const flowOpacity = useTransform(scrollYProgress, [0.80, 0.82, 0.84, 0.86], [0, 1, 1, 0]);
-  const flowPointer = useTransform(scrollYProgress, (v) => v >= 0.80 && v < 0.86 ? "auto" : "none");
+  // Friction section (0.72 - 0.82) - "reduce the friction in your work" → "reduce your work"
+  const frictionOpacity = useTransform(scrollYProgress, [0.72, 0.74, 0.80, 0.82], [0, 1, 1, 0]);
+  const frictionPointer = useTransform(scrollYProgress, (v) => v >= 0.72 && v < 0.82 ? "auto" : "none");
+  // "the friction in" dissolves and width collapses smoothly
+  const frictionMiddleOpacity = useTransform(scrollYProgress, [0.76, 0.78], [1, 0]);
+  const frictionMiddleMaxWidth = useTransform(scrollYProgress, [0.76, 0.79], ["300px", "0px"]);
+  const frictionMiddlePadding = useTransform(scrollYProgress, [0.76, 0.79], ["0 0.3em", "0 0"]);
   
-  // Welcome section (0.86 - 0.92)
-  const welcomeOpacity = useTransform(scrollYProgress, [0.86, 0.88, 0.90, 0.92], [0, 1, 1, 0]);
-  const welcomePointer = useTransform(scrollYProgress, (v) => v >= 0.86 && v < 0.92 ? "auto" : "none");
+  // Welcome section (0.82 - 0.92) - merged with subtitle
+  const welcomeOpacity = useTransform(scrollYProgress, [0.82, 0.84, 0.90, 0.92], [0, 1, 1, 0]);
+  const welcomePointer = useTransform(scrollYProgress, (v) => v >= 0.82 && v < 0.92 ? "auto" : "none");
   
-  // Download section (0.92 - 1.0) - stays visible at end
+  // Begin/Download section (0.92 - 1.0) - stays visible at end
   const downloadOpacity = useTransform(scrollYProgress, [0.92, 0.96, 1.0], [0, 1, 1]);
   const downloadPointer = useTransform(scrollYProgress, (v) => v >= 0.92 ? "auto" : "none");
 
@@ -129,7 +128,7 @@ export default function Home() {
         {/* Logo */}
         <motion.div
           style={{ scale: logoScale, opacity: logoOpacity }}
-          className="mb-4"
+          className="mb-1"
         >
           <Image
             src="/assets/overlay-logo.png"
@@ -148,7 +147,7 @@ export default function Home() {
 
         {/* Tagline */}
         <p className="text-lg md:text-xl text-[#71717a] font-light tracking-wide mb-8">
-          personal computing, reimagined
+          your personal, unified ai interaction layer
         </p>
 
         {/* Download Button */}
@@ -176,32 +175,70 @@ export default function Home() {
       {/* Spacer for scroll */}
       <div className="h-screen" />
 
-      {/* Philosophy Section */}
+      {/* Combo Section - "everything you need from ai" + "notes + chats + browser + agents" shrink together → "powered by your voice" */}
       <motion.section 
-        style={{ opacity: philosophyOpacity, pointerEvents: philosophyPointer }}
+        style={{ opacity: comboOpacity, pointerEvents: comboPointer }}
         className="fixed inset-0 flex flex-col items-center justify-center px-6 z-10"
       >
-        <div className="max-w-3xl text-center -mt-16">
-          {/* Main text fades out leaving only "overlays" */}
-          <motion.p 
-            style={{ opacity: philosophyMainTextOpacity }}
-            className="font-serif text-4xl md:text-5xl lg:text-6xl leading-tight text-[#0a0a0a]"
+        <div className="relative flex flex-col items-center justify-center">
+          {/* Both texts that shrink and fade together */}
+          <motion.div 
+            style={{ scale: comboTextScale, opacity: comboTextOpacity }}
+            className="flex flex-col items-center gap-4"
           >
-            move execution to where{" "}<br />
-            <span className="text-[#71717a]">intent</span>{" "}
-            first appears,
-          </motion.p>
-          <motion.p 
-            style={{ opacity: usingOverlaysOpacity }}
-            className="font-serif text-4xl md:text-5xl lg:text-6xl leading-tight text-[#0a0a0a]"
+            <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a] text-center leading-tight">
+              everything you need from ai
+            </p>
+            <p className="font-serif text-3xl md:text-4xl lg:text-5xl text-[#0a0a0a] text-center whitespace-nowrap">
+              notes{" "}
+              <span className="text-[#71717a]">+</span>{" "}
+              chats{" "}
+              <span className="text-[#71717a]">+</span>{" "}
+              browser{" "}
+              <span className="text-[#71717a]">+</span>{" "}
+              agents
+            </p>
+          </motion.div>
+          
+          {/* Pill with "powered by your voice" - same font size as "everything you need from ai" */}
+          <motion.div
+            style={{ opacity: comboPillOpacity, scale: comboPillScale }}
+            className="absolute flex flex-col items-center gap-4"
           >
-            <motion.span style={{ opacity: philosophyMainTextOpacity }}>using </motion.span>
-            <motion.span style={{ opacity: overlaysOnlyOpacity }} className="text-[#71717a]">overlays</motion.span>
-          </motion.p>
+            <motion.p 
+              style={{ opacity: poweredByOpacity }}
+              className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a] text-center leading-tight"
+            >
+              powered by
+            </motion.p>
+            <div
+              style={{
+                width: 48,
+                height: 10,
+                borderRadius: 12,
+                background: "rgba(19, 19, 19, 0.8)",
+                border: "1px solid rgba(255, 255, 255, 0.3)",
+              }}
+            />
+            <motion.p 
+              style={{ opacity: poweredByOpacity }}
+              className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a] text-center leading-tight"
+            >
+              your voice
+            </motion.p>
+          </motion.div>
         </div>
       </motion.section>
 
-      {/* Voice Section - Vertical Layout */}
+      {/* All In One Place Section - moved earlier */}
+      <motion.section 
+        style={{ opacity: allInOnePlaceOpacity, pointerEvents: allInOnePlacePointer }}
+        className="fixed inset-0 flex items-center justify-center px-6 py-20 z-10"
+      >
+        <AllInOnePlace scrollProgress={allInOnePlaceProgress} isActive={allInOnePlaceActive} />
+      </motion.section>
+
+      {/* Voice Section */}
       <motion.section 
         style={{ opacity: voiceOpacity, pointerEvents: voicePointer }}
         className="fixed inset-0 flex items-center justify-center px-6 py-20 z-10"
@@ -252,16 +289,16 @@ export default function Home() {
         </div>
       </motion.section>
 
-      {/* Chat Section */}
+      {/* Chats Section - renamed from "chat" */}
       <motion.section 
-        style={{ opacity: chatOpacity, pointerEvents: chatPointer }}
+        style={{ opacity: chatsOpacity, pointerEvents: chatsPointer }}
         className="fixed inset-0 flex items-center justify-center px-6 py-20 z-10"
       >
         <div className="max-w-5xl mx-auto w-full flex flex-col items-center gap-12">
           <div className="relative text-center">
-            <h3 className="font-serif text-5xl md:text-6xl lg:text-7xl mb-4">chat</h3>
+            <h3 className="font-serif text-5xl md:text-6xl lg:text-7xl mb-4">chats</h3>
             <p className="text-lg md:text-xl text-[#71717a]">ask that question</p>
-            {chatProgress > 0.5 && (
+            {chatsProgress > 0.5 && (
               <motion.p
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -275,12 +312,12 @@ export default function Home() {
           <div className="w-full">
             <OverlayDemo
               type="chat"
-              title="chat"
+              title="chats"
               shortcutDisplay="."
               screenImage="/assets/window-screens/chat-screen.png"
               overlayImage="/assets/overlays/chat-overlay.png"
-              isActive={chatActive}
-              sectionProgress={chatProgress}
+              isActive={chatsActive}
+              sectionProgress={chatsProgress}
               hideAnnotation={true}
             />
           </div>
@@ -294,7 +331,7 @@ export default function Home() {
       >
         <div className="max-w-5xl mx-auto w-full flex flex-col items-center gap-12">
           <div className="relative text-center">
-            <h3 className="font-serif text-5xl md:text-6xl lg:text-7xl mb-4">browse</h3>
+            <h3 className="font-serif text-5xl md:text-6xl lg:text-7xl mb-4">browser</h3>
             <p className="text-lg md:text-xl text-[#71717a]">make that search</p>
             {browserProgress > 0.5 && (
               <motion.p
@@ -322,72 +359,55 @@ export default function Home() {
         </div>
       </motion.section>
 
-      {/* Combo Section - "voice + notes + chat + browser" collapsing into pill */}
+      {/* Agents Section */}
       <motion.section 
-        style={{ opacity: comboOpacity, pointerEvents: comboPointer }}
-        className="fixed inset-0 flex items-center justify-center px-6 z-10"
-      >
-        <div className="relative flex flex-col items-center justify-center" style={{ transform: "translateY(-20px)" }}>
-          {/* Text that shrinks and fades */}
-          <motion.p 
-            style={{ scale: comboTextScale, opacity: comboTextOpacity }}
-            className="font-serif text-3xl md:text-4xl lg:text-5xl text-[#0a0a0a] text-center whitespace-nowrap"
-          >
-            voice{" "}
-            <span className="text-[#71717a]">+</span>{" "}
-            notes{" "}
-            <span className="text-[#71717a]">+</span>{" "}
-            chat{" "}
-            <span className="text-[#71717a]">+</span>{" "}
-            browser
-          </motion.p>
-          
-          {/* Pill that appears */}
-          <motion.div
-            style={{ opacity: comboPillOpacity, scale: comboPillScale }}
-            className="absolute"
-          >
-            <div
-              style={{
-                width: 48,
-                height: 10,
-                borderRadius: 12,
-                background: "rgba(19, 19, 19, 0.8)",
-                border: "1px solid rgba(255, 255, 255, 0.3)",
-              }}
-            />
-          </motion.div>
-        </div>
-      </motion.section>
-
-      {/* All In One Place Section */}
-      <motion.section 
-        style={{ opacity: allInOnePlaceOpacity, pointerEvents: allInOnePlacePointer }}
-        className="fixed inset-0 flex items-center justify-center px-6 py-20 z-10"
-      >
-        <AllInOnePlace scrollProgress={allInOnePlaceProgress} isActive={allInOnePlaceActive} />
-      </motion.section>
-
-      {/* Without Breaking Flow Section */}
-      <motion.section 
-        style={{ opacity: flowOpacity, pointerEvents: flowPointer }}
+        style={{ opacity: agentsOpacity, pointerEvents: agentsPointer }}
         className="fixed inset-0 flex items-center justify-center px-6 z-10"
       >
         <div className="max-w-3xl text-center">
-          <p className="font-serif text-4xl md:text-5xl lg:text-6xl leading-tight text-[#0a0a0a]">
-            without breaking flow
+          <h3 className="font-serif text-5xl md:text-6xl lg:text-7xl mb-4">agents</h3>
+          <p className="text-lg md:text-xl text-[#71717a]">let ai work for you</p>
+        </div>
+      </motion.section>
+
+      {/* Friction Section - "reduce the friction in your work" → "reduce your work" */}
+      <motion.section 
+        style={{ opacity: frictionOpacity, pointerEvents: frictionPointer }}
+        className="fixed inset-0 flex items-center justify-center px-6 z-10"
+      >
+        <div className="max-w-3xl text-center">
+          <p className="font-serif text-4xl md:text-5xl lg:text-6xl leading-tight text-[#0a0a0a] flex items-baseline justify-center">
+            <span>reduce</span>
+            <motion.span 
+              style={{ 
+                opacity: frictionMiddleOpacity,
+                maxWidth: frictionMiddleMaxWidth,
+                padding: frictionMiddlePadding,
+                overflow: "hidden",
+                whiteSpace: "nowrap",
+                display: "inline-block",
+                transition: "max-width 0.3s ease-out, padding 0.3s ease-out"
+              }}
+              className="text-[#71717a]"
+            >
+              the friction in
+            </motion.span>
+            <span>your work</span>
           </p>
         </div>
       </motion.section>
 
-      {/* Welcome Section */}
+      {/* Welcome Section - merged with subtitle */}
       <motion.section 
         style={{ opacity: welcomeOpacity, pointerEvents: welcomePointer }}
         className="fixed inset-0 flex items-center justify-center px-6 z-10"
       >
         <div className="max-w-3xl text-center">
-          <p className="font-serif text-4xl md:text-5xl lg:text-6xl leading-relaxed text-[#0a0a0a]">
+          <p className="font-serif text-4xl md:text-5xl lg:text-6xl leading-relaxed text-[#0a0a0a] mb-4">
             welcome to <br /><span className="text-[#71717a]">overlay-first computing</span>
+          </p>
+          <p className="text-lg md:text-xl text-[#71717a] font-light tracking-wide">
+            personal computing, reimagined
           </p>
         </div>
       </motion.section>
@@ -465,8 +485,8 @@ export default function Home() {
         </footer>
       </motion.section>
 
-      {/* Spacer for scroll - 11 sections * 100vh = 1100vh */}
-      <div className="h-[1100vh]" />
+      {/* Spacer for scroll - 12 sections * 100vh = 1200vh */}
+      <div className="h-[1200vh]" />
     </div>
   );
 }

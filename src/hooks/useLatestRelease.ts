@@ -25,8 +25,9 @@ export function useLatestRelease() {
       setReleaseInfo(data);
       setError(null);
     } catch (err) {
-      console.error("Error fetching latest release:", err);
-      setError(err instanceof Error ? err.message : "Unknown error");
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      console.error("Error fetching latest release:", errorMessage);
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
