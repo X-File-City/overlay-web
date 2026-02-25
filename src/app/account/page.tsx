@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { CreditCard, RefreshCw, Settings, ArrowRight, Check, AlertCircle } from 'lucide-react'
@@ -67,7 +67,7 @@ function ProgressBar({ value, max, label }: { value: number; max: number; label:
   )
 }
 
-export default function AccountPage() {
+function AccountPageContent() {
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null)
@@ -474,5 +474,23 @@ export default function AccountPage() {
         </div>
       </footer>
     </div>
+  )
+}
+
+export default function AccountPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen gradient-bg flex items-center justify-center">
+          <div className="liquid-glass" />
+          <div className="relative z-10 text-center">
+            <RefreshCw className="w-8 h-8 animate-spin mx-auto text-[var(--muted)]" />
+            <p className="mt-4 text-[var(--muted)]">Loading...</p>
+          </div>
+        </div>
+      }
+    >
+      <AccountPageContent />
+    </Suspense>
   )
 }
