@@ -1,6 +1,18 @@
 import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 
+// Helper to get dates for the past 7 days
+function getPastWeekDates(): string[] {
+  const dates: string[] = []
+  const now = new Date()
+  for (let i = 0; i < 7; i++) {
+    const date = new Date(now)
+    date.setDate(now.getDate() - i)
+    dates.push(date.toISOString().split('T')[0])
+  }
+  return dates
+}
+
 // Get user entitlements (subscription + usage data)
 export const getEntitlements = query({
   args: { userId: v.string() },
@@ -59,20 +71,63 @@ export const getEntitlements = query({
     // Handle both new creditsUsed and legacy costAccrued field
     const credits = tokenUsage?.creditsUsed ?? tokenUsage?.costAccrued ?? 0
 
+    // For free tier, calculate weekly transcription usage (past 7 days)
+    // For paid tiers, transcription is unlimited so we don't need to track it
+    let weeklyTranscriptionSeconds = 0
+    if (tier === 'free') {
+      const pastWeekDates = getPastWeekDates()
+      // Query all daily usage records for the past 7 days
+      const weeklyUsageRecords = await Promise.all(
+        pastWeekDates.map(date =>
+          ctx.db
+            .query('dailyUsage')
+            .withIndex('by_userId_date', (q) => q.eq('userId', userId).eq('date', date))
+            .first()
+        )
+      )
+      // Sum up transcription seconds from all days
+      weeklyTranscriptionSeconds = weeklyUsageRecords.reduce(
+        (sum, record) => sum + (record?.transcriptionSeconds ?? 0),
+        0
+      )
+    }
+
+    // Also calculate weekly usage counts (ask/write/agent) for free tier
+    let weeklyUsage = { ask: 0, write: 0, agent: 0 }
+    if (tier === 'free') {
+      const pastWeekDates = getPastWeekDates()
+      const weeklyUsageRecords = await Promise.all(
+        pastWeekDates.map(date =>
+          ctx.db
+            .query('dailyUsage')
+            .withIndex('by_userId_date', (q) => q.eq('userId', userId).eq('date', date))
+            .first()
+        )
+      )
+      weeklyUsage = weeklyUsageRecords.reduce(
+        (acc, record) => ({
+          ask: acc.ask + (record?.askCount ?? 0),
+          write: acc.write + (record?.writeCount ?? 0),
+          agent: acc.agent + (record?.agentCount ?? 0)
+        }),
+        { ask: 0, write: 0, agent: 0 }
+      )
+    }
+
     return {
       tier,
       creditsUsed: credits,
       creditsTotal: defaults.creditsTotal,
-      dailyUsage: {
+      dailyUsage: tier === 'free' ? weeklyUsage : {
         ask: dailyUsage?.askCount || 0,
         write: dailyUsage?.writeCount || 0,
         agent: dailyUsage?.agentCount || 0
       },
       dailyLimits: defaults.dailyLimits,
-      transcriptionSecondsUsed: dailyUsage?.transcriptionSeconds ?? 0,
+      transcriptionSecondsUsed: tier === 'free' ? weeklyTranscriptionSeconds : 0,
       transcriptionSecondsLimit: defaults.transcriptionSecondsLimit,
       localTranscriptionEnabled: defaults.localTranscriptionEnabled,
-      resetAt: getNextDayReset(),
+      resetAt: getNextWeeklyReset(),
       billingPeriodEnd: subscription?.currentPeriodEnd
         ? new Date(subscription.currentPeriodEnd).toISOString()
         : '',
@@ -292,10 +347,12 @@ export const resetTokenUsage = mutation({
   }
 })
 
-// Helper function to get next day reset time
-function getNextDayReset(): string {
-  const tomorrow = new Date()
-  tomorrow.setDate(tomorrow.getDate() + 1)
-  tomorrow.setHours(0, 0, 0, 0)
-  return tomorrow.toISOString()
+// Helper function to get next weekly reset time (Monday 00:00 UTC)
+function getNextWeeklyReset(): string {
+  const now = new Date()
+  const daysUntilMonday = (8 - now.getUTCDay()) % 7 || 7 // Days until next Monday
+  const nextMonday = new Date(now)
+  nextMonday.setUTCDate(now.getUTCDate() + daysUntilMonday)
+  nextMonday.setUTCHours(0, 0, 0, 0)
+  return nextMonday.toISOString()
 }

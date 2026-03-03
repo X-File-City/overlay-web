@@ -342,13 +342,13 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
         )}
       </AnimatePresence>
 
-      <div className="relative flex flex-col items-center justify-center">
-        {/* "all in" text - positioned above pill */}
-        <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a] mb-6">
+      <div className="relative flex flex-row items-center justify-center gap-6">
+        {/* "all in" text - positioned left of pill */}
+        <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a]">
           all in
         </p>
 
-        {/* Bean Control Panel - at dead center */}
+        {/* Bean Control Panel - inline */}
         <div
           className="relative z-30"
           style={{ width: EXPANDED_WIDTH + 32, height: EXPANDED_HEIGHT + 32 }}
@@ -494,13 +494,15 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
             </div>
           </div>
 
-        {/* "one place" text - positioned below pill */}
-        <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a] mt-6">
+        {/* "one place" text - positioned right of pill */}
+        <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a]">
           one place
         </p>
+      </div>
 
-        {/* Subtitle */}
-        <p className="text-sm text-[#71717a] mt-4">
+      {/* Subtitle - below the inline content */}
+      <div className="relative flex flex-col items-center mt-6">
+        <p className="text-sm text-[#71717a]">
           hover over and press any of the buttons to{" "}
           <button
             onClick={toggleAllOverlays}

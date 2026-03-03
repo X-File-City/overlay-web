@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, Suspense, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Check, X, Zap, Crown, Sparkles } from 'lucide-react'
@@ -109,6 +109,34 @@ export default function PricingPage() {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth()
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [currentTier, setCurrentTier] = useState<'free' | 'pro' | 'max'>('free')
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false)
+
+  // Fetch user's current subscription
+  const fetchSubscription = useCallback(async () => {
+    if (!user?.id) return
+    
+    setSubscriptionLoading(true)
+    try {
+      const response = await fetch(`/api/subscription?userId=${encodeURIComponent(user.id)}`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.tier) {
+          setCurrentTier(data.tier)
+        }
+      }
+    } catch (err) {
+      console.error('[Pricing] Failed to fetch subscription:', err)
+    } finally {
+      setSubscriptionLoading(false)
+    }
+  }, [user?.id])
+
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      fetchSubscription()
+    }
+  }, [isAuthenticated, user?.id, fetchSubscription])
 
   const handleSubscribe = async (tier: string) => {
     // Require authentication before checkout
@@ -245,30 +273,62 @@ export default function PricingPage() {
                     ))}
                   </ul>
 
-                  {tier.ctaLink ? (
-                    <Link
-                      href={tier.ctaLink}
-                      className={`block w-full py-3 px-4 rounded-lg text-center text-sm font-medium transition-all ${
-                        tier.highlighted
-                          ? 'bg-[var(--foreground)] text-[var(--background)] hover:opacity-90'
-                          : 'bg-[var(--border)] hover:bg-[var(--muted-light)] hover:text-white'
-                      }`}
-                    >
-                      {tier.cta}
-                    </Link>
-                  ) : (
-                    <button
-                      onClick={() => handleSubscribe(tier.ctaAction!)}
-                      disabled={loading === tier.ctaAction}
-                      className={`block w-full py-3 px-4 rounded-lg text-center text-sm font-medium transition-all disabled:opacity-50 ${
-                        tier.highlighted
-                          ? 'bg-[var(--foreground)] text-background hover:opacity-90'
-                          : 'bg-[var(--border)] hover:bg-(--muted-light) hover:text-white'
-                      }`}
-                    >
-                      {loading === tier.ctaAction ? 'Loading...' : tier.cta}
-                    </button>
-                  )}
+                  {(() => {
+                    const tierAction = tier.ctaAction?.toLowerCase()
+                    const isCurrentTier = tierAction === currentTier
+                    const isDowngrade = (currentTier === 'max' && tierAction === 'pro') || 
+                                        (currentTier !== 'free' && tier.name === 'Free')
+                    const canUpgrade = tierAction && !isCurrentTier && !isDowngrade
+                    
+                    if (tier.ctaLink) {
+                      return (
+                        <Link
+                          href={tier.ctaLink}
+                          className={`block w-full py-3 px-4 rounded-lg text-center text-sm font-medium transition-all ${
+                            tier.highlighted
+                              ? 'bg-[var(--foreground)] text-[var(--background)] hover:opacity-90'
+                              : 'bg-[var(--border)] hover:bg-[var(--muted-light)] hover:text-white'
+                          }`}
+                        >
+                          {tier.cta}
+                        </Link>
+                      )
+                    }
+                    
+                    if (isCurrentTier && isAuthenticated) {
+                      return (
+                        <div className="w-full py-3 px-4 rounded-lg text-center text-sm font-medium bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          Current Plan ✓
+                        </div>
+                      )
+                    }
+                    
+                    if (isDowngrade && isAuthenticated) {
+                      return (
+                        <button
+                          disabled
+                          className="block w-full py-3 px-4 rounded-lg text-center text-sm font-medium bg-[var(--border)] opacity-50 cursor-not-allowed"
+                        >
+                          Contact support to downgrade
+                        </button>
+                      )
+                    }
+                    
+                    return (
+                      <button
+                        onClick={() => handleSubscribe(tier.ctaAction!)}
+                        disabled={loading === tier.ctaAction || subscriptionLoading}
+                        className={`block w-full py-3 px-4 rounded-lg text-center text-sm font-medium transition-all disabled:opacity-50 ${
+                          tier.highlighted
+                            ? 'bg-[var(--foreground)] text-background hover:opacity-90'
+                            : 'bg-[var(--border)] hover:bg-(--muted-light) hover:text-white'
+                        }`}
+                      >
+                        {loading === tier.ctaAction ? 'Loading...' : 
+                         (canUpgrade && currentTier !== 'free' ? `Upgrade to ${tier.name}` : tier.cta)}
+                      </button>
+                    )
+                  })()}
                 </div>
               )
             })}

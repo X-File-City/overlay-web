@@ -23,6 +23,8 @@ export default defineSchema({
     lastName: v.optional(v.string()),
     profilePictureUrl: v.optional(v.string()),
     lastLoginAt: v.optional(v.number()),
+    // Legacy field - kept for backward compatibility with existing data
+    autoRefillEnabled: v.optional(v.boolean()),
   }).index('by_userId', ['userId'])
     .index('by_email', ['email']),
 
