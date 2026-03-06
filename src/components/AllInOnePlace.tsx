@@ -275,7 +275,7 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
         )}
       </AnimatePresence>
 
-      {/* Chat Overlay - Top edge of screen */}
+      {/* Chat Overlay - Top edge of screen - z-60 to be above navbar */}
       <AnimatePresence>
         {activeOverlays.has("chat") && (
           <motion.div
@@ -283,7 +283,7 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -40 }}
             transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-            className="fixed left-1/2 -translate-x-1/2 top-0 z-10"
+            className="fixed left-1/2 -translate-x-1/2 top-0 z-60"
             style={{ marginTop: "-180px" }}
           >
             <Image
@@ -342,167 +342,165 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
         )}
       </AnimatePresence>
 
-      <div className="relative flex flex-row items-center justify-center gap-6">
-        {/* "all in" text - positioned left of pill */}
+      <div className="relative flex flex-col items-center justify-center gap-4">
+        {/* "all in" text */}
         <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a]">
           all in
         </p>
 
-        {/* Bean Control Panel - inline */}
+        {/* Bean Control Panel */}
         <div
           className="relative z-30"
           style={{ width: EXPANDED_WIDTH + 32, height: EXPANDED_HEIGHT + 32 }}
-            onMouseEnter={() => {
-              if (!isRecording) {
-                setIsHovered(true);
-                setShowButtons(true);
-              }
-            }}
-            onMouseLeave={() => {
-              if (!isRecording) {
-                setIsHovered(false);
-                setShowButtons(false);
-              }
-            }}
-          >
-            <div className="w-full h-full flex items-center justify-center">
-              {/* Control bar */}
-              <div
-                style={{
-                  width,
-                  height,
-                  borderRadius: isExpanded ? 28 : 12,
-                  background: isExpanded ? "rgba(19, 19, 19, 0.95)" : "rgba(19, 19, 19, 0.8)",
-                  border: isExpanded ? "1px solid rgba(255, 255, 255, 0.15)" : "1px solid rgba(255, 255, 255, 0.3)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: isRecording ? 10 : isExpanded ? 10 : WAVEFORM_GAP,
-                  padding: isExpanded ? "0 10px" : 0,
-                  transition: "all 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
-                }}
-              >
-                {isRecording ? (
-                  <>
-                    {/* Stop button */}
-                    <button
-                      onClick={handleStop}
-                      className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
-                      style={{
-                        background: "#dc2626",
-                        border: "1px solid rgba(255, 255, 255, 0.2)",
-                      }}
-                    >
-                      <SquareIcon />
-                    </button>
+          onMouseEnter={() => {
+            if (!isRecording) {
+              setIsHovered(true);
+              setShowButtons(true);
+            }
+          }}
+          onMouseLeave={() => {
+            if (!isRecording) {
+              setIsHovered(false);
+              setShowButtons(false);
+            }
+          }}
+        >
+          <div className="w-full h-full flex items-center justify-center">
+            {/* Control bar */}
+            <div
+              style={{
+                width,
+                height,
+                borderRadius: isExpanded ? 28 : 12,
+                background: isExpanded ? "rgba(19, 19, 19, 0.95)" : "rgba(19, 19, 19, 0.8)",
+                border: isExpanded ? "1px solid rgba(255, 255, 255, 0.15)" : "1px solid rgba(255, 255, 255, 0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: isRecording ? 10 : isExpanded ? 10 : WAVEFORM_GAP,
+                padding: isExpanded ? "0 10px" : 0,
+                transition: "all 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
+            >
+              {isRecording ? (
+                <>
+                  {/* Stop button */}
+                  <button
+                    onClick={handleStop}
+                    className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
+                    style={{
+                      background: "#dc2626",
+                      border: "1px solid rgba(255, 255, 255, 0.2)",
+                    }}
+                  >
+                    <SquareIcon />
+                  </button>
 
-                    {/* Waveform */}
-                    <div style={{ display: "flex", alignItems: "center", gap: WAVEFORM_GAP }}>
-                      {audioLevels.map((level, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            width: WAVEFORM_BAR_WIDTH,
-                            height: Math.max(2, level * WAVEFORM_BAR_MAX_HEIGHT),
-                            background: "#fff",
-                            borderRadius: 1,
-                            transition: "height 0.05s ease",
-                          }}
-                        />
-                      ))}
-                    </div>
+                  {/* Waveform */}
+                  <div style={{ display: "flex", alignItems: "center", gap: WAVEFORM_GAP }}>
+                    {audioLevels.map((level, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          width: WAVEFORM_BAR_WIDTH,
+                          height: Math.max(2, level * WAVEFORM_BAR_MAX_HEIGHT),
+                          background: "#fff",
+                          borderRadius: 1,
+                          transition: "height 0.05s ease",
+                        }}
+                      />
+                    ))}
+                  </div>
 
-                    {/* Pause/Play button */}
-                    <button
-                      onClick={handlePause}
-                      className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
-                      style={{
-                        background: "rgba(255, 255, 255, 0.08)",
-                        border: "1px solid rgba(255, 255, 255, 0.12)",
-                      }}
-                    >
-                      <span className="text-white/70">
-                        {isPaused ? <PlayIcon /> : <PauseIcon />}
-                      </span>
-                    </button>
-                  </>
-                ) : isExpanded && shouldShowButtons ? (
-                  <>
-                    <button
-                      onClick={() => toggleOverlay("transcription")}
-                      className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
-                      style={{
-                        background: showTranscription ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
-                        border: showTranscription ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
-                        animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
-                        animationDelay: hasScrollTriggeredOverlays ? "0ms" : "180ms",
-                        opacity: hasScrollTriggeredOverlays ? 1 : 0,
-                      }}
-                    >
-                      <span style={{ color: showTranscription ? "#fff" : "rgba(255,255,255,0.7)" }}>
-                        <MicIcon />
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => toggleOverlay("note")}
-                      className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
-                      style={{
-                        background: activeOverlays.has("note") ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
-                        border: activeOverlays.has("note") ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
-                        animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
-                        animationDelay: hasScrollTriggeredOverlays ? "0ms" : "200ms",
-                        opacity: hasScrollTriggeredOverlays ? 1 : 0,
-                      }}
-                    >
-                      <span style={{ color: activeOverlays.has("note") ? "#fff" : "rgba(255,255,255,0.7)" }}>
-                        <NotebookIcon />
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => toggleOverlay("chat")}
-                      className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
-                      style={{
-                        background: activeOverlays.has("chat") ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
-                        border: activeOverlays.has("chat") ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
-                        animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
-                        animationDelay: hasScrollTriggeredOverlays ? "0ms" : "220ms",
-                        opacity: hasScrollTriggeredOverlays ? 1 : 0,
-                      }}
-                    >
-                      <span style={{ color: activeOverlays.has("chat") ? "#fff" : "rgba(255,255,255,0.7)" }}>
-                        <MessageIcon />
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => toggleOverlay("browser")}
-                      className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
-                      style={{
-                        background: activeOverlays.has("browser") ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
-                        border: activeOverlays.has("browser") ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
-                        animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
-                        animationDelay: hasScrollTriggeredOverlays ? "0ms" : "240ms",
-                        opacity: hasScrollTriggeredOverlays ? 1 : 0,
-                      }}
-                    >
-                      <span style={{ color: activeOverlays.has("browser") ? "#fff" : "rgba(255,255,255,0.7)" }}>
-                        <GlobeIcon />
-                      </span>
-                    </button>
-                  </>
-                ) : null}
-              </div>
+                  {/* Pause/Play button */}
+                  <button
+                    onClick={handlePause}
+                    className="w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
+                    style={{
+                      background: "rgba(255, 255, 255, 0.08)",
+                      border: "1px solid rgba(255, 255, 255, 0.12)",
+                    }}
+                  >
+                    <span className="text-white/70">
+                      {isPaused ? <PlayIcon /> : <PauseIcon />}
+                    </span>
+                  </button>
+                </>
+              ) : isExpanded && shouldShowButtons ? (
+                <>
+                  <button
+                    onClick={() => toggleOverlay("transcription")}
+                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
+                    style={{
+                      background: showTranscription ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
+                      border: showTranscription ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
+                      animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
+                      animationDelay: hasScrollTriggeredOverlays ? "0ms" : "180ms",
+                      opacity: hasScrollTriggeredOverlays ? 1 : 0,
+                    }}
+                  >
+                    <span style={{ color: showTranscription ? "#fff" : "rgba(255,255,255,0.7)" }}>
+                      <MicIcon />
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => toggleOverlay("note")}
+                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
+                    style={{
+                      background: activeOverlays.has("note") ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
+                      border: activeOverlays.has("note") ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
+                      animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
+                      animationDelay: hasScrollTriggeredOverlays ? "0ms" : "200ms",
+                      opacity: hasScrollTriggeredOverlays ? 1 : 0,
+                    }}
+                  >
+                    <span style={{ color: activeOverlays.has("note") ? "#fff" : "rgba(255,255,255,0.7)" }}>
+                      <NotebookIcon />
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => toggleOverlay("chat")}
+                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
+                    style={{
+                      background: activeOverlays.has("chat") ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
+                      border: activeOverlays.has("chat") ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
+                      animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
+                      animationDelay: hasScrollTriggeredOverlays ? "0ms" : "220ms",
+                      opacity: hasScrollTriggeredOverlays ? 1 : 0,
+                    }}
+                  >
+                    <span style={{ color: activeOverlays.has("chat") ? "#fff" : "rgba(255,255,255,0.7)" }}>
+                      <MessageIcon />
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => toggleOverlay("browser")}
+                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110"
+                    style={{
+                      background: activeOverlays.has("browser") ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.08)",
+                      border: activeOverlays.has("browser") ? "1px solid rgba(255, 255, 255, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
+                      animation: hasScrollTriggeredOverlays ? "none" : "buttonFadeIn 0.12s ease-out forwards",
+                      animationDelay: hasScrollTriggeredOverlays ? "0ms" : "240ms",
+                      opacity: hasScrollTriggeredOverlays ? 1 : 0,
+                    }}
+                  >
+                    <span style={{ color: activeOverlays.has("browser") ? "#fff" : "rgba(255,255,255,0.7)" }}>
+                      <GlobeIcon />
+                    </span>
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
+        </div>
 
-        {/* "one place" text - positioned right of pill */}
+        {/* "one place" text */}
         <p className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#0a0a0a]">
           one place
         </p>
-      </div>
 
-      {/* Subtitle - below the inline content */}
-      <div className="relative flex flex-col items-center mt-6">
-        <p className="text-sm text-[#71717a]">
+        {/* Subtitle */}
+        <p className="text-sm text-[#71717a] mt-2">
           hover over and press any of the buttons to{" "}
           <button
             onClick={toggleAllOverlays}

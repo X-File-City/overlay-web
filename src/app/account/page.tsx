@@ -96,6 +96,7 @@ function AccountPageContent() {
   const [signingOut, setSigningOut] = useState(false)
   const [sessionCheckComplete, setSessionCheckComplete] = useState(false)
   const [showOpenInOverlayPrompt, setShowOpenInOverlayPrompt] = useState(false)
+  const [showSubscriptionUpdatedPrompt, setShowSubscriptionUpdatedPrompt] = useState(false)
 
   // Refresh session on mount to ensure we have the latest session state
   // This fixes the race condition when redirecting from auth callback
@@ -168,23 +169,20 @@ function AccountPageContent() {
                 setEntitlements(entData)
               }
             }
+            // Show "Open in Overlay" prompt for subscription update
+            setShowSubscriptionUpdatedPrompt(true)
           } else {
             setMessage({ type: 'success', text: 'Subscription activated successfully!' })
+            setShowSubscriptionUpdatedPrompt(true)
           }
         } catch (error) {
           console.error('[Account] Checkout verification error:', error)
           setMessage({ type: 'success', text: 'Subscription activated successfully!' })
+          setShowSubscriptionUpdatedPrompt(true)
         }
       }
       
       verifyCheckout()
-      
-      // If open_app param is set, attempt to open the desktop app
-      if (searchParams.get('open_app') === 'true') {
-        setTimeout(() => {
-          window.location.href = `${APP_PROTOCOL}://subscription-updated`
-        }, 1500)
-      }
     } else if (searchParams.get('canceled')) {
       setMessage({ type: 'error', text: 'Checkout was canceled.' })
     }
@@ -339,6 +337,39 @@ function AccountPageContent() {
               </button>
               <button
                 onClick={() => setShowOpenInOverlayPrompt(false)}
+                className="w-full py-2 text-sm text-zinc-500 hover:text-zinc-700"
+              >
+                Stay on this page
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subscription Updated Prompt Modal */}
+      {showSubscriptionUpdatedPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-2xl p-8 max-w-md mx-4 text-center shadow-xl">
+            <div className="w-16 h-16 mx-auto mb-4 bg-emerald-100 rounded-full flex items-center justify-center">
+              <Check className="w-8 h-8 text-emerald-600" />
+            </div>
+            <h2 className="text-xl font-serif mb-2">Subscription Activated!</h2>
+            <p className="text-zinc-500 mb-6">
+              Your subscription has been updated. Open the desktop app to start using your new features.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => {
+                  handleOpenInApp()
+                  setShowSubscriptionUpdatedPrompt(false)
+                }}
+                className="w-full py-3 px-4 bg-zinc-900 text-white rounded-xl text-sm font-medium hover:bg-zinc-800 transition-colors flex items-center justify-center gap-2"
+              >
+                Open in Overlay
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setShowSubscriptionUpdatedPrompt(false)}
                 className="w-full py-2 text-sm text-zinc-500 hover:text-zinc-700"
               >
                 Stay on this page

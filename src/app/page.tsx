@@ -7,7 +7,7 @@ import { VoiceDemo } from "@/components/VoiceDemo";
 import { OverlayDemo } from "@/components/OverlayDemo";
 import { AllInOnePlace } from "@/components/AllInOnePlace";
 import { useLatestRelease } from "@/hooks/useLatestRelease";
-import { Navbar, HeroLinks } from "@/components/Navbar";
+import { Navbar } from "@/components/Navbar";
 
 export default function Home() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -132,7 +132,7 @@ export default function Home() {
         {/* Logo */}
         <motion.div
           style={{ scale: logoScale, opacity: logoOpacity }}
-          className="mb-1"
+          className="-mb-2"
         >
           <Image
             src="/assets/overlay-logo.png"
@@ -165,10 +165,6 @@ export default function Home() {
           download for mac
         </a>
 
-        {/* Navigation Links */}
-        <div className="mt-4">
-          <HeroLinks />
-        </div>
       </motion.section>
 
       {/* Spacer for scroll */}
@@ -258,7 +254,7 @@ export default function Home() {
         style={{ opacity: notesOpacity, pointerEvents: notesPointer }}
         className="fixed inset-0 flex items-center justify-center px-6 py-20 z-10"
       >
-        <div className="max-w-5xl mx-auto w-full flex flex-col items-center gap-12">
+        <div className="max-w-3xl mx-auto w-full flex flex-col items-center gap-8">
           <div className="relative text-center">
             <h3 className="font-serif text-5xl md:text-6xl lg:text-7xl mb-4">notes</h3>
             <p className="text-lg md:text-xl text-[#71717a]">capture that thought</p>

@@ -21,7 +21,7 @@ interface AuthState {
 
 export function Navbar({ scrollYProgress }: NavbarProps) {
   const [authState, setAuthState] = useState<AuthState>({ authenticated: false })
-  const [isVisible, setIsVisible] = useState(false)
+  const [isPastHero, setIsPastHero] = useState(false)
 
   // Check auth state on mount
   useEffect(() => {
@@ -37,35 +37,31 @@ export function Navbar({ scrollYProgress }: NavbarProps) {
     checkAuth()
   }, [])
 
-  // Track scroll position to show/hide navbar
+  // Track scroll position to change navbar layout
   useEffect(() => {
-    const checkVisibility = () => {
+    const checkPosition = () => {
       const progress = scrollYProgress.get()
-      setIsVisible(progress > 0.06)
+      setIsPastHero(progress > 0.06)
     }
     
     // Check immediately
-    checkVisibility()
+    checkPosition()
     
-    // Set up interval to check (since we can't directly subscribe to MotionValue in this way)
-    const interval = setInterval(checkVisibility, 100)
+    // Set up interval to check
+    const interval = setInterval(checkPosition, 50)
     
     return () => clearInterval(interval)
   }, [scrollYProgress])
 
-  if (!isVisible) return null
-
   return (
-    <motion.nav
-      initial={{ opacity: 0, y: -20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      transition={{ duration: 0.3 }}
-      className="fixed top-0 left-0 right-0 z-50 px-6 py-4"
-    >
-      <div className="max-w-6xl mx-auto">
-        <div className="backdrop-blur-xl bg-white/80 border border-[var(--border)] rounded-2xl px-6 py-3 flex items-center justify-between shadow-lg">
-          {/* Logo */}
+    <nav className="fixed top-0 left-0 right-0 z-50 py-6 px-8">
+      <div className="max-w-6xl mx-auto flex items-center justify-between">
+        {/* Logo - always visible, fades in when past hero */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: isPastHero ? 1 : 0 }}
+          transition={{ duration: 0.3 }}
+        >
           <Link href="/" className="flex items-center gap-2">
             <Image
               src="/assets/overlay-logo.png"
@@ -73,50 +69,50 @@ export function Navbar({ scrollYProgress }: NavbarProps) {
               width={28}
               height={28}
             />
-            <span className="font-serif text-lg">overlay</span>
+            <span className="font-serif text-xl">overlay</span>
           </Link>
+        </motion.div>
 
-          {/* Navigation Links */}
-          <div className="flex items-center gap-6">
+        {/* Navigation Links - always on the right */}
+        <div className="flex items-center gap-6">
+          <Link
+            href="/manifesto"
+            className="text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+          >
+            manifesto
+          </Link>
+          <a
+            href="https://x.com/dsllwn/status/2015923879668044002"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+          >
+            demo
+          </a>
+          <Link
+            href="/pricing"
+            className="text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
+          >
+            pricing
+          </Link>
+          {authState.authenticated ? (
             <Link
-              href="/manifesto"
-              className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+              href="/account"
+              className="text-sm px-4 py-2 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
             >
-              manifesto
+              account
             </Link>
-            <a
-              href="https://x.com/dsllwn/status/2015923879668044002"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
-            >
-              demo
-            </a>
+          ) : (
             <Link
-              href="/pricing"
-              className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+              href="/auth/sign-in"
+              className="text-sm px-4 py-2 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
             >
-              pricing
+              sign in
             </Link>
-            {authState.authenticated ? (
-              <Link
-                href="/account"
-                className="text-sm px-4 py-2 bg-[var(--foreground)] text-[var(--background)] rounded-lg font-medium hover:opacity-90 transition-opacity"
-              >
-                account
-              </Link>
-            ) : (
-              <Link
-                href="/auth/sign-in"
-                className="text-sm px-4 py-2 bg-[var(--foreground)] text-[var(--background)] rounded-lg font-medium hover:opacity-90 transition-opacity"
-              >
-                sign in
-              </Link>
-            )}
-          </div>
+          )}
         </div>
       </div>
-    </motion.nav>
+    </nav>
   )
 }
 
