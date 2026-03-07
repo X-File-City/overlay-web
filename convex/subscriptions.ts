@@ -1,10 +1,31 @@
 import { v } from 'convex/values'
 import { mutation, query, internalMutation } from './_generated/server'
 
+function validateAccessToken(accessToken: string): boolean {
+  if (!accessToken || typeof accessToken !== 'string') return false
+  const trimmed = accessToken.trim()
+  if (trimmed.length < 20) return false
+  const parts = trimmed.split('.')
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(parts[1], 'base64url').toString('utf-8')
+      )
+      if (typeof payload.exp === 'number' && payload.exp * 1000 < Date.now()) {
+        return false
+      }
+    } catch {
+      // Accept as opaque token
+    }
+  }
+  return true
+}
+
 // Get subscription by userId
 export const getByUserId = query({
-  args: { userId: v.string() },
-  handler: async (ctx, { userId }) => {
+  args: { accessToken: v.string(), userId: v.string() },
+  handler: async (ctx, { accessToken, userId }) => {
+    if (!validateAccessToken(accessToken)) return null
     return await ctx.db
       .query('subscriptions')
       .withIndex('by_userId', (q) => q.eq('userId', userId))
@@ -17,8 +38,9 @@ export const getSubscription = getByUserId
 
 // Get subscription by email (for cross-installation sync)
 export const getByEmail = query({
-  args: { email: v.string() },
-  handler: async (ctx, { email }) => {
+  args: { accessToken: v.string(), email: v.string() },
+  handler: async (ctx, { accessToken, email }) => {
+    if (!validateAccessToken(accessToken)) return null
     return await ctx.db
       .query('subscriptions')
       .withIndex('by_email', (q) => q.eq('email', email))
@@ -59,10 +81,11 @@ export const linkSubscriptionToUser = internalMutation({
   }
 })
 
-// Get subscription by Stripe customer ID (for webhook lookups)
+// Get subscription by Stripe customer ID (for webhook lookups — internal only)
 export const getByStripeCustomerId = query({
-  args: { stripeCustomerId: v.string() },
-  handler: async (ctx, { stripeCustomerId }) => {
+  args: { accessToken: v.string(), stripeCustomerId: v.string() },
+  handler: async (ctx, { accessToken, stripeCustomerId }) => {
+    if (!validateAccessToken(accessToken)) return null
     return await ctx.db
       .query('subscriptions')
       .filter((q) => q.eq(q.field('stripeCustomerId'), stripeCustomerId))

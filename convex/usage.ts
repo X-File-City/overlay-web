@@ -36,8 +36,11 @@ function validateAccessToken(accessToken: string): boolean {
 }
 
 export const getEntitlements = query({
-  args: { userId: v.string() },
-  handler: async (ctx, { userId }) => {
+  args: { accessToken: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, { accessToken, userId }) => {
+    if (accessToken && !validateAccessToken(accessToken)) {
+      return null
+    }
     const subscription = await ctx.db
       .query('subscriptions')
       .withIndex('by_userId', (q) => q.eq('userId', userId))

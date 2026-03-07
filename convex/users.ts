@@ -1,16 +1,40 @@
 import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 
+function validateAccessToken(accessToken: string): boolean {
+  if (!accessToken || typeof accessToken !== 'string') return false
+  const trimmed = accessToken.trim()
+  if (trimmed.length < 20) return false
+  const parts = trimmed.split('.')
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(parts[1], 'base64url').toString('utf-8')
+      )
+      if (typeof payload.exp === 'number' && payload.exp * 1000 < Date.now()) {
+        return false
+      }
+    } catch {
+      // Accept as opaque token
+    }
+  }
+  return true
+}
+
 // Sync user profile from auth system (called after login)
 export const syncUserProfile = mutation({
   args: {
+    accessToken: v.string(),
     userId: v.string(),
     email: v.string(),
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),
     profilePictureUrl: v.optional(v.string()),
   },
-  handler: async (ctx, { userId, email, firstName, lastName, profilePictureUrl }) => {
+  handler: async (ctx, { accessToken, userId, email, firstName, lastName, profilePictureUrl }) => {
+    if (!validateAccessToken(accessToken)) {
+      throw new Error('Unauthorized: invalid or expired access token')
+    }
     // Check if subscription record exists
     const existing = await ctx.db
       .query('subscriptions')
@@ -47,8 +71,11 @@ export const syncUserProfile = mutation({
 
 // Get user profile with subscription and usage data (for account page)
 export const getUserProfile = query({
-  args: { userId: v.string() },
-  handler: async (ctx, { userId }) => {
+  args: { accessToken: v.string(), userId: v.string() },
+  handler: async (ctx, { accessToken, userId }) => {
+    if (!validateAccessToken(accessToken)) {
+      return null
+    }
     // Get subscription
     const subscription = await ctx.db
       .query('subscriptions')
@@ -136,6 +163,7 @@ export const getUserProfile = query({
 // Record feature usage (called from desktop app)
 export const recordFeatureUsage = mutation({
   args: {
+    accessToken: v.string(),
     userId: v.string(),
     feature: v.union(
       v.literal('voice_chat'),
@@ -146,7 +174,10 @@ export const recordFeatureUsage = mutation({
     ),
     value: v.number(), // minutes for voice_chat, count for others
   },
-  handler: async (ctx, { userId, feature, value }) => {
+  handler: async (ctx, { accessToken, userId, feature, value }) => {
+    if (!validateAccessToken(accessToken)) {
+      throw new Error('Unauthorized: invalid or expired access token')
+    }
     // Get subscription for billing period
     const subscription = await ctx.db
       .query('subscriptions')
