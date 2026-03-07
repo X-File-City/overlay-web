@@ -3,14 +3,27 @@
 
 // Use dev Convex URL in development, production URL in production
 const IS_DEV = process.env.NODE_ENV === 'development'
-const CONVEX_URL = IS_DEV 
-  ? (process.env.DEV_NEXT_PUBLIC_CONVEX_URL || process.env.NEXT_PUBLIC_CONVEX_URL)
-  : process.env.NEXT_PUBLIC_CONVEX_URL
+
+function resolveConvexUrl(): { url: string | undefined; source: string } {
+  if (IS_DEV && process.env.DEV_NEXT_PUBLIC_CONVEX_URL) {
+    return { url: process.env.DEV_NEXT_PUBLIC_CONVEX_URL, source: 'DEV_NEXT_PUBLIC_CONVEX_URL' }
+  }
+
+  if (process.env.NEXT_PUBLIC_CONVEX_URL) {
+    return { url: process.env.NEXT_PUBLIC_CONVEX_URL, source: 'NEXT_PUBLIC_CONVEX_URL' }
+  }
+
+  return { url: undefined, source: 'unset' }
+}
+
+const { url: CONVEX_URL, source: CONVEX_URL_SOURCE } = resolveConvexUrl()
 
 if (!CONVEX_URL) {
   console.warn('CONVEX_URL is not set')
 } else {
-  console.log(`[Convex] Using ${IS_DEV ? 'DEV' : 'PROD'} environment: ${CONVEX_URL}`)
+  console.log(
+    `[Convex] Using ${IS_DEV ? 'DEV' : 'PROD'} environment: ${CONVEX_URL} (source: ${CONVEX_URL_SOURCE})`
+  )
 }
 
 interface ConvexResponse<T> {

@@ -146,6 +146,7 @@ export const recordBatch = mutation({
           v.literal('ask'),
           v.literal('write'),
           v.literal('agent'),
+          v.literal('embedding'),
           v.literal('transcription')
         ),
         modelId: v.optional(v.string()),
@@ -229,6 +230,8 @@ export const recordBatch = mutation({
         } else if (event.type === 'agent') {
           await ctx.db.patch(dailyUsage._id, { agentCount: dailyUsage.agentCount + 1 })
           dailyUsage.agentCount++
+        } else if (event.type === 'embedding') {
+          // Embedding usage contributes to billing credits only, not daily action counts.
         } else if (event.type === 'transcription') {
           // For transcription, cost represents seconds
           const additionalSeconds = Math.round(event.cost)
@@ -264,6 +267,7 @@ export const recordUsage = mutation({
       v.literal('ask'),
       v.literal('write'),
       v.literal('agent'),
+      v.literal('embedding'),
       v.literal('transcription')
     ),
     modelId: v.optional(v.string()),
@@ -303,6 +307,8 @@ export const recordUsage = mutation({
         await ctx.db.patch(dailyUsage._id, { writeCount: dailyUsage.writeCount + 1 })
       } else if (args.type === 'agent') {
         await ctx.db.patch(dailyUsage._id, { agentCount: dailyUsage.agentCount + 1 })
+      } else if (args.type === 'embedding') {
+        // Embedding usage contributes to billing credits only, not daily action counts.
       } else if (args.type === 'transcription') {
         const additionalSeconds = Math.round(args.cost)
         const currentSeconds = dailyUsage.transcriptionSeconds ?? 0
