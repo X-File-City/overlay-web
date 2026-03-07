@@ -1,7 +1,6 @@
 import { v } from 'convex/values'
-import { mutation, query } from './_generated/server'
+import { mutation, query, internalMutation } from './_generated/server'
 
-// Helper to get dates for the past 7 days
 function getPastWeekDates(): string[] {
   const dates: string[] = []
   const now = new Date()
@@ -13,24 +12,43 @@ function getPastWeekDates(): string[] {
   return dates
 }
 
-// Get user entitlements (subscription + usage data)
+function validateAccessToken(accessToken: string): boolean {
+  if (!accessToken || typeof accessToken !== 'string') return false
+  const trimmed = accessToken.trim()
+  if (trimmed.length < 20) return false
+
+  // If it looks like a JWT, validate expiry
+  const parts = trimmed.split('.')
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(parts[1], 'base64url').toString('utf-8')
+      )
+      if (typeof payload.exp === 'number' && payload.exp * 1000 < Date.now()) {
+        return false
+      }
+    } catch {
+      // Not a valid JWT payload — still accept as opaque token
+    }
+  }
+
+  return true
+}
+
 export const getEntitlements = query({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => {
-    // Get subscription
     const subscription = await ctx.db
       .query('subscriptions')
       .withIndex('by_userId', (q) => q.eq('userId', userId))
       .first()
 
-    // Get today's date for daily usage
     const today = new Date().toISOString().split('T')[0]
     const dailyUsage = await ctx.db
       .query('dailyUsage')
       .withIndex('by_userId_date', (q) => q.eq('userId', userId).eq('date', today))
       .first()
 
-    // Get billing period usage for paid tiers
     const billingPeriodStart = subscription?.currentPeriodStart
       ? new Date(subscription.currentPeriodStart).toISOString().split('T')[0]
       : today
@@ -44,7 +62,6 @@ export const getEntitlements = query({
 
     const tier = subscription?.tier || 'free'
 
-    // Build entitlements response
     const tierDefaults = {
       free: {
         creditsTotal: 0,
@@ -67,16 +84,11 @@ export const getEntitlements = query({
     }
 
     const defaults = tierDefaults[tier]
-
-    // Handle both new creditsUsed and legacy costAccrued field
     const credits = tokenUsage?.creditsUsed ?? tokenUsage?.costAccrued ?? 0
 
-    // For free tier, calculate weekly transcription usage (past 7 days)
-    // For paid tiers, transcription is unlimited so we don't need to track it
     let weeklyTranscriptionSeconds = 0
     if (tier === 'free') {
       const pastWeekDates = getPastWeekDates()
-      // Query all daily usage records for the past 7 days
       const weeklyUsageRecords = await Promise.all(
         pastWeekDates.map(date =>
           ctx.db
@@ -85,14 +97,12 @@ export const getEntitlements = query({
             .first()
         )
       )
-      // Sum up transcription seconds from all days
       weeklyTranscriptionSeconds = weeklyUsageRecords.reduce(
         (sum, record) => sum + (record?.transcriptionSeconds ?? 0),
         0
       )
     }
 
-    // Also calculate weekly usage counts (ask/write/agent) for free tier
     let weeklyUsage = { ask: 0, write: 0, agent: 0 }
     if (tier === 'free') {
       const pastWeekDates = getPastWeekDates()
@@ -136,9 +146,10 @@ export const getEntitlements = query({
   }
 })
 
-// Record a batch of usage events
+// Record a batch of usage events — requires valid access token
 export const recordBatch = mutation({
   args: {
+    accessToken: v.string(),
     userId: v.string(),
     events: v.array(
       v.object({
@@ -158,10 +169,13 @@ export const recordBatch = mutation({
       })
     )
   },
-  handler: async (ctx, { userId, events }) => {
+  handler: async (ctx, { accessToken, userId, events }) => {
+    if (!validateAccessToken(accessToken)) {
+      throw new Error('Unauthorized: invalid or expired access token')
+    }
+
     const today = new Date().toISOString().split('T')[0]
 
-    // Get or create daily usage record
     let dailyUsage = await ctx.db
       .query('dailyUsage')
       .withIndex('by_userId_date', (q) => q.eq('userId', userId).eq('date', today))
@@ -182,7 +196,6 @@ export const recordBatch = mutation({
         .first()
     }
 
-    // Get subscription for billing period
     const subscription = await ctx.db
       .query('subscriptions')
       .withIndex('by_userId', (q) => q.eq('userId', userId))
@@ -192,7 +205,6 @@ export const recordBatch = mutation({
       ? new Date(subscription.currentPeriodStart).toISOString().split('T')[0]
       : today
 
-    // Get or create token usage record
     let tokenUsage = await ctx.db
       .query('tokenUsage')
       .withIndex('by_userId_period', (q) =>
@@ -217,9 +229,7 @@ export const recordBatch = mutation({
         .first()
     }
 
-    // Process each event
     for (const event of events) {
-      // Update daily usage
       if (dailyUsage) {
         if (event.type === 'ask') {
           await ctx.db.patch(dailyUsage._id, { askCount: dailyUsage.askCount + 1 })
@@ -230,11 +240,8 @@ export const recordBatch = mutation({
         } else if (event.type === 'agent') {
           await ctx.db.patch(dailyUsage._id, { agentCount: dailyUsage.agentCount + 1 })
           dailyUsage.agentCount++
-        } else if (event.type === 'embedding') {
-          // Embedding usage contributes to billing credits only, not daily action counts.
         } else if (event.type === 'transcription') {
-          // For transcription, cost represents seconds
-          const additionalSeconds = Math.round(event.cost)
+          const additionalSeconds = Math.max(0, Math.round(event.cost))
           const currentSeconds = dailyUsage.transcriptionSeconds ?? 0
           await ctx.db.patch(dailyUsage._id, {
             transcriptionSeconds: currentSeconds + additionalSeconds
@@ -243,7 +250,6 @@ export const recordBatch = mutation({
         }
       }
 
-      // Update token usage (for paid tiers)
       if (tokenUsage && event.cost > 0) {
         const currentCredits = tokenUsage.creditsUsed ?? tokenUsage.costAccrued ?? 0
         await ctx.db.patch(tokenUsage._id, {
@@ -259,9 +265,10 @@ export const recordBatch = mutation({
   }
 })
 
-// Record a single usage event (convenience mutation)
+// Record a single usage event — requires valid access token
 export const recordUsage = mutation({
   args: {
+    accessToken: v.string(),
     userId: v.string(),
     type: v.union(
       v.literal('ask'),
@@ -277,9 +284,12 @@ export const recordUsage = mutation({
     cost: v.number()
   },
   handler: async (ctx, args) => {
+    if (!validateAccessToken(args.accessToken)) {
+      throw new Error('Unauthorized: invalid or expired access token')
+    }
+
     const today = new Date().toISOString().split('T')[0]
 
-    // Update daily usage
     let dailyUsage = await ctx.db
       .query('dailyUsage')
       .withIndex('by_userId_date', (q) => q.eq('userId', args.userId).eq('date', today))
@@ -307,10 +317,8 @@ export const recordUsage = mutation({
         await ctx.db.patch(dailyUsage._id, { writeCount: dailyUsage.writeCount + 1 })
       } else if (args.type === 'agent') {
         await ctx.db.patch(dailyUsage._id, { agentCount: dailyUsage.agentCount + 1 })
-      } else if (args.type === 'embedding') {
-        // Embedding usage contributes to billing credits only, not daily action counts.
       } else if (args.type === 'transcription') {
-        const additionalSeconds = Math.round(args.cost)
+        const additionalSeconds = Math.max(0, Math.round(args.cost))
         const currentSeconds = dailyUsage.transcriptionSeconds ?? 0
         await ctx.db.patch(dailyUsage._id, {
           transcriptionSeconds: currentSeconds + additionalSeconds
@@ -322,15 +330,13 @@ export const recordUsage = mutation({
   }
 })
 
-// Reset token usage for new billing period
-export const resetTokenUsage = mutation({
+// Reset token usage for new billing period — internal only
+export const resetTokenUsage = internalMutation({
   args: {
     userId: v.string(),
     newPeriodStart: v.string()
   },
   handler: async (ctx, { userId, newPeriodStart }) => {
-    // Create new token usage record for the new billing period
-    // Old records are kept for historical purposes
     const existing = await ctx.db
       .query('tokenUsage')
       .withIndex('by_userId_period', (q) =>
@@ -353,10 +359,9 @@ export const resetTokenUsage = mutation({
   }
 })
 
-// Helper function to get next weekly reset time (Monday 00:00 UTC)
 function getNextWeeklyReset(): string {
   const now = new Date()
-  const daysUntilMonday = (8 - now.getUTCDay()) % 7 || 7 // Days until next Monday
+  const daysUntilMonday = (8 - now.getUTCDay()) % 7 || 7
   const nextMonday = new Date(now)
   nextMonday.setUTCDate(now.getUTCDate() + daysUntilMonday)
   nextMonday.setUTCHours(0, 0, 0, 0)

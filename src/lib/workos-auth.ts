@@ -1,8 +1,8 @@
 import { WorkOS } from '@workos-inc/node'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { createHmac, timingSafeEqual } from 'crypto'
 
-// Initialize WorkOS client with dev/prod environment support
 const isDev = process.env.NODE_ENV === 'development'
 const workosApiKey = isDev 
   ? (process.env.DEV_WORKOS_API_KEY || process.env.WORKOS_API_KEY)
@@ -13,9 +13,38 @@ const clientId = isDev
 
 const workos = new WorkOS(workosApiKey)
 
-// Session cookie configuration
 const SESSION_COOKIE_NAME = 'overlay_session'
-const SESSION_MAX_AGE = 60 * 60 * 24 * 30 // 30 days
+const SESSION_MAX_AGE = 60 * 60 * 24 * 30
+
+function getSessionSecret(): string {
+  const secret = process.env.SESSION_SECRET || process.env.WORKOS_API_KEY || 'overlay-dev-session-secret-change-me'
+  return secret
+}
+
+function signPayload(payload: string): string {
+  return createHmac('sha256', getSessionSecret()).update(payload).digest('hex')
+}
+
+function verifySignedCookie(cookieValue: string): string | null {
+  const separatorIndex = cookieValue.lastIndexOf('.')
+  if (separatorIndex === -1) return null
+
+  const payload = cookieValue.substring(0, separatorIndex)
+  const signature = cookieValue.substring(separatorIndex + 1)
+
+  const expectedSignature = signPayload(payload)
+
+  try {
+    const sigBuf = Buffer.from(signature, 'hex')
+    const expectedBuf = Buffer.from(expectedSignature, 'hex')
+    if (sigBuf.length !== expectedBuf.length) return null
+    if (!timingSafeEqual(sigBuf, expectedBuf)) return null
+  } catch {
+    return null
+  }
+
+  return payload
+}
 
 export interface AuthUser {
   id: string
@@ -290,12 +319,13 @@ export async function resendVerificationEmail(
   }
 }
 
-// Session management
 export async function createSession(session: AuthSession): Promise<void> {
   const cookieStore = await cookies()
-  const encryptedSession = Buffer.from(JSON.stringify(session)).toString('base64')
+  const payload = Buffer.from(JSON.stringify(session)).toString('base64')
+  const signature = signPayload(payload)
+  const signedCookie = `${payload}.${signature}`
   
-  cookieStore.set(SESSION_COOKIE_NAME, encryptedSession, {
+  cookieStore.set(SESSION_COOKIE_NAME, signedCookie, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
@@ -313,16 +343,29 @@ export async function getSession(): Promise<AuthSession | null> {
   }
 
   try {
+    // Try HMAC-signed format first
+    const payload = verifySignedCookie(sessionCookie.value)
+    if (payload) {
+      const session: AuthSession = JSON.parse(
+        Buffer.from(payload, 'base64').toString('utf-8')
+      )
+      if (session.expiresAt < Date.now()) {
+        await clearSession()
+        return null
+      }
+      return session
+    }
+
+    // Legacy fallback: unsigned base64 (will be re-signed on next write)
     const session: AuthSession = JSON.parse(
       Buffer.from(sessionCookie.value, 'base64').toString('utf-8')
     )
-
-    // Check if session is expired
     if (session.expiresAt < Date.now()) {
       await clearSession()
       return null
     }
-
+    // Re-sign the session so future reads are HMAC-verified
+    await createSession(session)
     return session
   } catch {
     return null

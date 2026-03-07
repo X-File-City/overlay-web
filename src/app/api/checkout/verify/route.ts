@@ -39,8 +39,8 @@ export async function POST(request: NextRequest) {
     const subscription = checkoutSession.subscription as import('stripe').Stripe.Subscription
     const tier = checkoutSession.metadata?.tier as 'pro' | 'max' || 'pro'
 
-    // Update subscription in Convex using string path
     await convex.mutation('subscriptions:upsertSubscription', {
+      serverSecret: process.env.INTERNAL_API_SECRET || '',
       userId: authSession.user.id,
       stripeCustomerId: checkoutSession.customer as string,
       stripeSubscriptionId: subscription.id,

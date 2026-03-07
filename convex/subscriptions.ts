@@ -27,36 +27,30 @@ export const getByEmail = query({
 })
 
 // Link existing subscription to new userId (for reinstallation scenarios)
-// This updates the userId on an existing subscription found by email
-export const linkSubscriptionToUser = mutation({
+export const linkSubscriptionToUser = internalMutation({
   args: {
     email: v.string(),
     newUserId: v.string()
   },
   handler: async (ctx, { email, newUserId }) => {
-    // First check if newUserId already has a subscription
     const existingByUserId = await ctx.db
       .query('subscriptions')
       .withIndex('by_userId', (q) => q.eq('userId', newUserId))
       .first()
 
     if (existingByUserId) {
-      // User already has a subscription, no need to link
       return { success: true, action: 'already_linked', subscription: existingByUserId }
     }
 
-    // Find subscription by email
     const subscriptionByEmail = await ctx.db
       .query('subscriptions')
       .withIndex('by_email', (q) => q.eq('email', email))
       .first()
 
     if (!subscriptionByEmail) {
-      // No subscription found for this email
       return { success: false, action: 'not_found' }
     }
 
-    // Update the subscription to use the new userId
     await ctx.db.patch(subscriptionByEmail._id, {
       userId: newUserId
     })
@@ -76,115 +70,17 @@ export const getByStripeCustomerId = query({
   }
 })
 
-// Create or update subscription from Stripe webhook
-export const upsertFromStripe = mutation({
-  args: {
-    userId: v.string(),
-    email: v.optional(v.string()),
-    name: v.optional(v.string()),
-    stripeCustomerId: v.string(),
-    stripeSubscriptionId: v.string(),
-    tier: v.union(v.literal('free'), v.literal('pro'), v.literal('max')),
-    status: v.union(
-      v.literal('active'),
-      v.literal('canceled'),
-      v.literal('past_due'),
-      v.literal('trialing')
-    ),
-    currentPeriodStart: v.number(),
-    currentPeriodEnd: v.number()
-  },
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_userId', (q) => q.eq('userId', args.userId))
-      .first()
+// Server-side only: validate the internal secret before allowing mutation
+function validateServerSecret(secret: string | undefined): boolean {
+  const expected = process.env.INTERNAL_API_SECRET
+  if (!expected || !secret) return false
+  return secret === expected
+}
 
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        email: args.email,
-        name: args.name,
-        stripeCustomerId: args.stripeCustomerId,
-        stripeSubscriptionId: args.stripeSubscriptionId,
-        tier: args.tier,
-        status: args.status,
-        currentPeriodStart: args.currentPeriodStart,
-        currentPeriodEnd: args.currentPeriodEnd
-      })
-      return existing._id
-    } else {
-      return await ctx.db.insert('subscriptions', {
-        userId: args.userId,
-        email: args.email,
-        name: args.name,
-        stripeCustomerId: args.stripeCustomerId,
-        stripeSubscriptionId: args.stripeSubscriptionId,
-        tier: args.tier,
-        status: args.status,
-        currentPeriodStart: args.currentPeriodStart,
-        currentPeriodEnd: args.currentPeriodEnd
-      })
-    }
-  }
-})
-
-// Update subscription status (for cancellation, etc.)
-export const updateStatus = mutation({
-  args: {
-    userId: v.string(),
-    status: v.union(
-      v.literal('active'),
-      v.literal('canceled'),
-      v.literal('past_due'),
-      v.literal('trialing')
-    )
-  },
-  handler: async (ctx, { userId, status }) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_userId', (q) => q.eq('userId', userId))
-      .first()
-
-    if (subscription) {
-      await ctx.db.patch(subscription._id, { status })
-
-      // If canceled, downgrade to free tier
-      if (status === 'canceled') {
-        await ctx.db.patch(subscription._id, { tier: 'free' })
-      }
-
-      return { success: true }
-    }
-
-    return { success: false, error: 'Subscription not found' }
-  }
-})
-
-// Downgrade user to free tier (for cancellation)
-export const downgradeToFree = mutation({
-  args: { userId: v.string() },
-  handler: async (ctx, { userId }) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_userId', (q) => q.eq('userId', userId))
-      .first()
-
-    if (subscription) {
-      await ctx.db.patch(subscription._id, {
-        tier: 'free',
-        status: 'canceled'
-      })
-      return { success: true }
-    }
-
-    return { success: false, error: 'Subscription not found' }
-  }
-})
-
-// Alias for webhook compatibility - upsertSubscription maps to upsertFromStripe
-// but with optional fields for partial updates
+// Upsert subscription — requires server secret (called from authenticated Next.js routes)
 export const upsertSubscription = mutation({
   args: {
+    serverSecret: v.string(),
     userId: v.string(),
     email: v.optional(v.string()),
     name: v.optional(v.string()),
@@ -203,6 +99,10 @@ export const upsertSubscription = mutation({
     currentPeriodEnd: v.optional(v.number())
   },
   handler: async (ctx, args) => {
+    if (!validateServerSecret(args.serverSecret)) {
+      throw new Error('Unauthorized: invalid server secret')
+    }
+
     const existing = await ctx.db
       .query('subscriptions')
       .withIndex('by_userId', (q) => q.eq('userId', args.userId))
@@ -237,17 +137,72 @@ export const upsertSubscription = mutation({
   }
 })
 
-// Reset daily usage at midnight (called by scheduled job)
-export const resetDailyUsage = mutation({
+// Update subscription status — internal only
+export const updateStatus = internalMutation({
+  args: {
+    userId: v.string(),
+    status: v.union(
+      v.literal('active'),
+      v.literal('canceled'),
+      v.literal('past_due'),
+      v.literal('trialing')
+    )
+  },
+  handler: async (ctx, { userId, status }) => {
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .first()
+
+    if (subscription) {
+      await ctx.db.patch(subscription._id, { status })
+      if (status === 'canceled') {
+        await ctx.db.patch(subscription._id, { tier: 'free' })
+      }
+      return { success: true }
+    }
+
+    return { success: false, error: 'Subscription not found' }
+  }
+})
+
+// Downgrade user to free tier — requires server secret
+export const downgradeToFree = mutation({
+  args: {
+    serverSecret: v.string(),
+    userId: v.string()
+  },
+  handler: async (ctx, { serverSecret, userId }) => {
+    if (!validateServerSecret(serverSecret)) {
+      throw new Error('Unauthorized: invalid server secret')
+    }
+
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .first()
+
+    if (subscription) {
+      await ctx.db.patch(subscription._id, {
+        tier: 'free',
+        status: 'canceled'
+      })
+      return { success: true }
+    }
+
+    return { success: false, error: 'Subscription not found' }
+  }
+})
+
+// Reset daily usage — internal only (called by scheduled job)
+export const resetDailyUsage = internalMutation({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {
-    // Get all daily usage records for the given date
     const usageRecords = await ctx.db
       .query('dailyUsage')
       .filter((q) => q.lt(q.field('date'), date))
       .collect()
 
-    // Delete old records (keep only today's)
     let deleted = 0
     for (const record of usageRecords) {
       await ctx.db.delete(record._id)
@@ -328,11 +283,9 @@ export const updateStatusInternal = internalMutation({
 
     if (subscription) {
       await ctx.db.patch(subscription._id, { status })
-
       if (status === 'canceled') {
         await ctx.db.patch(subscription._id, { tier: 'free' })
       }
-
       return { success: true }
     }
 
@@ -340,8 +293,8 @@ export const updateStatusInternal = internalMutation({
   }
 })
 
-// Manual fix for subscriptions with NaN period values
-export const fixSubscriptionPeriods = mutation({
+// Fix subscription periods — internal only (admin use)
+export const fixSubscriptionPeriods = internalMutation({
   args: {
     userId: v.string(),
     email: v.optional(v.string()),
@@ -370,4 +323,3 @@ export const fixSubscriptionPeriods = mutation({
     return { success: true }
   }
 })
-
