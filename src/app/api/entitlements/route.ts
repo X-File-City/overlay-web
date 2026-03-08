@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
     const dailyUsage = convexData?.dailyUsage || { ask: 0, write: 0, agent: 0 }
     const dailyLimits = convexData?.dailyLimits || { ask: 15, write: 15, agent: 15 }
     const creditsUsed = convexData?.creditsUsed || 0
-    const creditsTotal = convexData?.creditsTotal || 0
+    const creditsTotal = (convexData?.creditsTotal || 0) * 100 // Convex stores dollars, app uses cents
     const transcriptionSecondsUsed = convexData?.transcriptionSecondsUsed || 0
     const transcriptionSecondsLimit = convexData?.transcriptionSecondsLimit || 600
 
