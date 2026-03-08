@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe, getBaseUrl } from '@/lib/stripe'
+import { getSession } from '@/lib/workos-auth'
 import { convex } from '@/lib/convex'
 
 interface Subscription {
@@ -11,8 +12,14 @@ interface Subscription {
 
 export async function POST(request: NextRequest) {
   try {
+    const authSession = await getSession()
+    if (!authSession || !authSession.user) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
+    }
+
+    const userId = authSession.user.id
     const body = await request.json()
-    const { userId, sessionId } = body
+    const { sessionId } = body
 
     let customerId: string | undefined
 
@@ -23,8 +30,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Otherwise, look up customer from our database
-    if (!customerId && userId) {
-      const subscription = await convex.query<Subscription>('subscriptions:getSubscription', { userId })
+    if (!customerId) {
+      const accessToken = process.env.INTERNAL_API_SECRET || ''
+      const subscription = await convex.query<Subscription>('subscriptions:getByUserId', { accessToken, userId })
       customerId = subscription?.stripeCustomerId
     }
 

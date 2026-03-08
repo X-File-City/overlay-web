@@ -271,12 +271,11 @@ function AccountPageContent() {
     setActionLoading('billing')
     try {
       const sessionId = searchParams.get('session_id')
-      const userId = localStorage.getItem('userId') || 'demo-user'
 
       const response = await fetch('/api/portal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, sessionId })
+        body: JSON.stringify({ sessionId })
       })
 
       const data = await response.json()
