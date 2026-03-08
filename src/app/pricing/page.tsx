@@ -46,7 +46,7 @@ const tiers: Tier[] = [
       { name: 'Priority support', included: false }
     ],
     cta: 'Download Free',
-    ctaLink: '/#download',
+    ctaLink: '/api/latest-release/download',
     highlighted: false
   },
   {
@@ -281,7 +281,7 @@ export default function PricingPage() {
                     
                     if (tier.ctaLink) {
                       return (
-                        <Link
+                        <a
                           href={tier.ctaLink}
                           className={`block w-full py-3 px-4 rounded-lg text-center text-sm font-medium transition-all ${
                             tier.highlighted
@@ -290,7 +290,7 @@ export default function PricingPage() {
                           }`}
                         >
                           {tier.cta}
-                        </Link>
+                        </a>
                       )
                     }
                     

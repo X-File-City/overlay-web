@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { LATEST_RELEASE_DOWNLOAD_PATH } from "@/lib/latest-release";
 
 interface ReleaseInfo {
   version: string;
@@ -7,7 +8,6 @@ interface ReleaseInfo {
   publishedAt: string;
 }
 
-const FALLBACK_URL = "https://github.com/DevelopedByDev/overlay-releases/releases";
 const REFRESH_INTERVAL = 10 * 60 * 1000; // 10 minutes in milliseconds
 
 export function useLatestRelease() {
@@ -47,7 +47,7 @@ export function useLatestRelease() {
   }, [fetchRelease]);
 
   return {
-    downloadUrl: releaseInfo?.downloadUrl ?? FALLBACK_URL,
+    downloadUrl: releaseInfo?.downloadUrl ?? LATEST_RELEASE_DOWNLOAD_PATH,
     version: releaseInfo?.version ?? null,
     isLoading,
     error,

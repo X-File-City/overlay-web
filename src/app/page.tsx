@@ -6,10 +6,10 @@ import Image from "next/image";
 import { VoiceDemo } from "@/components/VoiceDemo";
 import { OverlayDemo } from "@/components/OverlayDemo";
 import { AllInOnePlace } from "@/components/AllInOnePlace";
-import { useLatestRelease } from "@/hooks/useLatestRelease";
 import { Navbar } from "@/components/Navbar";
 
 export default function Home() {
+  const latestDownloadUrl = "/api/latest-release/download";
   const containerRef = useRef<HTMLDivElement>(null);
   const { scrollYProgress } = useScroll({
     target: containerRef,
@@ -129,8 +129,6 @@ export default function Home() {
   const downloadOpacity = useTransform(scrollYProgress, [0.93, 0.965, 1.0], [0, 1, 1]);
   const downloadPointer = useTransform(scrollYProgress, (v) => v >= 0.93 ? "auto" : "none");
 
-  const { downloadUrl } = useLatestRelease();
-
   return (
     <div ref={containerRef} className="bg-[#fafafa] text-[#0a0a0a]">
       {/* Liquid Glass Background */}
@@ -171,7 +169,7 @@ export default function Home() {
 
         {/* Download Button */}
         <a
-          href={downloadUrl}
+          href={latestDownloadUrl}
           className="inline-flex items-center gap-3 px-6 py-3 bg-[#0a0a0a] text-white rounded-full text-sm font-medium hover:bg-[#27272a] transition-all duration-300"
         >
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
@@ -454,6 +452,7 @@ export default function Home() {
 
       {/* Download Section with Footer */}
       <motion.section 
+        id="download"
         style={{ opacity: downloadOpacity, pointerEvents: downloadPointer }}
         className="fixed inset-0 flex flex-col items-center justify-center px-6 z-10"
       >
@@ -462,7 +461,7 @@ export default function Home() {
             begin
           </h2>
           <a
-            href={downloadUrl}
+            href={latestDownloadUrl}
             className="group inline-flex items-center gap-3 px-8 py-4 bg-[#0a0a0a] text-white rounded-full text-sm font-medium hover:bg-[#27272a] transition-all duration-300"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
