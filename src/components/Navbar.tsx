@@ -80,7 +80,7 @@ export function Navbar({ scrollYProgress }: NavbarProps) {
 
   const linkClass = 'text-sm text-zinc-500 hover:text-zinc-900 transition-colors'
   const navLinks = (
-    <div ref={navLinksRef} className="flex items-center gap-6">
+    <div ref={navLinksRef} className="flex items-center gap-3 sm:gap-5 md:gap-6">
       <Link href="/manifesto" className={linkClass}>
         manifesto
       </Link>
@@ -108,7 +108,7 @@ export function Navbar({ scrollYProgress }: NavbarProps) {
   )
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 py-6 px-8">
+    <nav className="fixed top-0 left-0 right-0 z-50 py-4 px-4 md:py-6 md:px-8">
       <div ref={containerRef} className="max-w-6xl mx-auto relative h-10">
         <motion.div
           style={{ opacity: logoOpacity, x: logoX, pointerEvents: logoPointerEvents }}

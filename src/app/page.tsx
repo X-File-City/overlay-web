@@ -293,13 +293,13 @@ export default function Home() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.5 }}
-                className="absolute left-full top-1/2 -translate-y-1/2 ml-8 text-sm text-[#0a0a0a]/70 font-medium whitespace-nowrap text-left"
+                className="hidden md:block absolute left-full top-1/2 -translate-y-1/2 ml-8 text-sm text-[#0a0a0a]/70 font-medium whitespace-nowrap text-left"
               >
                 capture ideas instantly without leaving your current task
               </motion.p>
             )}
           </div>
-          <div className="w-full">
+          <div className="w-full hidden md:block">
             <OverlayDemo
               type="notes"
               title="notes"
@@ -328,13 +328,13 @@ export default function Home() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.5 }}
-                className="absolute right-full top-1/2 -translate-y-1/2 mr-8 text-sm text-[#0a0a0a]/70 font-medium whitespace-nowrap text-right"
+                className="hidden md:block absolute right-full top-1/2 -translate-y-1/2 mr-8 text-sm text-[#0a0a0a]/70 font-medium whitespace-nowrap text-right"
               >
                 get ai help anywhere, no app switching needed
               </motion.p>
             )}
           </div>
-          <div className="w-full">
+          <div className="w-full hidden md:block">
             <OverlayDemo
               type="chat"
               title="chats"
@@ -363,13 +363,13 @@ export default function Home() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.5 }}
-                className="absolute left-full top-1/2 -translate-y-1/2 ml-8 text-sm text-[#0a0a0a]/70 font-medium whitespace-nowrap text-left"
+                className="hidden md:block absolute left-full top-1/2 -translate-y-1/2 ml-8 text-sm text-[#0a0a0a]/70 font-medium whitespace-nowrap text-left"
               >
                 quick search without disrupting your workflow
               </motion.p>
             )}
           </div>
-          <div className="w-full">
+          <div className="w-full hidden md:block">
             <OverlayDemo
               type="browser"
               title="browser"

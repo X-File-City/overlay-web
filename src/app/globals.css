@@ -134,8 +134,9 @@ html {
   background: 
     radial-gradient(circle at 25% 25%, rgba(255, 255, 255, 0.8), transparent 40%),
     radial-gradient(circle at 75% 75%, rgba(255, 255, 255, 0.6), transparent 40%);
-  backdrop-filter: blur(100px);
-  -webkit-backdrop-filter: blur(100px);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  will-change: backdrop-filter;
 }
 
 @keyframes liquid-move {

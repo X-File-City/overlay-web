@@ -254,6 +254,7 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
   return (
     <>
       {/* Note Overlay - Left edge of screen */}
+      <div className="hidden md:block">
       <AnimatePresence>
         {activeOverlays.has("note") && (
           <motion.div
@@ -274,8 +275,10 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
 
       {/* Chat Overlay - Top edge of screen - z-60 to be above navbar */}
+      <div className="hidden md:block">
       <AnimatePresence>
         {activeOverlays.has("chat") && (
           <motion.div
@@ -296,8 +299,10 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
 
       {/* Browser Overlay - Right edge of screen */}
+      <div className="hidden md:block">
       <AnimatePresence>
         {activeOverlays.has("browser") && (
           <motion.div
@@ -318,8 +323,10 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
 
       {/* Transcription Overlay - Fixed at bottom, cropped */}
+      <div className="hidden md:block">
       <AnimatePresence>
         {showTranscription && (
           <motion.div
@@ -341,6 +348,7 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
 
       <div className="relative flex flex-col items-center justify-center gap-4">
         {/* "all in" text */}
@@ -499,8 +507,8 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
           one place
         </p>
 
-        {/* Subtitle */}
-        <p className="text-sm text-[#71717a] mt-2">
+        {/* Subtitle - desktop only since overlays require hover/mouse */}
+        <p className="hidden md:block text-sm text-[#71717a] mt-2">
           hover over and press any of the buttons to{" "}
           <button
             onClick={toggleAllOverlays}
