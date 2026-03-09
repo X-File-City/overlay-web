@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { motion, MotionValue, useTransform } from 'framer-motion'
+import { motion, MotionValue, useTransform, useMotionValue } from 'framer-motion'
 import Image from 'next/image'
 import Link from 'next/link'
 
@@ -21,7 +21,7 @@ interface AuthState {
 
 export function Navbar({ scrollYProgress }: NavbarProps) {
   const [authState, setAuthState] = useState<AuthState>({ authenticated: false })
-  const [navShiftDistance, setNavShiftDistance] = useState(0)
+  const navShiftDistance = useMotionValue(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const navLinksRef = useRef<HTMLDivElement>(null)
 
@@ -49,7 +49,7 @@ export function Navbar({ scrollYProgress }: NavbarProps) {
       const containerWidth = containerRef.current?.offsetWidth ?? 0
       const navWidth = navLinksRef.current?.offsetWidth ?? 0
       const nextDistance = Math.max((containerWidth - navWidth) / 2, 0)
-      setNavShiftDistance(nextDistance)
+      navShiftDistance.set(nextDistance)
     }
 
     updateMeasurements()
@@ -70,10 +70,10 @@ export function Navbar({ scrollYProgress }: NavbarProps) {
       observer.disconnect()
       window.removeEventListener('resize', updateMeasurements)
     }
-  }, [])
+  }, [navShiftDistance])
 
   const navLayoutProgress = useTransform(scrollYProgress, [0, 0.06], [0, 1])
-  const navLinksX = useTransform(navLayoutProgress, [0, 1], [0, navShiftDistance])
+  const navLinksX = useTransform(() => navLayoutProgress.get() * navShiftDistance.get())
   const logoOpacity = useTransform(scrollYProgress, [0.028, 0.06], [0, 1])
   const logoX = useTransform(scrollYProgress, [0.028, 0.06], [-12, 0])
   const logoPointerEvents = useTransform(scrollYProgress, (value) => (value >= 0.03 ? 'auto' : 'none'))
