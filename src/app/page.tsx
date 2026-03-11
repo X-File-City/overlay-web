@@ -470,7 +470,7 @@ export default function Home() {
             download for mac
           </a>
           <p className="text-sm text-[#a1a1aa] mt-4">
-            windows coming soon
+            windows, ios, and android coming soon
           </p>
         </div>
         
