@@ -1,6 +1,17 @@
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/workos-auth'
 import { convex } from '@/lib/convex'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadComposioSDK(apiKey: string): Promise<any> {
+  const coreUrl = pathToFileURL(
+    path.resolve(process.cwd(), '../overlay/node_modules/@composio/core/dist/index.mjs')
+  ).href
+  const { Composio } = await import(/* webpackIgnore: true */ coreUrl)
+  return new Composio({ apiKey })
+}
 
 interface APIKeyResponse {
   key: string | null
@@ -36,9 +47,11 @@ export async function GET(request: NextRequest) {
       const cursor = searchParams.get('cursor') || ''
       const limit = Math.min(parseInt(searchParams.get('limit') || '12'), 50)
 
-      // Fetch connected accounts to annotate results
+      const userId = session.user.id
+
+    // Fetch connected accounts to annotate results
       const connectedRes = await fetch(
-        'https://backend.composio.dev/api/v1/connectedAccounts?page=1&pageSize=100',
+        `https://backend.composio.dev/api/v1/connectedAccounts?entityId=${encodeURIComponent(userId)}&page=1&pageSize=100`,
         { headers: { 'x-api-key': apiKey } }
       )
       const connectedData = connectedRes.ok ? await connectedRes.json() : { items: [] }
@@ -88,10 +101,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ items, nextCursor: data.nextCursor ?? null })
     }
 
-    // Default: return connected integration slugs
-    const res = await fetch('https://backend.composio.dev/api/v1/connectedAccounts?page=1&pageSize=100', {
-      headers: { 'x-api-key': apiKey },
-    })
+    // Default: return connected integration slugs (scoped to this user's entity)
+    const userId = session.user.id
+    const res = await fetch(
+      `https://backend.composio.dev/api/v1/connectedAccounts?entityId=${encodeURIComponent(userId)}&page=1&pageSize=100`,
+      { headers: { 'x-api-key': apiKey } }
+    )
 
     if (!res.ok) return NextResponse.json({ connected: [] })
     const data = await res.json()
@@ -117,49 +132,72 @@ export async function POST(request: NextRequest) {
     const apiKey = await getComposioApiKey(session.accessToken)
     if (!apiKey) return NextResponse.json({ error: 'Composio not configured' }, { status: 503 })
 
+    const userId = session.user.id
+
+    const composio = await loadComposioSDK(apiKey)
+
     if (action === 'disconnect') {
-      // Find connected account and delete it
-      const listRes = await fetch(
-        `https://backend.composio.dev/api/v1/connectedAccounts?appName=${toolkit}&page=1&pageSize=10`,
-        { headers: { 'x-api-key': apiKey } }
+      // Find all connected accounts for this user+toolkit and delete them all
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const accounts = await composio.connectedAccounts.list({
+        userIds: [userId],
+        toolkitSlugs: [toolkit],
+      })
+      await Promise.all(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (accounts.items ?? []).map((acc: any) => composio.connectedAccounts.delete(acc.id))
       )
-      if (listRes.ok) {
-        const listData = await listRes.json()
-        const account = listData.items?.[0]
-        if (account?.id) {
-          await fetch(`https://backend.composio.dev/api/v1/connectedAccounts/${account.id}`, {
-            method: 'DELETE',
-            headers: { 'x-api-key': apiKey },
-          })
-        }
-      }
       return NextResponse.json({ success: true })
     }
 
-    // action === 'connect' — get OAuth redirect URL
-    const res = await fetch('https://backend.composio.dev/api/v1/connectedAccounts', {
-      method: 'POST',
-      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        appName: toolkit,
-        redirectUri: `${process.env.NEXT_PUBLIC_APP_URL || 'https://getoverlay.io'}/app/integrations`,
-      }),
-    })
+    // action === 'connect' — get OAuth redirect URL via Composio SDK
+    // Derive origin from the request so the callback works on any domain (www, non-www, localhost)
+    const origin =
+      request.headers.get('origin') ||
+      (() => {
+        const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || ''
+        const proto = request.headers.get('x-forwarded-proto') || 'https'
+        return host ? `${proto}://${host}` : (process.env.NEXT_PUBLIC_APP_URL || 'https://getoverlay.io')
+      })()
+    const callbackUrl = `${origin}/auth/composio/callback`
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      return NextResponse.json({ error: err.message || 'Failed to initiate connection' }, { status: res.status })
+    // Get an auth config for this toolkit; create a Composio-managed one if none exists
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let authConfigId: string
+    try {
+      const authConfigs = await composio.authConfigs.list({ toolkit })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const firstConfig = (authConfigs.items ?? authConfigs)?.[0]
+      if (firstConfig?.id) {
+        authConfigId = firstConfig.id
+      } else {
+        // Auto-create a Composio-managed auth config for this toolkit
+        const created = await composio.authConfigs.create(toolkit, {
+          type: 'use_composio_managed_auth',
+        })
+        authConfigId = created.id
+      }
+    } catch (err) {
+      console.error('[Integrations] Failed to get/create auth config:', err)
+      return NextResponse.json({ error: `Could not find auth config for ${toolkit}` }, { status: 500 })
     }
 
-    const data = await res.json()
-    // Only return redirectUrl if it's an actual URL, not a connection ID
-    const redirectUrl = typeof data.redirectUrl === 'string' && data.redirectUrl.startsWith('http')
-      ? data.redirectUrl
-      : null
+    const connectionRequest = await composio.connectedAccounts.link(
+      userId,
+      authConfigId,
+      { callbackUrl }
+    )
+
+    const redirectUrl =
+      typeof connectionRequest.redirectUrl === 'string' &&
+      connectionRequest.redirectUrl.startsWith('http')
+        ? connectionRequest.redirectUrl
+        : null
+
     return NextResponse.json({
       redirectUrl,
-      connectionId: data.connectionId || data.id || null,
-      status: data.status || null,
+      connectionId: connectionRequest.id ?? connectionRequest.connectionId ?? null,
+      status: connectionRequest.status ?? null,
     })
   } catch {
     return NextResponse.json({ error: 'Failed to process integration request' }, { status: 500 })

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, UIEvent } from 'react'
-import { Loader2, CheckCircle2, Circle, Plus, X, Search } from 'lucide-react'
+import { Loader2, Plus, X, Search } from 'lucide-react'
 
 interface Integration {
   id: string
@@ -555,8 +555,6 @@ function IntegrationRow({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium text-[#0a0a0a]">{integration.name}</p>
-            {isConnected && <CheckCircle2 size={13} className="text-emerald-500 flex-shrink-0" />}
-            {!isConnected && <Circle size={13} className="text-[#d4d4d4] flex-shrink-0" />}
           </div>
           <p className="text-xs text-[#888] truncate">{integration.description}</p>
         </div>

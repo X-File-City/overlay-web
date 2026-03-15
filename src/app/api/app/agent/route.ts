@@ -5,6 +5,14 @@ import { convex } from '@/lib/convex'
 import { addAgentMessage, listMemories } from '@/lib/app-store'
 import { getGatewayLanguageModel } from '@/lib/ai-gateway'
 import { createBrowserUnifiedTools } from '@/lib/composio-tools'
+import { calculateTokenCost, isPremiumModel } from '@/lib/model-pricing'
+
+interface Entitlements {
+  tier: 'free' | 'pro' | 'max'
+  creditsUsed: number
+  creditsTotal: number
+  dailyUsage: { ask: number; write: number; agent: number }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,8 +28,43 @@ export async function POST(request: NextRequest) {
       modelId?: string
     } = await request.json()
     const userId = session.user.id
+    const effectiveModelId = modelId || 'claude-sonnet-4-6'
 
-    // Save user message to Convex
+    // ── Subscription enforcement ──────────────────────────────────────────────
+    const entitlements = await convex.query<Entitlements>('usage:getEntitlements', {
+      accessToken: session.accessToken,
+      userId,
+    })
+
+    if (entitlements) {
+      const { tier, dailyUsage, creditsUsed, creditsTotal } = entitlements
+
+      if (tier === 'free') {
+        if (isPremiumModel(effectiveModelId)) {
+          return NextResponse.json(
+            { error: 'premium_model_not_allowed', message: 'Upgrade to Pro to use premium models' },
+            { status: 403 }
+          )
+        }
+        const totalWeekly = dailyUsage.ask + dailyUsage.write + dailyUsage.agent
+        if (totalWeekly >= 15) {
+          return NextResponse.json(
+            { error: 'weekly_limit_exceeded', message: 'Weekly message limit reached. Upgrade to Pro for unlimited messages.' },
+            { status: 429 }
+          )
+        }
+      } else {
+        const remainingCents = creditsTotal * 100 - creditsUsed
+        if (remainingCents <= 0 && isPremiumModel(effectiveModelId)) {
+          return NextResponse.json(
+            { error: 'insufficient_credits', message: 'No credits remaining. Please top up your account.' },
+            { status: 402 }
+          )
+        }
+      }
+    }
+
+    // ── Save user message ─────────────────────────────────────────────────────
     const latestUserMessage = [...messages].reverse().find((m) => m.role === 'user')
     const latestUserText = latestUserMessage?.parts
       ?.filter((p) => p.type === 'text')
@@ -37,11 +80,9 @@ export async function POST(request: NextRequest) {
           role: 'user',
           content: latestUserText,
         })
-        console.log(`[Agent] User message saved: ${saved ? 'ok' : 'null (convex error)'}`)
         if (!saved) {
           addAgentMessage({ agentId, userId, role: 'user', content: latestUserText })
         }
-        // Update agent title from first user message
         if (messages.filter((m) => m.role === 'user').length === 1) {
           await convex.mutation('agents:update', {
             agentId,
@@ -53,6 +94,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── Memory context ────────────────────────────────────────────────────────
     let memoryContext = ''
     try {
       const memories = await convex.query<Array<{ content: string }>>('memories:list', { userId })
@@ -70,7 +112,6 @@ export async function POST(request: NextRequest) {
     }
 
     const modelMessages = await convertToModelMessages(messages)
-    const effectiveModelId = modelId || 'claude-sonnet-4-6'
     const languageModel = await getGatewayLanguageModel(effectiveModelId, session.accessToken)
     const tools = await createBrowserUnifiedTools({
       userId,
@@ -87,27 +128,55 @@ export async function POST(request: NextRequest) {
         memoryContext,
     })
 
+    // Track total usage across all agent steps
+    let totalInputTokens = 0
+    let totalOutputTokens = 0
+
     const result = await agent.stream({
       messages: modelMessages,
-      onFinish: agentId
-        ? async ({ text }) => {
-            if (text) {
-              try {
-                const saved = await convex.mutation('agents:addMessage', {
-                  agentId,
-                  userId,
-                  role: 'assistant',
-                  content: text,
-                })
-                if (!saved) {
-                  addAgentMessage({ agentId, userId, role: 'assistant', content: text })
-                }
-              } catch (err) {
-                console.error('[Agent] Failed to save assistant message:', err)
-              }
+      onFinish: async ({ text, usage }) => {
+        // ── Usage tracking ────────────────────────────────────────────────────
+        if (usage) {
+          totalInputTokens += usage.inputTokens ?? 0
+          totalOutputTokens += usage.outputTokens ?? 0
+        }
+
+        const costDollars = calculateTokenCost(effectiveModelId, totalInputTokens, 0, totalOutputTokens)
+        const costCents = costDollars * 100
+
+        if (costCents > 0 || totalInputTokens > 0 || totalOutputTokens > 0) {
+          convex.mutation('usage:recordBatch', {
+            accessToken: session.accessToken,
+            userId,
+            events: [{
+              type: 'agent',
+              modelId: effectiveModelId,
+              inputTokens: totalInputTokens,
+              outputTokens: totalOutputTokens,
+              cachedTokens: 0,
+              cost: costCents,
+              timestamp: Date.now(),
+            }],
+          }).catch((err) => console.error('[Agent] Failed to record usage:', err))
+        }
+
+        // ── Save assistant message ────────────────────────────────────────────
+        if (agentId && text) {
+          try {
+            const saved = await convex.mutation('agents:addMessage', {
+              agentId,
+              userId,
+              role: 'assistant',
+              content: text,
+            })
+            if (!saved) {
+              addAgentMessage({ agentId, userId, role: 'assistant', content: text })
             }
+          } catch (err) {
+            console.error('[Agent] Failed to save assistant message:', err)
           }
-        : undefined,
+        }
+      },
     })
 
     return result.toUIMessageStreamResponse({

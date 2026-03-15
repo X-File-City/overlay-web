@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Send, Plus, Trash2, ChevronDown, Loader2 } from 'lucide-react'
+import { Send, Plus, Trash2, ChevronDown, Loader2, ImageIcon, X, AlertCircle } from 'lucide-react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { AVAILABLE_MODELS, DEFAULT_MODEL_ID } from '@/lib/models'
@@ -14,12 +14,33 @@ interface Chat {
   lastModified: number
 }
 
+interface AttachedImage {
+  dataUrl: string
+  mimeType: string
+  name: string
+}
+
+interface Entitlements {
+  tier: 'free' | 'pro' | 'max'
+  creditsUsed: number
+  creditsTotal: number
+  dailyUsage: { ask: number; write: number; agent: number }
+  dailyLimits: { ask: number; write: number; agent: number }
+}
+
 function getMessageText(msg: { parts?: Array<{ type: string; text?: string }> }): string {
   if (!msg.parts) return ''
   return msg.parts
     .filter((p) => p.type === 'text')
     .map((p) => p.text || '')
     .join('')
+}
+
+function getMessageImages(msg: { parts?: Array<{ type: string; image?: string }> }): string[] {
+  if (!msg.parts) return []
+  return msg.parts
+    .filter((p) => p.type === 'image' && p.image)
+    .map((p) => p.image!)
 }
 
 async function generateTitle(text: string): Promise<string | null> {
@@ -39,21 +60,113 @@ async function generateTitle(text: string): Promise<string | null> {
   return null
 }
 
+const CHAT_SUGGESTIONS = [
+  'Explain how transformers work in machine learning',
+  'Write a Python script to rename files in a folder',
+  'What are the key differences between REST and GraphQL?',
+  'Help me draft a professional email declining a meeting',
+]
+
+const CHAT_MODEL_KEY = 'overlay_chat_model'
+
+function SubscriptionBar({ entitlements }: { entitlements: Entitlements | null }) {
+  if (!entitlements) return null
+
+  const { tier, creditsUsed, creditsTotal, dailyUsage } = entitlements
+
+  if (tier === 'free') {
+    const used = dailyUsage.ask + dailyUsage.write + dailyUsage.agent
+    const pct = Math.min(100, Math.round((used / 15) * 100))
+    const exhausted = used >= 15
+    const warning = pct >= 80
+
+    return (
+      <div className={`mx-auto w-full max-w-4xl mb-2 px-1 flex items-center gap-2 text-xs ${exhausted ? 'text-red-500' : warning ? 'text-amber-500' : 'text-[#aaa]'}`}>
+        {exhausted && <AlertCircle size={12} />}
+        <span>{used}/15 weekly messages</span>
+        <div className="flex-1 h-1 rounded-full bg-[#e5e5e5] overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${exhausted ? 'bg-red-400' : warning ? 'bg-amber-400' : 'bg-[#0a0a0a]'}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        {exhausted && <span className="text-red-500 font-medium">Limit reached</span>}
+      </div>
+    )
+  }
+
+  // Pro / Max
+  const creditsTotalCents = creditsTotal * 100
+  if (creditsTotalCents <= 0) return null
+  const pct = Math.min(100, Math.round((creditsUsed / creditsTotalCents) * 100))
+  const remaining = Math.max(0, creditsTotalCents - creditsUsed)
+  const remainingDollars = (remaining / 100).toFixed(2)
+  const exhausted = remaining <= 0
+  const warning = pct >= 80
+
+  return (
+    <div className={`mx-auto w-full max-w-4xl mb-2 px-1 flex items-center gap-2 text-xs ${exhausted ? 'text-red-500' : warning ? 'text-amber-500' : 'text-[#aaa]'}`}>
+      {exhausted && <AlertCircle size={12} />}
+      <span>${remainingDollars} remaining</span>
+      <div className="flex-1 h-1 rounded-full bg-[#e5e5e5] overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${exhausted ? 'bg-red-400' : warning ? 'bg-amber-400' : 'bg-[#0a0a0a]'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
 export default function ChatInterface({ userId: _userId }: { userId: string }) {
   void _userId
   const [chats, setChats] = useState<Chat[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
-  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_ID)
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(CHAT_MODEL_KEY) || DEFAULT_MODEL_ID
+    }
+    return DEFAULT_MODEL_ID
+  })
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [input, setInput] = useState('')
   const [isFirstMessage, setIsFirstMessage] = useState(true)
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
+  const [entitlements, setEntitlements] = useState<Entitlements | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const transport = useMemo(() => new DefaultChatTransport({ api: '/api/app/chat' }), [])
 
-  const { messages, sendMessage, status, setMessages, stop } = useChat({ transport })
+  const { messages, sendMessage, status, setMessages, stop, error } = useChat({ transport })
 
   const isLoading = status === 'streaming' || status === 'submitted'
+  const currentModelInfo = AVAILABLE_MODELS.find((m) => m.id === selectedModel)
+  const supportsVision = currentModelInfo?.supportsVision ?? false
+
+  // Subscription state
+  const isFreeTier = entitlements?.tier === 'free'
+  const weeklyUsed = isFreeTier
+    ? (entitlements?.dailyUsage.ask ?? 0) + (entitlements?.dailyUsage.write ?? 0) + (entitlements?.dailyUsage.agent ?? 0)
+    : 0
+  const weeklyLimitReached = isFreeTier && weeklyUsed >= 15
+  const premiumModelBlocked = isFreeTier && currentModelInfo?.provider !== 'openrouter'
+  const creditsExhausted =
+    !isFreeTier &&
+    entitlements != null &&
+    entitlements.creditsTotal > 0 &&
+    entitlements.creditsUsed >= entitlements.creditsTotal * 100
+
+  const isSendBlocked = weeklyLimitReached || (premiumModelBlocked && isFreeTier) || creditsExhausted
+
+  const loadSubscription = useCallback(async () => {
+    try {
+      const res = await fetch('/api/app/subscription')
+      if (res.ok) setEntitlements(await res.json())
+    } catch {
+      // ignore
+    }
+  }, [])
 
   const loadChats = useCallback(async () => {
     try {
@@ -65,7 +178,14 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
   }, [])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { loadChats() }, [loadChats])
+  useEffect(() => { loadChats(); loadSubscription() }, [loadChats, loadSubscription])
+
+  // Refresh subscription after each completed message
+  useEffect(() => {
+    if (status === 'ready' && messages.length > 0) {
+      loadSubscription()
+    }
+  }, [status, messages.length, loadSubscription])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -85,7 +205,6 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
       await loadChats()
       return data.id
     }
-
     return null
   }
 
@@ -113,22 +232,50 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     await loadChats()
   }
 
+  function addImages(files: FileList | File[]) {
+    Array.from(files).forEach((file) => {
+      if (!file.type.startsWith('image/')) return
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string
+        setAttachedImages((prev) => [...prev, { dataUrl, mimeType: file.type, name: file.name }])
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    const imageFiles = Array.from(e.clipboardData.items)
+      .filter((item) => item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f != null)
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      addImages(imageFiles)
+    }
+  }
+
   async function handleSend() {
     const text = input.trim()
-    if (!text || isLoading) return
+    if ((!text && attachedImages.length === 0) || isLoading || isSendBlocked) return
     const chatId = activeChatId || await createNewChat()
     if (!chatId) return
     const wasFirst = isFirstMessage
     setInput('')
+    setAttachedImages([])
     setIsFirstMessage(false)
-    await sendMessage(
-      { role: 'user', parts: [{ type: 'text', text }] },
-      { body: { modelId: selectedModel, chatId } }
-    )
+
+    const parts: Array<{ type: string; text?: string; image?: string; mediaType?: string }> = []
+    if (text) parts.push({ type: 'text', text })
+    for (const img of attachedImages) {
+      parts.push({ type: 'image', image: img.dataUrl, mediaType: img.mimeType })
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await sendMessage({ role: 'user', parts: parts as any }, { body: { modelId: selectedModel, chatId } })
     loadChats()
 
-    // Asynchronously generate a title from the first message
-    if (wasFirst) {
+    if (wasFirst && text) {
       generateTitle(text).then((title) => {
         if (title) {
           fetch('/api/app/chats', {
@@ -150,6 +297,14 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
       lastMessage?.role === 'assistant' &&
       getMessageText(lastMessage).trim().length > 0
     )
+
+  // Friendly error message
+  const errorMessage = error
+    ? (error.message?.includes('weekly_limit') ? 'Weekly limit reached — upgrade to Pro for unlimited messages.'
+        : error.message?.includes('premium_model') ? 'This model requires a Pro subscription.'
+        : error.message?.includes('insufficient_credits') ? 'No credits remaining.'
+        : 'Something went wrong. Please try again.')
+    : null
 
   return (
     <div className="flex h-full">
@@ -207,7 +362,11 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
                 {AVAILABLE_MODELS.map((m) => (
                   <button
                     key={m.id}
-                    onClick={() => { setSelectedModel(m.id); setShowModelPicker(false) }}
+                    onClick={() => {
+                      setSelectedModel(m.id)
+                      localStorage.setItem(CHAT_MODEL_KEY, m.id)
+                      setShowModelPicker(false)
+                    }}
                     className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#f5f5f5] flex items-center justify-between ${
                       m.id === selectedModel ? 'text-[#0a0a0a] font-medium' : 'text-[#525252]'
                     }`}
@@ -226,16 +385,29 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
           <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-4">
             {messages.length === 0 && (
               <div className="flex flex-1 items-center justify-center">
-                <div className="text-center">
-                  <p className="text-3xl mb-2" style={{ fontFamily: 'var(--font-instrument-serif)' }}>
+                <div className="text-center max-w-xl">
+                  <p className="text-3xl mb-3" style={{ fontFamily: 'var(--font-instrument-serif)' }}>
                     chat
                   </p>
-                  <p className="text-sm text-[#888]">Start a conversation with any AI model</p>
+                  <p className="text-sm text-[#888] mb-6">Start a conversation with any AI model</p>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-[#525252]">
+                    {CHAT_SUGGESTIONS.map((prompt) => (
+                      <button
+                        key={prompt}
+                        className="text-left p-2.5 rounded-lg border border-[#e5e5e5] hover:bg-[#f5f5f5] transition-colors"
+                        onClick={() => setInput(prompt)}
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
             {messages.map((msg) => {
               const text = getMessageText(msg)
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const images = getMessageImages(msg as any)
               return (
                 <div
                   key={msg.id}
@@ -246,8 +418,24 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
                       <MarkdownMessage text={text} isStreaming={isLoading && msg.id === lastMessage?.id} />
                     </div>
                   ) : (
-                    <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm leading-relaxed text-[#fafafa]">
-                      <span className="whitespace-pre-wrap">{text}</span>
+                    <div className="max-w-[75%] space-y-2">
+                      {images.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 justify-end">
+                          {images.map((src, i) => (
+                            <img
+                              key={i}
+                              src={src}
+                              alt="attached"
+                              className="max-w-[200px] max-h-[200px] rounded-xl object-cover"
+                            />
+                          ))}
+                        </div>
+                      )}
+                      {text && (
+                        <div className="rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm leading-relaxed text-[#fafafa]">
+                          <span className="whitespace-pre-wrap">{text}</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -261,45 +449,107 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
                 </div>
               </div>
             )}
+            {errorMessage && (
+              <div className="flex justify-start">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
+                  <AlertCircle size={12} />
+                  {errorMessage}
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
         </div>
 
         {/* Input */}
         <div className="px-4 pb-4">
-          <div className="mx-auto w-full max-w-4xl">
-            <div className="flex items-end gap-2 bg-[#f0f0f0] rounded-2xl px-4 py-3">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Message..."
-                rows={1}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleSend()
-                  }
-                }}
-                className="flex-1 bg-transparent text-sm text-[#0a0a0a] placeholder-[#aaa] resize-none outline-none max-h-32"
-              />
-              {isLoading ? (
-                <button
-                  onClick={() => stop()}
-                  className="shrink-0 p-1.5 rounded-lg bg-[#0a0a0a] text-[#fafafa] hover:bg-[#333] transition-colors"
-                  title="Stop generating"
-                >
-                  <div className="w-3.5 h-3.5 bg-[#fafafa] rounded-sm" />
-                </button>
-              ) : (
-                <button
-                  onClick={handleSend}
-                  disabled={!input.trim()}
-                  className="shrink-0 p-1.5 rounded-lg bg-[#0a0a0a] text-[#fafafa] disabled:opacity-40 hover:bg-[#333] transition-colors"
-                >
-                  <Send size={14} />
-                </button>
-              )}
+          <SubscriptionBar entitlements={entitlements} />
+
+          {/* Image previews */}
+          {attachedImages.length > 0 && (
+            <div className="mx-auto w-full max-w-4xl mb-2 flex flex-wrap gap-2">
+              {attachedImages.map((img, i) => (
+                <div key={i} className="relative group">
+                  <img
+                    src={img.dataUrl}
+                    alt={img.name}
+                    className="w-16 h-16 object-cover rounded-lg border border-[#e5e5e5]"
+                  />
+                  <button
+                    onClick={() => setAttachedImages((prev) => prev.filter((_, j) => j !== i))}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-[#0a0a0a] text-[#fafafa] rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X size={9} />
+                  </button>
+                </div>
+              ))}
             </div>
+          )}
+
+          <div className="mx-auto w-full max-w-4xl">
+            {isSendBlocked && !isLoading ? (
+              <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-[#fafafa] border border-[#e5e5e5] text-xs text-[#888]">
+                <AlertCircle size={13} className="text-amber-500 shrink-0" />
+                {weeklyLimitReached
+                  ? 'Weekly limit reached. Upgrade to Pro for unlimited messages.'
+                  : premiumModelBlocked
+                  ? 'This model requires Pro. Switch to a free model or upgrade.'
+                  : 'No credits remaining. Please top up your account.'}
+              </div>
+            ) : (
+              <div className="flex items-end gap-2 bg-[#f0f0f0] rounded-2xl px-4 py-3">
+                {supportsVision && (
+                  <>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => e.target.files && addImages(e.target.files)}
+                    />
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="shrink-0 p-1 text-[#aaa] hover:text-[#525252] transition-colors"
+                      title="Attach image"
+                    >
+                      <ImageIcon size={15} />
+                    </button>
+                  </>
+                )}
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onPaste={handlePaste}
+                  placeholder="Message..."
+                  rows={1}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSend()
+                    }
+                  }}
+                  className="flex-1 bg-transparent text-sm text-[#0a0a0a] placeholder-[#aaa] resize-none outline-none max-h-32"
+                />
+                {isLoading ? (
+                  <button
+                    onClick={() => stop()}
+                    className="shrink-0 p-1.5 rounded-lg bg-[#0a0a0a] text-[#fafafa] hover:bg-[#333] transition-colors"
+                    title="Stop generating"
+                  >
+                    <div className="w-3.5 h-3.5 bg-[#fafafa] rounded-sm" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSend}
+                    disabled={!input.trim() && attachedImages.length === 0}
+                    className="shrink-0 p-1.5 rounded-lg bg-[#0a0a0a] text-[#fafafa] disabled:opacity-40 hover:bg-[#333] transition-colors"
+                  >
+                    <Send size={14} />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

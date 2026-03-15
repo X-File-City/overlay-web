@@ -231,6 +231,16 @@ html {
   padding: 0;
 }
 
+.markdown-content ul,
+.app-note-editor ul {
+  list-style-type: disc;
+}
+
+.markdown-content ol,
+.app-note-editor ol {
+  list-style-type: decimal;
+}
+
 .markdown-content li,
 .app-note-editor li {
   margin: 0.2em 0;
