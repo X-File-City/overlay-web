@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { handleCallback, getBaseUrl, getSession } from '@/lib/workos-auth'
 import { ConvexHttpClient } from 'convex/browser'
 import { api } from '../../../../../convex/_generated/api'
+import { randomBytes } from 'crypto'
 
 // Use dev Convex URL in development
 const IS_DEV = process.env.NODE_ENV === 'development'
@@ -37,8 +38,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Sync user profile to Convex (creates subscription record if it doesn't exist)
+    const session = await getSession()
     try {
-      const session = await getSession()
       if (session?.accessToken) {
         await convex.mutation(api.users.syncUserProfile, {
           accessToken: session.accessToken,
@@ -60,16 +61,38 @@ export async function GET(request: NextRequest) {
     if (state) {
       try {
         const decodedState = Buffer.from(state, 'base64').toString('utf-8')
-        // Check if it's a deep link (overlay://)
-        if (decodedState.startsWith('overlay://')) {
-          // For desktop app auth, redirect to callback page that handles deep link
-          const deepLinkUrl = new URL(decodedState)
-          deepLinkUrl.searchParams.set('code', code)
-          return NextResponse.redirect(`${getBaseUrl()}/auth/callback?code=${code}`)
-        }
         redirectTo = decodedState
       } catch {
         // Invalid state, use default redirect
+      }
+    }
+
+    // Handle mobile app auth: generate a transfer token and deep link directly
+    // instead of redirecting to a separate page that may not be deployed.
+    if (redirectTo === '/auth/mobile-complete' && session) {
+      try {
+        const authData = {
+          userId: session.user.id,
+          email: session.user.email,
+          firstName: session.user.firstName || '',
+          lastName: session.user.lastName || '',
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken,
+        }
+
+        const token = randomBytes(16).toString('hex')
+        const expiresAt = Date.now() + 5 * 60 * 1000
+
+        await convex.mutation(api.sessionTransfer.storeToken, {
+          token,
+          data: JSON.stringify(authData),
+          expiresAt,
+        })
+
+        return NextResponse.redirect(`overlay://auth/transfer?token=${token}`)
+      } catch (mobileError) {
+        console.error('[Auth] Failed to generate mobile transfer token:', mobileError)
+        // Fall through to redirect to the page which shows a user-friendly error
       }
     }
 

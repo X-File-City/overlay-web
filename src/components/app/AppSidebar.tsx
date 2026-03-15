@@ -3,7 +3,11 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { MessageSquare, BookOpen, Bot, Brain, Plug, LogOut, User, Smartphone, Puzzle, MessageCircle, Monitor } from 'lucide-react'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import {
+  MessageSquare, BookOpen, Bot, Brain, Plug, LogOut, User,
+  Smartphone, Puzzle, MessageCircle, Monitor, ChevronUp, AlertCircle,
+} from 'lucide-react'
 import type { AuthUser } from '@/lib/workos-auth'
 
 const NAV_ITEMS = [
@@ -21,9 +25,98 @@ const APP_LINKS = [
   { label: 'Desktop App', icon: Monitor, href: 'https://getoverlay.io' },
 ]
 
+interface Entitlements {
+  tier: 'free' | 'pro' | 'max'
+  creditsUsed: number
+  creditsTotal: number
+  dailyUsage: { ask: number; write: number; agent: number }
+}
+
+function UsageBar({ entitlements }: { entitlements: Entitlements | null }) {
+  if (!entitlements) {
+    return <p className="text-[11px] text-[#aaa]">Loading...</p>
+  }
+
+  const { tier, creditsUsed, creditsTotal, dailyUsage } = entitlements
+
+  if (tier === 'free') {
+    const used = dailyUsage.ask + dailyUsage.write + dailyUsage.agent
+    const pct = Math.min(100, Math.round((used / 15) * 100))
+    const exhausted = used >= 15
+    const warning = pct >= 80
+    return (
+      <div className={`flex flex-col gap-1 text-xs ${exhausted ? 'text-red-500' : warning ? 'text-amber-500' : 'text-[#aaa]'}`}>
+        <div className="flex items-center justify-between">
+          <span>{used}/15 weekly messages</span>
+          {exhausted && <AlertCircle size={11} />}
+        </div>
+        <div className="h-1 rounded-full bg-[#e5e5e5] overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${exhausted ? 'bg-red-400' : warning ? 'bg-amber-400' : 'bg-[#0a0a0a]'}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        {exhausted && <span className="text-red-500 font-medium text-[10px]">Limit reached — upgrade to Pro</span>}
+      </div>
+    )
+  }
+
+  const creditsTotalCents = creditsTotal * 100
+  if (creditsTotalCents <= 0) return <p className="text-[11px] text-[#aaa]">No credit limit set</p>
+  const pct = Math.min(100, Math.round((creditsUsed / creditsTotalCents) * 100))
+  const remaining = Math.max(0, creditsTotalCents - creditsUsed)
+  const remainingDollars = (remaining / 100).toFixed(2)
+  const exhausted = remaining <= 0
+  const warning = pct >= 80
+
+  return (
+    <div className={`flex flex-col gap-1 text-xs ${exhausted ? 'text-red-500' : warning ? 'text-amber-500' : 'text-[#aaa]'}`}>
+      <div className="flex items-center justify-between">
+        <span>${remainingDollars} remaining</span>
+        {exhausted && <AlertCircle size={11} />}
+      </div>
+      <div className="h-1 rounded-full bg-[#e5e5e5] overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${exhausted ? 'bg-red-400' : warning ? 'bg-amber-400' : 'bg-[#0a0a0a]'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
 export default function AppSidebar({ user }: { user: AuthUser }) {
   const pathname = usePathname()
   const displayName = user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : user.email
+
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+  const [entitlements, setEntitlements] = useState<Entitlements | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  const loadEntitlements = useCallback(async () => {
+    try {
+      const res = await fetch('/api/app/subscription')
+      if (res.ok) setEntitlements(await res.json())
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    if (accountMenuOpen) loadEntitlements()
+  }, [accountMenuOpen, loadEntitlements])
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!accountMenuOpen) return
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setAccountMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [accountMenuOpen])
 
   async function handleSignOut() {
     await fetch('/api/auth/sign-out', { method: 'POST' })
@@ -104,19 +197,42 @@ export default function AppSidebar({ user }: { user: AuthUser }) {
           </div>
         </div>
 
-        <div className="pt-2 border-t border-[#e5e5e5] flex items-center gap-1">
-          <Link
-            href="/account"
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-xs text-[#525252] transition-colors hover:bg-[#f0f0f0] hover:text-[#0a0a0a]"
+        {/* Account button with popover */}
+        <div ref={menuRef} className="relative pt-2 border-t border-[#e5e5e5]">
+          {/* Account menu popover */}
+          {accountMenuOpen && (
+            <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-[#e5e5e5] rounded-lg shadow-lg py-1 z-50">
+              <Link
+                href="/account"
+                onClick={() => setAccountMenuOpen(false)}
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs text-[#525252] hover:bg-[#f5f5f5] transition-colors"
+              >
+                <User size={13} />
+                Account
+              </Link>
+              <div className="px-3 py-2 border-t border-[#f0f0f0]">
+                <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-[#aaa] mb-2">Usage</p>
+                <UsageBar entitlements={entitlements} />
+              </div>
+              <div className="border-t border-[#f0f0f0]">
+                <button
+                  onClick={handleSignOut}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-xs text-[#525252] hover:bg-[#f5f5f5] transition-colors"
+                >
+                  <LogOut size={13} />
+                  Sign out
+                </button>
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={() => setAccountMenuOpen((v) => !v)}
+            className="flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#f0f0f0] hover:text-[#0a0a0a] transition-colors"
           >
             <User size={13} />
-            <span className="truncate">{displayName}</span>
-          </Link>
-          <button
-            onClick={handleSignOut}
-            className="shrink-0 flex items-center rounded-md px-2 py-1.5 text-xs text-[#525252] transition-colors hover:bg-[#f0f0f0] hover:text-[#0a0a0a]"
-          >
-            <LogOut size={13} />
+            <span className="flex-1 truncate text-left">{displayName}</span>
+            <ChevronUp size={11} className={`shrink-0 transition-transform ${accountMenuOpen ? '' : 'rotate-180'}`} />
           </button>
         </div>
       </div>

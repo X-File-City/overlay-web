@@ -21,11 +21,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { messages, modelId, chatId, systemPrompt }: {
+    const { messages, modelId, chatId, systemPrompt, skipUserMessage }: {
       messages: UIMessage[]
       modelId?: string
       chatId?: string
       systemPrompt?: string
+      skipUserMessage?: boolean
     } = await request.json()
     const userId = session.user.id
     const effectiveModelId = modelId || 'claude-sonnet-4-6'
@@ -89,7 +90,7 @@ export async function POST(request: NextRequest) {
       .join('')
       .trim()
 
-    if (chatId && latestUserText) {
+    if (chatId && latestUserText && !skipUserMessage) {
       const savedUserMessage = await convex.mutation('chats:addMessage', {
         chatId,
         userId,

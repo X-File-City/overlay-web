@@ -69,53 +69,6 @@ async function generateTitle(text: string): Promise<string | null> {
   return null
 }
 
-function SubscriptionBar({ entitlements }: { entitlements: Entitlements | null }) {
-  if (!entitlements) return null
-
-  const { tier, creditsUsed, creditsTotal, dailyUsage } = entitlements
-
-  if (tier === 'free') {
-    const used = dailyUsage.ask + dailyUsage.write + dailyUsage.agent
-    const pct = Math.min(100, Math.round((used / 15) * 100))
-    const exhausted = used >= 15
-    const warning = pct >= 80
-
-    return (
-      <div className={`mx-auto w-full max-w-4xl mb-2 px-1 flex items-center gap-2 text-xs ${exhausted ? 'text-red-500' : warning ? 'text-amber-500' : 'text-[#aaa]'}`}>
-        {exhausted && <AlertCircle size={12} />}
-        <span>{used}/15 weekly messages</span>
-        <div className="flex-1 h-1 rounded-full bg-[#e5e5e5] overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${exhausted ? 'bg-red-400' : warning ? 'bg-amber-400' : 'bg-[#0a0a0a]'}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        {exhausted && <span className="text-red-500 font-medium">Limit reached</span>}
-      </div>
-    )
-  }
-
-  const creditsTotalCents = creditsTotal * 100
-  if (creditsTotalCents <= 0) return null
-  const pct = Math.min(100, Math.round((creditsUsed / creditsTotalCents) * 100))
-  const remaining = Math.max(0, creditsTotalCents - creditsUsed)
-  const remainingDollars = (remaining / 100).toFixed(2)
-  const exhausted = remaining <= 0
-  const warning = pct >= 80
-
-  return (
-    <div className={`mx-auto w-full max-w-4xl mb-2 px-1 flex items-center gap-2 text-xs ${exhausted ? 'text-red-500' : warning ? 'text-amber-500' : 'text-[#aaa]'}`}>
-      {exhausted && <AlertCircle size={12} />}
-      <span>${remainingDollars} remaining</span>
-      <div className="flex-1 h-1 rounded-full bg-[#e5e5e5] overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${exhausted ? 'bg-red-400' : warning ? 'bg-amber-400' : 'bg-[#0a0a0a]'}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  )
-}
 
 export default function AgentChat() {
   const [agents, setAgents] = useState<Agent[]>([])
@@ -472,8 +425,6 @@ export default function AgentChat() {
         </div>
 
         <div className="px-4 pb-4">
-          <SubscriptionBar entitlements={entitlements} />
-
           {/* Image previews */}
           {attachedImages.length > 0 && (
             <div className="mx-auto w-full max-w-4xl mb-2 flex flex-wrap gap-2">

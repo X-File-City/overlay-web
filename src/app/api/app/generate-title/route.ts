@@ -11,12 +11,12 @@ export async function POST(request: NextRequest) {
     const { text } = await request.json()
     if (!text) return NextResponse.json({ error: 'text required' }, { status: 400 })
 
-    const languageModel = await getGatewayLanguageModel('llama-3.3-70b-versatile', session.accessToken)
+    const languageModel = await getGatewayLanguageModel('openrouter/free', session.accessToken)
 
     const { text: title } = await generateText({
       model: languageModel,
       prompt: `Generate a concise 3-6 word title for a conversation that starts with this message. Return only the title, no quotes or punctuation:\n\n${text.slice(0, 500)}`,
-      maxTokens: 20,
+      maxOutputTokens: 20,
     })
 
     return NextResponse.json({ title: title.trim() })
