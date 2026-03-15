@@ -29,9 +29,7 @@ const SUGGESTIONS = [
 ]
 
 // Agent-capable models only (support tool use)
-const AGENT_MODELS = AVAILABLE_MODELS.filter(
-  (m) => m.provider === 'anthropic' || m.provider === 'openrouter'
-)
+const AGENT_MODELS = AVAILABLE_MODELS.filter((m) => m.provider === 'anthropic')
 const DEFAULT_AGENT_MODEL = 'claude-sonnet-4-6'
 
 async function generateTitle(text: string): Promise<string | null> {

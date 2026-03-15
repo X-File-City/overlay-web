@@ -79,8 +79,12 @@ export function Navbar({ scrollYProgress }: NavbarProps) {
   const logoPointerEvents = useTransform(scrollYProgress, (value) => (value >= 0.03 ? 'auto' : 'none'))
 
   const linkClass = 'text-sm text-zinc-500 hover:text-zinc-900 transition-colors'
+  const appHref = authState.authenticated ? '/app/chat' : '/auth/sign-in?redirect=%2Fapp%2Fchat'
   const navLinks = (
     <div ref={navLinksRef} className="flex items-center gap-3 sm:gap-5 md:gap-6">
+      <Link href={appHref} className={linkClass}>
+        app
+      </Link>
       <Link href="/manifesto" className={linkClass}>
         manifesto
       </Link>
@@ -104,12 +108,6 @@ export function Navbar({ scrollYProgress }: NavbarProps) {
           sign in
         </Link>
       )}
-      <Link
-        href={authState.authenticated ? '/app/chat' : '/auth/sign-in?redirect=%2Fapp%2Fchat'}
-        className="text-sm px-3.5 py-1.5 rounded-full bg-[#0a0a0a] text-white hover:bg-[#27272a] transition-colors"
-      >
-        app
-      </Link>
     </div>
   )
 

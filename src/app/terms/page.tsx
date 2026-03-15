@@ -1,26 +1,12 @@
 "use client";
 
 import { motion } from "framer-motion";
-import Link from "next/link";
-import Image from "next/image";
+import { PageNavbar } from "@/components/PageNavbar";
 
 export default function TermsOfService() {
   return (
     <div className="min-h-screen bg-[#fafafa] text-[#0a0a0a]">
-      {/* Header */}
-      <header className="py-6 px-6 border-b border-[#e4e4e7]">
-        <div className="max-w-4xl mx-auto flex items-center gap-3">
-          <Image
-            src="/assets/overlay-logo.png"
-            alt="Overlay"
-            width={32}
-            height={32}
-          />
-          <Link href="/" className="font-serif text-xl hover:text-[#71717a] transition-colors">
-            overlay
-          </Link>
-        </div>
-      </header>
+      <PageNavbar />
 
       {/* Content */}
       <main className="py-16 px-6">

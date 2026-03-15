@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
     const { text } = await request.json()
     if (!text) return NextResponse.json({ error: 'text required' }, { status: 400 })
 
-    const languageModel = await getGatewayLanguageModel('openrouter/free', session.accessToken)
+    const languageModel = await getGatewayLanguageModel('llama-3.3-70b-versatile', session.accessToken)
 
     const { text: title } = await generateText({
       model: languageModel,

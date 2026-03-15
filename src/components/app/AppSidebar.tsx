@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { MessageSquare, BookOpen, Bot, Brain, LogOut, User, Smartphone, Puzzle, MessageCircle, Monitor } from 'lucide-react'
+import { MessageSquare, BookOpen, Bot, Brain, Plug, LogOut, User, Smartphone, Puzzle, MessageCircle, Monitor } from 'lucide-react'
 import type { AuthUser } from '@/lib/workos-auth'
 
 const NAV_ITEMS = [
@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: '/app/agent', label: 'Agents', icon: Bot },
   { href: '/app/notes', label: 'Notes', icon: BookOpen },
   { href: '/app/memories', label: 'Memories', icon: Brain },
+  { href: '/app/integrations', label: 'Integrations', icon: Plug },
 ]
 
 const APP_LINKS = [
