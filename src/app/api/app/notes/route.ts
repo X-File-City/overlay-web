@@ -3,10 +3,15 @@ import { getSession } from '@/lib/workos-auth'
 import { convex } from '@/lib/convex'
 import { createNote, deleteNote, listNotes, updateNote } from '@/lib/app-store'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const projectId = request.nextUrl.searchParams.get('projectId')
+    if (projectId !== null) {
+      return NextResponse.json(listNotes(session.user.id, projectId))
+    }
 
     const notes = await convex.query('notes:list', { userId: session.user.id })
     return NextResponse.json(notes || listNotes(session.user.id))
@@ -21,16 +26,15 @@ export async function POST(request: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { title, content, tags } = await request.json()
+    const { title, content, tags, projectId } = await request.json()
     const noteId = await convex.mutation<string>('notes:create', {
       userId: session.user.id,
       title: title || 'Untitled',
       content: content || '',
       tags: tags || [],
     })
-    return NextResponse.json({
-      id: noteId || createNote(session.user.id, title || 'Untitled', content || '', tags || []),
-    })
+    const storeId = createNote(session.user.id, title || 'Untitled', content || '', tags || [], projectId)
+    return NextResponse.json({ id: noteId || storeId })
   } catch (error) {
     console.error('[Notes API] POST error:', error)
     return NextResponse.json({ error: 'Failed to create note' }, { status: 500 })

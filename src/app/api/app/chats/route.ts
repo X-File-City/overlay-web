@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl
     const chatId = searchParams.get('chatId')
     const includeMessages = searchParams.get('messages') === 'true'
+    const projectId = searchParams.get('projectId')
 
     if (chatId && includeMessages) {
       const messages = await convex.query<Array<{
@@ -37,6 +38,11 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    // When filtering by project, use the in-memory store (Convex doesn't track projectId)
+    if (projectId !== null) {
+      return NextResponse.json(listChats(session.user.id, projectId))
+    }
+
     const chats = await convex.query<Array<{
       _id: string
       title: string
@@ -54,16 +60,15 @@ export async function POST(request: NextRequest) {
   try {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    const { title, model } = await request.json()
+    const { title, model, projectId } = await request.json()
     const chatId = await convex.mutation<string>('chats:create', {
       userId: session.user.id,
       title: title || 'New Chat',
       model: model || 'claude-sonnet-4-6',
     })
 
-    return NextResponse.json({
-      id: chatId || createChat(session.user.id, title || 'New Chat', model || 'claude-sonnet-4-6'),
-    })
+    const storeId = createChat(session.user.id, title || 'New Chat', model || 'claude-sonnet-4-6', projectId)
+    return NextResponse.json({ id: chatId || storeId })
   } catch {
     return NextResponse.json({ error: 'Failed to create chat' }, { status: 500 })
   }

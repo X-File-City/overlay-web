@@ -7,14 +7,17 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   MessageSquare, BookOpen, Bot, Brain, Plug, LogOut, User,
   Smartphone, Puzzle, MessageCircle, Monitor, ChevronUp, AlertCircle,
+  FolderOpen,
 } from 'lucide-react'
 import type { AuthUser } from '@/lib/workos-auth'
+import ProjectsSidebar from './ProjectsSidebar'
 
 const NAV_ITEMS = [
+  { href: '/app/projects', label: 'Projects', icon: FolderOpen },
   { href: '/app/chat', label: 'Chats', icon: MessageSquare },
   { href: '/app/agent', label: 'Agents', icon: Bot },
   { href: '/app/notes', label: 'Notes', icon: BookOpen },
-  { href: '/app/memories', label: 'Memories', icon: Brain },
+  { href: '/app/knowledge', label: 'Knowledge', icon: Brain },
   { href: '/app/integrations', label: 'Integrations', icon: Plug },
 ]
 
@@ -89,6 +92,7 @@ export default function AppSidebar({ user }: { user: AuthUser }) {
   const pathname = usePathname()
   const displayName = user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : user.email
 
+  const projectsOpen = pathname.startsWith('/app/projects')
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -124,6 +128,7 @@ export default function AppSidebar({ user }: { user: AuthUser }) {
   }
 
   return (
+    <>
     <aside className="w-56 h-full flex flex-col border-r border-[#e5e5e5] bg-[#fafafa]">
       {/* Logo */}
       <div className="flex h-16 items-center border-b border-[#e5e5e5] px-5">
@@ -237,5 +242,7 @@ export default function AppSidebar({ user }: { user: AuthUser }) {
         </div>
       </div>
     </aside>
+    {projectsOpen && <ProjectsSidebar />}
+    </>
   )
 }

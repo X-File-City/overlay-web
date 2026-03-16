@@ -40,11 +40,6 @@ function getMessageImages(msg: { parts?: Array<{ type: string; image?: string }>
   return msg.parts.filter((p) => p.type === 'image' && p.image).map((p) => p.image!)
 }
 
-function shallowBoolArrayEqual(a: boolean[], b: boolean[]): boolean {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
-}
 
 async function generateTitle(text: string): Promise<string | null> {
   try {
@@ -61,34 +56,27 @@ async function generateTitle(text: string): Promise<string | null> {
   return null
 }
 
-// ─── ExchangeBlock (memoized) ─────────────────────────────────────────────
-// Each exchange is its own memoized subtree so that only the actively
-// streaming exchange re-renders on every token. Historical exchanges stay
-// frozen until the user switches their model tab.
+// ─── ExchangeBlock (memoized) ────────────────────────────────────────────────
+// Model tab buttons live in the sticky header, NOT here.
+// This component only renders: user message + assistant response + error.
 
 interface ExchangeBlockProps {
   userMsgId: string
   userText: string
-  userImages: string[]          // stable for historical exchanges
+  userImages: string[]
   exchIdx: number
-  exchModelList: string[]       // same array reference while models don't change
-  tabNames: string[]            // display names, same reference
-  tabLoadings: boolean[]        // per-tab loading state
-  selectedTab: number
-  onTabSelect: (exchIdx: number, tabIdx: number) => void
   responseText: string
-  isStreaming: boolean          // currently streaming this response
-  showThinking: boolean         // no content yet but loading
+  isStreaming: boolean
+  showThinking: boolean
   errorMessage: string | null
 }
 
 const ExchangeBlock = React.memo(
   function ExchangeBlock({
-    userText, userImages, exchIdx, exchModelList, tabNames, tabLoadings,
-    selectedTab, onTabSelect, responseText, isStreaming, showThinking, errorMessage,
+    userText, userImages, exchIdx, responseText, isStreaming, showThinking, errorMessage,
   }: ExchangeBlockProps) {
     return (
-      <div className="flex flex-col gap-2 message-appear">
+      <div className="flex flex-col gap-2 message-appear" data-exchange-idx={exchIdx}>
         {/* User message */}
         <div className="flex justify-end">
           <div className="max-w-[75%] space-y-2">
@@ -107,28 +95,6 @@ const ExchangeBlock = React.memo(
             )}
           </div>
         </div>
-
-        {/* Per-exchange model tabs — only shown for multi-model exchanges */}
-        {exchModelList.length > 1 && (
-          <div className="flex items-center gap-1 mt-0.5">
-            {exchModelList.map((mId, tabIdx) => {
-              const isActive = tabIdx === selectedTab
-              const loading = tabLoadings[tabIdx] ?? false
-              return (
-                <button
-                  key={mId}
-                  onClick={() => onTabSelect(exchIdx, tabIdx)}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-colors ${
-                    isActive ? 'bg-[#0a0a0a] text-[#fafafa]' : 'bg-[#f0f0f0] text-[#525252] hover:bg-[#e8e8e8]'
-                  }`}
-                >
-                  {loading && <Loader2 size={9} className="animate-spin" />}
-                  {tabNames[tabIdx] ?? mId}
-                </button>
-              )
-            })}
-          </div>
-        )}
 
         {/* Assistant response */}
         {responseText ? (
@@ -153,24 +119,17 @@ const ExchangeBlock = React.memo(
       </div>
     )
   },
-  // Custom equality: skip re-render when nothing meaningful changed.
-  // This is the key guard that prevents historical exchanges from re-rendering
-  // during streaming of a later exchange.
   (prev, next) =>
     prev.userMsgId === next.userMsgId &&
     prev.userText === next.userText &&
     prev.exchIdx === next.exchIdx &&
-    prev.selectedTab === next.selectedTab &&
     prev.responseText === next.responseText &&
     prev.isStreaming === next.isStreaming &&
     prev.showThinking === next.showThinking &&
-    prev.errorMessage === next.errorMessage &&
-    prev.exchModelList === next.exchModelList && // stable reference
-    prev.onTabSelect === next.onTabSelect &&      // stable useCallback
-    shallowBoolArrayEqual(prev.tabLoadings, next.tabLoadings)
+    prev.errorMessage === next.errorMessage
 )
 
-// ─── helpers to classify api errors ─────────────────────────────────────────
+// ─── error label ─────────────────────────────────────────────────────────────
 
 function errorLabel(err: Error | null | undefined): string | null {
   if (!err) return null
@@ -180,7 +139,7 @@ function errorLabel(err: Error | null | undefined): string | null {
   return 'Something went wrong. Please try again.'
 }
 
-// ─── constants ──────────────────────────────────────────────────────────────
+// ─── constants ───────────────────────────────────────────────────────────────
 
 const CHAT_SUGGESTIONS = [
   'Explain how transformers work in machine learning',
@@ -191,7 +150,7 @@ const CHAT_SUGGESTIONS = [
 
 const CHAT_MODEL_KEY = 'overlay_chat_model'
 
-// ─── main component ──────────────────────────────────────────────────────────
+// ─── main component ───────────────────────────────────────────────────────────
 
 export default function ChatInterface({ userId: _userId }: { userId: string }) {
   void _userId
@@ -212,10 +171,10 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Per-exchange model tracking: index = exchange, value = ordered model IDs used
   const [exchangeModels, setExchangeModels] = useState<string[][]>([])
-  // Per-exchange selected tab: which model tab is active for each exchange
   const [selectedTabPerExchange, setSelectedTabPerExchange] = useState<number[]>([])
+  // Which exchange the user is currently scrolled to (drives the sticky header tabs)
+  const [visibleExchangeIdx, setVisibleExchangeIdx] = useState(0)
 
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [input, setInput] = useState('')
@@ -224,11 +183,13 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesScrollRef = useRef<HTMLDivElement>(null)
   const shouldScrollRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const modelPickerRef = useRef<HTMLDivElement>(null)
-  // Track whether we were streaming so subscription refresh only fires on transition
   const wasStreamingRef = useRef(false)
+  // Stores the pending title so loadChats() never overwrites it before the PATCH lands
+  const pendingTitleRef = useRef<{ chatId: string; title: string } | null>(null)
 
   // ── 4 fixed chat instances ────────────────────────────────────────────────
   const transport0 = useMemo(() => new DefaultChatTransport({ api: '/api/app/chat' }), [])
@@ -243,14 +204,12 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
 
   const chatInstances = useMemo(() => [chat0, chat1, chat2, chat3], [chat0, chat1, chat2, chat3])
 
-  // Map from modelId → slot index
   const modelSlotMap = useMemo(() => {
     const map = new Map<string, number>()
     selectedModels.forEach((id, i) => map.set(id, i))
     return map
   }, [selectedModels])
 
-  // Derived flags
   const isAnyLoading = chatInstances
     .slice(0, selectedModels.length)
     .some((c) => c.status === 'streaming' || c.status === 'submitted')
@@ -259,7 +218,6 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     (id) => AVAILABLE_MODELS.find((m) => m.id === id)?.supportsVision ?? false
   )
 
-  // Subscription state
   const isFreeTier = entitlements?.tier === 'free'
   const weeklyUsed = isFreeTier
     ? (entitlements?.dailyUsage.ask ?? 0) + (entitlements?.dailyUsage.write ?? 0) + (entitlements?.dailyUsage.agent ?? 0)
@@ -284,17 +242,25 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     } catch { /* ignore */ }
   }, [])
 
+  // Apply any pending title override when refreshing the chat list
   const loadChats = useCallback(async () => {
     try {
       const res = await fetch('/api/app/chats')
-      if (res.ok) setChats(await res.json())
+      if (res.ok) {
+        const serverChats: Chat[] = await res.json()
+        const pending = pendingTitleRef.current
+        setChats(
+          pending
+            ? serverChats.map((c) => (c._id === pending.chatId ? { ...c, title: pending.title } : c))
+            : serverChats
+        )
+      }
     } catch { /* ignore */ }
   }, [])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadChats(); loadSubscription() }, [loadChats, loadSubscription])
 
-  // Refresh subscription only when streaming transitions to complete (not on every status change)
   useEffect(() => {
     const isStreaming = chatInstances.some((c) => c.status === 'streaming' || c.status === 'submitted')
     if (wasStreamingRef.current && !isStreaming && chat0.messages.length > 0) {
@@ -304,7 +270,6 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat0.status, chat1.status, chat2.status, chat3.status])
 
-  // Scroll to bottom when user sends a message
   useEffect(() => {
     if (shouldScrollRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -312,7 +277,6 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     }
   }, [chat0.messages])
 
-  // Close model picker on outside click
   useEffect(() => {
     if (!showModelPicker) return
     function handleOutside(e: MouseEvent) {
@@ -323,9 +287,26 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     return () => document.removeEventListener('mousedown', handleOutside)
   }, [showModelPicker])
 
-  // ── helpers ───────────────────────────────────────────────────────────────
+  // ── scroll tracking — which exchange is currently in view ─────────────────
 
-  // Returns the assistant message from a given slot for exchange exchIdx, or null
+  function handleMessagesScroll() {
+    const container = messagesScrollRef.current
+    if (!container) return
+    const containerRect = container.getBoundingClientRect()
+    // Use the 40% mark so the exchange is considered "visible" when its top half is in view
+    const threshold = containerRect.top + containerRect.height * 0.4
+    const exchEls = container.querySelectorAll<HTMLElement>('[data-exchange-idx]')
+    let newIdx = 0
+    for (const el of exchEls) {
+      if (el.getBoundingClientRect().top <= threshold) {
+        newIdx = parseInt(el.getAttribute('data-exchange-idx') || '0', 10)
+      }
+    }
+    setVisibleExchangeIdx(newIdx)
+  }
+
+  // ── response lookup ────────────────────────────────────────────────────────
+
   function getResponseForExchange(slotIdx: number, exchIdx: number) {
     const msgs = chatInstances[slotIdx].messages
     let uCount = 0
@@ -344,7 +325,7 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     return null
   }
 
-  // ── stable callbacks ──────────────────────────────────────────────────────
+  // ── stable callbacks ───────────────────────────────────────────────────────
 
   const handleTabSelect = useCallback((exchIdx: number, tabIdx: number) => {
     setSelectedTabPerExchange((prev) => {
@@ -354,7 +335,14 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     })
   }, [])
 
-  // ── chat management ───────────────────────────────────────────────────────
+  // ── chat management ────────────────────────────────────────────────────────
+
+  function resetChatState() {
+    setExchangeModels([])
+    setSelectedTabPerExchange([])
+    setVisibleExchangeIdx(0)
+    chatInstances.forEach((c) => c.setMessages([]))
+  }
 
   async function createNewChat(): Promise<string | null> {
     const res = await fetch('/api/app/chats', {
@@ -364,12 +352,12 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     })
     if (res.ok) {
       const data = await res.json()
+      // Add directly to state — no loadChats() here so there's no race with pendingTitleRef
+      const newChat: Chat = { _id: data.id, title: 'New Chat', model: selectedModels[0], lastModified: Date.now() }
+      setChats((prev) => [newChat, ...prev])
       setActiveChatId(data.id)
       setIsFirstMessage(true)
-      setExchangeModels([])
-      setSelectedTabPerExchange([])
-      chatInstances.forEach((c) => c.setMessages([]))
-      await loadChats()
+      resetChatState()
       return data.id
     }
     return null
@@ -378,9 +366,8 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
   async function loadChat(chatId: string) {
     setActiveChatId(chatId)
     setIsFirstMessage(false)
-    setExchangeModels([])
-    setSelectedTabPerExchange([])
-    chatInstances.forEach((c) => c.setMessages([]))
+    pendingTitleRef.current = null
+    resetChatState()
     try {
       const res = await fetch(`/api/app/chats?chatId=${chatId}&messages=true`)
       if (!res.ok) return
@@ -388,7 +375,6 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
       type RawMsg = { id: string; role: 'user' | 'assistant'; parts: Array<{ type: string; text?: string }>; model?: string }
       const rawMessages: RawMsg[] = data.messages || []
 
-      // Group into exchanges
       const exchanges: Array<{ userMsg: RawMsg; responses: Array<{ model: string; msg: RawMsg }> }> = []
       let cur: (typeof exchanges)[0] | null = null
       for (const msg of rawMessages) {
@@ -401,7 +387,6 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
       }
       if (cur) exchanges.push(cur)
 
-      // Collect unique models in order of first appearance
       const uniqueModels: string[] = []
       for (const ex of exchanges) {
         for (const { model } of ex.responses) {
@@ -440,9 +425,8 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     await fetch(`/api/app/chats?chatId=${chatId}`, { method: 'DELETE' })
     if (activeChatId === chatId) {
       setActiveChatId(null)
-      setExchangeModels([])
-      setSelectedTabPerExchange([])
-      chatInstances.forEach((c) => c.setMessages([]))
+      pendingTitleRef.current = null
+      resetChatState()
     }
     await loadChats()
   }
@@ -474,10 +458,11 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     const text = input.trim()
     if ((!text && attachedImages.length === 0) || isAnyLoading || isSendBlocked) return
 
+    // Capture before any await — isFirstMessage is true for the first message of a new/fresh chat
+    const wasFirst = isFirstMessage
     const chatId = activeChatId || await createNewChat()
     if (!chatId) return
 
-    const wasFirst = isFirstMessage
     setInput('')
     setAttachedImages([])
     setIsFirstMessage(false)
@@ -491,29 +476,32 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
       parts.push({ type: 'image', image: img.dataUrl, mediaType: img.mimeType })
     }
 
-    // Kick off title generation immediately — don't block on model responses.
-    // Falls back to a truncation of the user's text if the API is unavailable.
+    // Title generation: show optimistic title immediately, then replace with AI title.
+    // pendingTitleRef prevents loadChats() from overwriting the title before the PATCH lands.
     if (wasFirst && text) {
-      // Optimistic update so the sidebar shows something right away
       const optimisticTitle = text.slice(0, 50)
+      pendingTitleRef.current = { chatId, title: optimisticTitle }
       setChats((prev) =>
         prev.map((c) => (c._id === chatId ? { ...c, title: optimisticTitle } : c))
       )
       generateTitle(text).then((aiTitle) => {
         const title = aiTitle || optimisticTitle
+        pendingTitleRef.current = { chatId, title }
+        // Update local state immediately — no waiting on the server round-trip
+        setChats((prev) =>
+          prev.map((c) => (c._id === chatId ? { ...c, title } : c))
+        )
         fetch('/api/app/chats', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ chatId, title }),
-        })
-          .then(() => loadChats())
-          .catch(() => {
-            // Keep the optimistic title — the sidebar already shows it
-          })
+        }).then(() => {
+          // Server confirmed — safe to clear the override
+          if (pendingTitleRef.current?.chatId === chatId) pendingTitleRef.current = null
+        }).catch(() => { /* keep local title */ })
       })
     }
 
-    // Send to all selected models. Only the primary (idx 0) persists the user message.
     void Promise.all(
       selectedModels.map((modelId, idx) =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -546,14 +534,18 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
     chatInstances.slice(0, selectedModels.length).forEach((c) => c.stop())
   }
 
-  // ── model display names (stable for same selectedModels) ──────────────────
-  const modelNames = useMemo(
-    () => selectedModels.map((id) => AVAILABLE_MODELS.find((m) => m.id === id)?.name ?? id),
-    [selectedModels]
-  )
+  // ── derived values for header ─────────────────────────────────────────────
 
   const activeChat = chats.find((c) => c._id === activeChatId)
-  const modelPickerLabel = selectedModels.length === 1 ? modelNames[0] : `${selectedModels.length} models`
+  const modelPickerLabel = selectedModels.length === 1
+    ? (AVAILABLE_MODELS.find((m) => m.id === selectedModels[0])?.name ?? 'Select model')
+    : `${selectedModels.length} models`
+
+  // Tabs shown in the header for the exchange currently in view
+  const headerTabModels = exchangeModels[visibleExchangeIdx] ?? []
+  const showHeaderTabs = headerTabModels.length > 1
+  const headerSelectedTab = selectedTabPerExchange[visibleExchangeIdx] ?? 0
+
   const primaryMessages = chat0.messages
   const hasMessages = primaryMessages.some((m) => m.role === 'user')
   const latestExchIdx = exchangeModels.length - 1
@@ -597,11 +589,44 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
 
       {/* Main area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* Header */}
-        <div className="flex h-16 items-center justify-between border-b border-[#e5e5e5] px-4">
-          <h2 className="text-sm font-medium text-[#0a0a0a] truncate max-w-[60%]">
+        {/* Sticky header */}
+        <div className="flex h-16 items-center justify-between border-b border-[#e5e5e5] px-4 shrink-0">
+          <h2 className="text-sm font-medium text-[#0a0a0a] truncate max-w-[30%]">
             {activeChat?.title || 'New conversation'}
           </h2>
+
+          {/* Model tabs for the visible exchange — center of header */}
+          {showHeaderTabs && (
+            <div className="flex items-center gap-1.5 flex-1 justify-center px-4">
+              {headerTabModels.map((mId, tabIdx) => {
+                const mSlot = modelSlotMap.get(mId) ?? 0
+                const mInst = chatInstances[mSlot]
+                const isLatestVisible = visibleExchangeIdx === latestExchIdx
+                const mLoading = isLatestVisible &&
+                  (mInst.status === 'streaming' || mInst.status === 'submitted') &&
+                  !getResponseForExchange(mSlot, visibleExchangeIdx)
+                const isActive = tabIdx === headerSelectedTab
+                const mName = AVAILABLE_MODELS.find((m) => m.id === mId)?.name ?? mId
+                return (
+                  <button
+                    key={mId}
+                    onClick={() => !isAnyLoading && handleTabSelect(visibleExchangeIdx, tabIdx)}
+                    disabled={isAnyLoading}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-colors ${
+                      isAnyLoading ? 'cursor-not-allowed opacity-60' : ''
+                    } ${
+                      isActive
+                        ? 'bg-[#0a0a0a] text-[#fafafa]'
+                        : 'bg-[#f0f0f0] text-[#525252] hover:bg-[#e8e8e8]'
+                    }`}
+                  >
+                    {mLoading && <Loader2 size={9} className="animate-spin" />}
+                    {mName}
+                  </button>
+                )
+              })}
+            </div>
+          )}
 
           {/* Model picker */}
           <div ref={modelPickerRef} className="relative">
@@ -643,7 +668,11 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4">
+        <div
+          ref={messagesScrollRef}
+          className="flex-1 overflow-y-auto px-4 py-4"
+          onScroll={handleMessagesScroll}
+        >
           <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-6">
             {!hasMessages && (
               <div className="flex flex-1 items-center justify-center">
@@ -667,7 +696,6 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
               </div>
             )}
 
-            {/* Render one ExchangeBlock per user message in the primary stream */}
             {(() => {
               const blocks: React.ReactNode[] = []
               let exchIdx = 0
@@ -682,29 +710,12 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
                 const isLatest = curExchIdx === latestExchIdx
                 const slotInst = chatInstances[slotIdx]
 
-                // Pre-compute response text so ExchangeBlock gets a primitive
                 const responseMsg = getResponseForExchange(slotIdx, curExchIdx)
                 const responseText = responseMsg ? getMessageText(responseMsg) : ''
 
                 const instLoading = isLatest && (slotInst.status === 'streaming' || slotInst.status === 'submitted')
                 const isStreaming = instLoading && responseText.length > 0
                 const showThinking = instLoading && responseText.length === 0
-
-                // Per-tab loading state (only meaningful for latest exchange)
-                const tabLoadings: boolean[] = exchModelList.map((mId) => {
-                  if (!isLatest) return false
-                  const mSlot = modelSlotMap.get(mId) ?? 0
-                  const mInst = chatInstances[mSlot]
-                  const mLoading = mInst.status === 'streaming' || mInst.status === 'submitted'
-                  const mResponse = getResponseForExchange(mSlot, curExchIdx)
-                  return mLoading && !mResponse
-                })
-
-                // Tab display names: derived from exchModelList + modelNames map
-                const tabNames: string[] = exchModelList.map(
-                  (mId) => AVAILABLE_MODELS.find((m) => m.id === mId)?.name ?? mId
-                )
-
                 const instError = isLatest ? slotInst.error : null
 
                 blocks.push(
@@ -715,11 +726,6 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     userImages={getMessageImages(msg as any)}
                     exchIdx={curExchIdx}
-                    exchModelList={exchModelList}
-                    tabNames={tabNames}
-                    tabLoadings={tabLoadings}
-                    selectedTab={selectedTab}
-                    onTabSelect={handleTabSelect}
                     responseText={responseText}
                     isStreaming={isStreaming}
                     showThinking={showThinking}
@@ -753,7 +759,6 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
               ))}
             </div>
           )}
-
           <div className="mx-auto w-full max-w-4xl">
             {isSendBlocked && !isAnyLoading ? (
               <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-[#fafafa] border border-[#e5e5e5] text-xs text-[#888]">
