@@ -304,6 +304,10 @@ function IntegrationsDialog({
   )
 }
 
+function notifyIntegrationsChanged() {
+  window.dispatchEvent(new CustomEvent('overlay:integrations-changed'))
+}
+
 // ── Main integrations view ─────────────────────────────────────────────────────
 
 export default function IntegrationsView({ userId: _userId }: { userId: string }) {
@@ -377,6 +381,7 @@ export default function IntegrationsView({ userId: _userId }: { userId: string }
         })
         if (res.ok) {
           setConnected((prev) => { const next = new Set(prev); next.delete(integration.composioId); return next })
+          notifyIntegrationsChanged()
         } else {
           const data = await res.json().catch(() => ({}))
           setConnectError(data.error || 'Failed to disconnect')
@@ -426,9 +431,11 @@ export default function IntegrationsView({ userId: _userId }: { userId: string }
         if (oauthTab) oauthTab.location.href = data.redirectUrl
         else window.open(data.redirectUrl, '_blank')
         setConnected((prev) => new Set([...prev, slug]))
+        notifyIntegrationsChanged()
       } else if (data.connectionId) {
         oauthTab?.close()
         setConnected((prev) => new Set([...prev, slug]))
+        notifyIntegrationsChanged()
       } else {
         oauthTab?.close()
         throw new Error('No OAuth URL returned')
@@ -447,6 +454,7 @@ export default function IntegrationsView({ userId: _userId }: { userId: string }
     })
     if (!res.ok) throw new Error('Failed to disconnect')
     setConnected((prev) => { const next = new Set(prev); next.delete(slug); return next })
+    notifyIntegrationsChanged()
   }, [])
 
   const connectedList = INTEGRATIONS.filter((i) => connected.has(i.composioId))

@@ -306,7 +306,7 @@ export default function ProjectsSidebar() {
   const rootProjectFiles = projectFiles.filter((f) => f.parentId === null)
 
   return (
-    <div className="w-60 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5] shrink-0">
+    <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5] shrink-0">
       {/* Hidden file inputs */}
       <input ref={fileInputRef} type="file" className="hidden" onChange={handleUploadFile} />
       <input

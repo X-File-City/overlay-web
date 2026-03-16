@@ -4,6 +4,27 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Plus, Plug, Loader2, Sparkles } from 'lucide-react'
 
+// Proper display names for known Composio slugs (API returns lowercase for some)
+const KNOWN_NAMES: Record<string, string> = {
+  gmail: 'Gmail',
+  googlecalendar: 'Google Calendar',
+  googlesheets: 'Google Sheets',
+  googledrive: 'Google Drive',
+  notion: 'Notion',
+  slack: 'Slack',
+  outlook: 'Outlook',
+  twitter: 'X (Twitter)',
+  asana: 'Asana',
+  linkedin: 'LinkedIn',
+}
+
+function resolvedName(slug: string, apiName: string): string {
+  if (KNOWN_NAMES[slug]) return KNOWN_NAMES[slug]
+  // If API returned a different (non-slug) name, use it; otherwise capitalize slug
+  if (apiName && apiName !== slug) return apiName
+  return slug.charAt(0).toUpperCase() + slug.slice(1)
+}
+
 interface ConnectorItem {
   slug: string
   name: string
@@ -45,12 +66,42 @@ export default function ToolsSidebar() {
       if (!statusRes.ok || !searchRes.ok) return
       const { connected } = await statusRes.json() as { connected: string[] }
       const { items } = await searchRes.json() as { items: Array<{ slug: string; name: string; logoUrl: string | null }> }
+
       const connectedSet = new Set(connected)
-      setConnectors(items.filter((i) => connectedSet.has(i.slug)).map((i) => ({ slug: i.slug, name: i.name, logoUrl: i.logoUrl })))
+      // Build a lookup from search results for names + logos
+      const searchMap = new Map(items.map((i) => [i.slug, i]))
+
+      // For each connected slug, resolve display name and logo
+      const result: ConnectorItem[] = connected
+        .filter(Boolean)
+        .map((slug) => {
+          const found = searchMap.get(slug)
+          return {
+            slug,
+            name: resolvedName(slug, found?.name ?? ''),
+            logoUrl: found?.logoUrl ?? null,
+          }
+        })
+
+      setConnectors(result)
     } catch { /* ignore */ } finally { setLoading(false) }
   }, [])
 
   useEffect(() => { loadConnectors() }, [loadConnectors])
+
+  // Refresh when user returns to tab (OAuth flow completes in another tab)
+  useEffect(() => {
+    const onFocus = () => void loadConnectors()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [loadConnectors])
+
+  // Refresh when IntegrationsView dispatches a connect/disconnect event
+  useEffect(() => {
+    const onChanged = () => void loadConnectors()
+    window.addEventListener('overlay:integrations-changed', onChanged)
+    return () => window.removeEventListener('overlay:integrations-changed', onChanged)
+  }, [loadConnectors])
 
   // Sync tab with URL
   useEffect(() => {
@@ -64,7 +115,7 @@ export default function ToolsSidebar() {
   }
 
   return (
-    <div className="w-60 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5] shrink-0">
+    <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5] shrink-0">
       {/* Header — action button */}
       <div className="flex h-16 items-center border-b border-[#e5e5e5] px-3 shrink-0">
         {tab === 'connectors' ? (
@@ -117,7 +168,7 @@ export default function ToolsSidebar() {
             <div className="flex flex-col items-center justify-center py-10 gap-2 text-[#aaa] text-center">
               <Plug size={24} strokeWidth={1} className="opacity-40" />
               <p className="text-xs">No connectors yet</p>
-              <p className="text-[10px]">Click "New Connector" to add one</p>
+              <p className="text-[10px]">Click &quot;New Connector&quot; to add one</p>
             </div>
           ) : (
             <div className="space-y-0.5">
@@ -137,7 +188,7 @@ export default function ToolsSidebar() {
           <div className="flex flex-col items-center justify-center py-10 gap-2 text-[#aaa] text-center">
             <Sparkles size={24} strokeWidth={1} className="opacity-40" />
             <p className="text-xs">No skills yet</p>
-            <p className="text-[10px]">Click "New Skill" to create one</p>
+            <p className="text-[10px]">Click &quot;New Skill&quot; to create one</p>
           </div>
         )}
       </div>

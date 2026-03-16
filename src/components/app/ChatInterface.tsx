@@ -66,6 +66,7 @@ interface ExchangeBlockProps {
   userText: string
   userImages: string[]
   exchIdx: number
+  slotIdx: number
   responseText: string
   isStreaming: boolean
   showThinking: boolean
@@ -74,7 +75,7 @@ interface ExchangeBlockProps {
 
 const ExchangeBlock = React.memo(
   function ExchangeBlock({
-    userText, userImages, exchIdx, responseText, isStreaming, showThinking, errorMessage,
+    userText, userImages, exchIdx, slotIdx, responseText, isStreaming, showThinking, errorMessage,
   }: ExchangeBlockProps) {
     return (
       <div className="flex flex-col gap-2 message-appear" data-exchange-idx={exchIdx}>
@@ -100,7 +101,7 @@ const ExchangeBlock = React.memo(
         {/* Assistant response */}
         {responseText ? (
           <div className="w-full px-1 py-1 text-sm leading-relaxed text-[#0a0a0a]">
-            <MarkdownMessage text={responseText} isStreaming={isStreaming} />
+            <MarkdownMessage key={slotIdx} text={responseText} isStreaming={isStreaming} />
           </div>
         ) : showThinking ? (
           <div className="flex items-center gap-2 px-1 py-1 text-xs italic text-[#888]">
@@ -124,6 +125,7 @@ const ExchangeBlock = React.memo(
     prev.userMsgId === next.userMsgId &&
     prev.userText === next.userText &&
     prev.exchIdx === next.exchIdx &&
+    prev.slotIdx === next.slotIdx &&
     prev.responseText === next.responseText &&
     prev.isStreaming === next.isStreaming &&
     prev.showThinking === next.showThinking &&
@@ -743,6 +745,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     userImages={getMessageImages(msg as any)}
                     exchIdx={curExchIdx}
+                    slotIdx={slotIdx}
                     responseText={responseText}
                     isStreaming={isStreaming}
                     showThinking={showThinking}
