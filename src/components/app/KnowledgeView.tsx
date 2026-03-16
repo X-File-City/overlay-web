@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Brain, Trash2, Plus, X, Upload, FolderPlus,
+  Brain, Trash2, Plus, X, FilePlus, FolderPlus,
   ChevronRight, FileText, Folder, FolderOpen, Loader2,
 } from 'lucide-react'
 import { FileViewerPanel, readFileAsContent, isEditableType } from './FileViewer'
@@ -352,8 +352,8 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
                 onClick={() => fileUploadRef.current?.click()}
                 className="flex items-center gap-1 flex-1 px-2 py-1.5 rounded-md text-xs bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222] transition-colors justify-center"
               >
-                <Upload size={12} />
-                Upload File
+                <FilePlus size={12} />
+                File
               </button>
               <button
                 onClick={() => folderUploadRef.current?.click()}
@@ -493,7 +493,7 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
           ) : (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-[#888]">
               <FileText size={40} strokeWidth={1} className="opacity-30" />
-              <p className="text-sm">Select a file to edit</p>
+              <p className="text-sm">Select a file to view</p>
             </div>
           )
         )}

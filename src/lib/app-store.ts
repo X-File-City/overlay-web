@@ -26,6 +26,7 @@ export interface StoredAgent {
   _id: string
   userId: string
   title: string
+  projectId?: string
   lastModified: number
 }
 
@@ -253,19 +254,19 @@ export function removeMemory(memoryId: string): void {
   store.memories = store.memories.filter((memory) => memory._id !== memoryId)
 }
 
-export function listAgents(userId: string): StoredAgent[] {
-  return getStore()
-    .agents
-    .filter((agent) => agent.userId === userId)
-    .sort((a, b) => b.lastModified - a.lastModified)
+export function listAgents(userId: string, projectId?: string | null): StoredAgent[] {
+  let agents = getStore().agents.filter((agent) => agent.userId === userId)
+  if (projectId !== undefined) agents = agents.filter((a) => a.projectId === projectId)
+  return agents.sort((a, b) => b.lastModified - a.lastModified)
 }
 
-export function createAgent(userId: string, title: string): string {
+export function createAgent(userId: string, title: string, projectId?: string): string {
   const agentId = createId('agent')
   getStore().agents.push({
     _id: agentId,
     userId,
     title,
+    projectId,
     lastModified: Date.now(),
   })
   return agentId

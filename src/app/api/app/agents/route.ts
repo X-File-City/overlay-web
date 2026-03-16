@@ -12,6 +12,11 @@ export async function GET(request: NextRequest) {
     const agentId = searchParams.get('agentId')
     const includeMessages = searchParams.get('messages') === 'true'
 
+    const projectId = searchParams.get('projectId')
+    if (projectId !== null && !agentId) {
+      return NextResponse.json(listAgents(session.user.id, projectId))
+    }
+
     if (agentId && includeMessages) {
       const messages = await convex.query<Array<{
         _id: string
@@ -52,15 +57,13 @@ export async function POST(request: NextRequest) {
   try {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    const { title } = await request.json()
+    const { title, projectId } = await request.json()
     const agentId = await convex.mutation<string>('agents:create', {
       userId: session.user.id,
       title: title || 'New Agent',
     })
-
-    return NextResponse.json({
-      id: agentId || createAgent(session.user.id, title || 'New Agent'),
-    })
+    const storeId = createAgent(session.user.id, title || 'New Agent', projectId)
+    return NextResponse.json({ id: agentId || storeId })
   } catch {
     return NextResponse.json({ error: 'Failed to create agent' }, { status: 500 })
   }

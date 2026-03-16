@@ -5,12 +5,13 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import {
-  MessageSquare, BookOpen, Bot, Brain, Plug, LogOut, User,
+  MessageSquare, BookOpen, Bot, Brain, Wrench, LogOut, User,
   Smartphone, Puzzle, MessageCircle, Monitor, ChevronUp, AlertCircle,
   FolderOpen,
 } from 'lucide-react'
 import type { AuthUser } from '@/lib/workos-auth'
 import ProjectsSidebar from './ProjectsSidebar'
+import ToolsSidebar from './ToolsSidebar'
 
 const NAV_ITEMS = [
   { href: '/app/projects', label: 'Projects', icon: FolderOpen },
@@ -18,7 +19,7 @@ const NAV_ITEMS = [
   { href: '/app/agent', label: 'Agents', icon: Bot },
   { href: '/app/notes', label: 'Notes', icon: BookOpen },
   { href: '/app/knowledge', label: 'Knowledge', icon: Brain },
-  { href: '/app/integrations', label: 'Integrations', icon: Plug },
+  { href: '/app/tools', label: 'Tools', icon: Wrench },
 ]
 
 const APP_LINKS = [
@@ -93,6 +94,7 @@ export default function AppSidebar({ user }: { user: AuthUser }) {
   const displayName = user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : user.email
 
   const projectsOpen = pathname.startsWith('/app/projects')
+  const toolsOpen = pathname.startsWith('/app/tools')
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -243,6 +245,7 @@ export default function AppSidebar({ user }: { user: AuthUser }) {
       </div>
     </aside>
     {projectsOpen && <ProjectsSidebar />}
+    {toolsOpen && <ToolsSidebar />}
     </>
   )
 }

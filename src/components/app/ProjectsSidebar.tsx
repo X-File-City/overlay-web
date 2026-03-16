@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Plus, FolderOpen, Folder, ChevronRight, MessageSquare,
-  BookOpen, FileText, Upload, FolderPlus, Loader2, Trash2, ArrowLeft,
+  BookOpen, FileText, Upload, FolderPlus, Loader2, Trash2, ArrowLeft, Bot,
 } from 'lucide-react'
 import { readFileAsContent } from './FileViewer'
 
@@ -19,6 +19,7 @@ interface Project {
 interface ProjectChat { _id: string; title: string; lastModified: number }
 interface ProjectNote { _id: string; title: string; updatedAt: number }
 interface ProjectFile { _id: string; name: string; type: 'file' | 'folder'; parentId: string | null }
+interface ProjectAgent { _id: string; title: string; lastModified: number }
 
 // ─── Project tree node ────────────────────────────────────────────────────────
 
@@ -113,6 +114,7 @@ export default function ProjectsSidebar() {
   const [projectChats, setProjectChats] = useState<ProjectChat[]>([])
   const [projectNotes, setProjectNotes] = useState<ProjectNote[]>([])
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([])
+  const [projectAgents, setProjectAgents] = useState<ProjectAgent[]>([])
   const [itemsLoading, setItemsLoading] = useState(false)
 
   const loadProjects = useCallback(async () => {
@@ -139,14 +141,16 @@ export default function ProjectsSidebar() {
   const loadProjectItems = useCallback(async (projectId: string) => {
     setItemsLoading(true)
     try {
-      const [chatsRes, notesRes, filesRes] = await Promise.all([
+      const [chatsRes, notesRes, filesRes, agentsRes] = await Promise.all([
         fetch(`/api/app/chats?projectId=${projectId}`),
         fetch(`/api/app/notes?projectId=${projectId}`),
         fetch(`/api/app/files?projectId=${projectId}`),
+        fetch(`/api/app/agents?projectId=${projectId}`),
       ])
       if (chatsRes.ok) setProjectChats(await chatsRes.json())
       if (notesRes.ok) setProjectNotes(await notesRes.json())
       if (filesRes.ok) setProjectFiles(await filesRes.json())
+      if (agentsRes.ok) setProjectAgents(await agentsRes.json())
     } catch { /* ignore */ } finally { setItemsLoading(false) }
   }, [])
 
@@ -199,6 +203,12 @@ export default function ProjectsSidebar() {
     setExpandedIds((prev) => new Set([...prev, project._id]))
   }
 
+  function projectNav(view: string, id: string) {
+    if (!selectedProject) return
+    const pn = encodeURIComponent(selectedProject.name)
+    router.push(`/app/projects?view=${view}&id=${id}&projectId=${selectedProject._id}&projectName=${pn}`)
+  }
+
   async function handleNewChat() {
     if (!selectedProject) return
     setAddMenuOpen(false)
@@ -209,7 +219,7 @@ export default function ProjectsSidebar() {
     })
     if (res.ok) {
       const { id } = await res.json()
-      router.push(`/app/projects?view=chat&id=${id}`)
+      projectNav('chat', id)
       await loadProjectItems(selectedProject._id)
     }
   }
@@ -224,7 +234,22 @@ export default function ProjectsSidebar() {
     })
     if (res.ok) {
       const { id } = await res.json()
-      router.push(`/app/projects?view=note&id=${id}`)
+      projectNav('note', id)
+      await loadProjectItems(selectedProject._id)
+    }
+  }
+
+  async function handleNewAgent() {
+    if (!selectedProject) return
+    setAddMenuOpen(false)
+    const res = await fetch('/api/app/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'New Agent', projectId: selectedProject._id }),
+    })
+    if (res.ok) {
+      const { id } = await res.json()
+      projectNav('agent', id)
       await loadProjectItems(selectedProject._id)
     }
   }
@@ -319,6 +344,9 @@ export default function ProjectsSidebar() {
                   <button onClick={handleNewNote} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-[#525252] hover:bg-[#f5f5f5] transition-colors">
                     <BookOpen size={12} />New Note
                   </button>
+                  <button onClick={handleNewAgent} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-[#525252] hover:bg-[#f5f5f5] transition-colors">
+                    <Bot size={12} />New Agent
+                  </button>
                   <button onClick={() => { setAddMenuOpen(false); fileInputRef.current?.click() }} className="flex items-center gap-2 w-full px-3 py-2 text-xs text-[#525252] hover:bg-[#f5f5f5] transition-colors">
                     <Upload size={12} />Upload File
                   </button>
@@ -335,16 +363,13 @@ export default function ProjectsSidebar() {
             </div>
           </>
         ) : (
-          <>
-            <span className="flex-1 text-sm font-medium text-[#0a0a0a]">Projects</span>
-            <button
-              onClick={() => openNewProjectForm(null)}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222] transition-colors shrink-0"
-            >
-              <Plus size={12} />
-              New
-            </button>
-          </>
+          <button
+            onClick={() => openNewProjectForm(null)}
+            className="flex items-center gap-1.5 w-full px-3 py-1.5 rounded-md text-sm bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222] transition-colors"
+          >
+            <Plus size={13} />
+            New Project
+          </button>
         )}
       </div>
 
@@ -409,7 +434,7 @@ export default function ProjectsSidebar() {
               {projectChats.map((chat) => (
                 <div
                   key={chat._id}
-                  onClick={() => router.push(`/app/projects?view=chat&id=${chat._id}`)}
+                  onClick={() => projectNav('chat', chat._id)}
                   className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
                 >
                   <MessageSquare size={12} className="shrink-0 text-[#888]" />
@@ -420,18 +445,29 @@ export default function ProjectsSidebar() {
               {projectNotes.map((note) => (
                 <div
                   key={note._id}
-                  onClick={() => router.push(`/app/projects?view=note&id=${note._id}`)}
+                  onClick={() => projectNav('note', note._id)}
                   className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
                 >
                   <BookOpen size={12} className="shrink-0 text-[#888]" />
                   <span className="flex-1 truncate">{note.title || 'Untitled'}</span>
                 </div>
               ))}
+              {/* Agents */}
+              {projectAgents.map((agent) => (
+                <div
+                  key={agent._id}
+                  onClick={() => projectNav('agent', agent._id)}
+                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
+                >
+                  <Bot size={12} className="shrink-0 text-[#888]" />
+                  <span className="flex-1 truncate">{agent.title}</span>
+                </div>
+              ))}
               {/* Files */}
               {rootProjectFiles.map((file) => (
                 <div
                   key={file._id}
-                  onClick={() => file.type === 'file' && router.push(`/app/projects?view=file&id=${file._id}`)}
+                  onClick={() => file.type === 'file' && projectNav('file', file._id)}
                   className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] transition-colors ${file.type === 'file' ? 'cursor-pointer hover:bg-[#ebebeb] hover:text-[#0a0a0a]' : ''}`}
                 >
                   {file.type === 'folder'
@@ -440,7 +476,7 @@ export default function ProjectsSidebar() {
                   <span className="flex-1 truncate">{file.name}</span>
                 </div>
               ))}
-              {subprojects.length === 0 && projectChats.length === 0 && projectNotes.length === 0 && projectFiles.length === 0 && (
+              {subprojects.length === 0 && projectChats.length === 0 && projectNotes.length === 0 && projectAgents.length === 0 && projectFiles.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-10 gap-2 text-[#aaa] text-center">
                   <FolderOpen size={28} strokeWidth={1} className="opacity-40" />
                   <p className="text-xs">Empty project</p>

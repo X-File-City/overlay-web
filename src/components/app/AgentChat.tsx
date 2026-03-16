@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Send, Loader2, Plus, Trash2, ChevronDown, ImageIcon, X, AlertCircle } from 'lucide-react'
+import { Send, Loader2, Plus, Trash2, ChevronDown, ImageIcon, X, AlertCircle, FolderOpen } from 'lucide-react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
+import { useSearchParams } from 'next/navigation'
 import { AVAILABLE_MODELS } from '@/lib/models'
 import { MarkdownMessage } from './MarkdownMessage'
 
@@ -70,7 +71,8 @@ async function generateTitle(text: string): Promise<string | null> {
 }
 
 
-export default function AgentChat() {
+export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: boolean; projectName?: string } = {}) {
+  const searchParams = useSearchParams()
   const [agents, setAgents] = useState<Agent[]>([])
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null)
   const [selectedModel, setSelectedModel] = useState<string>(() => {
@@ -135,6 +137,11 @@ export default function AgentChat() {
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadAgents(); loadSubscription() }, [loadAgents, loadSubscription])
+
+  // Auto-load a specific agent when embedded in project view
+  const idParam = hideSidebar ? searchParams.get('id') : null
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (idParam) void loadAgent(idParam) }, [idParam])
 
   useEffect(() => {
     if (status === 'ready' && messages.length > 0) {
@@ -255,47 +262,57 @@ export default function AgentChat() {
 
   return (
     <div className="flex h-full">
-      {/* Agent history sidebar */}
-      <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5]">
-        <div className="flex h-16 items-center border-b border-[#e5e5e5] px-3">
-          <button
-            onClick={createNewAgent}
-            className="flex items-center gap-1.5 w-full px-3 py-1.5 rounded-md text-sm bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222] transition-colors"
-          >
-            <Plus size={13} />
-            New agent
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
-          {agents.map((agent) => (
-            <div
-              key={agent._id}
-              onClick={() => loadAgent(agent._id)}
-              className={`group flex items-center justify-between px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${
-                activeAgentId === agent._id
-                  ? 'bg-[#e8e8e8] text-[#0a0a0a]'
-                  : 'text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a]'
-              }`}
+      {/* Agent history sidebar — hidden when embedded in a project */}
+      {!hideSidebar && (
+        <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5]">
+          <div className="flex h-16 items-center border-b border-[#e5e5e5] px-3">
+            <button
+              onClick={createNewAgent}
+              className="flex items-center gap-1.5 w-full px-3 py-1.5 rounded-md text-sm bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222] transition-colors"
             >
-              <span className="truncate">{agent.title}</span>
-              <button
-                onClick={(e) => deleteAgent(agent._id, e)}
-                className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity"
+              <Plus size={13} />
+              New agent
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+            {agents.map((agent) => (
+              <div
+                key={agent._id}
+                onClick={() => loadAgent(agent._id)}
+                className={`group flex items-center justify-between px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${
+                  activeAgentId === agent._id
+                    ? 'bg-[#e8e8e8] text-[#0a0a0a]'
+                    : 'text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a]'
+                }`}
               >
-                <Trash2 size={11} />
-              </button>
-            </div>
-          ))}
+                <span className="truncate">{agent.title}</span>
+                <button
+                  onClick={(e) => deleteAgent(agent._id, e)}
+                  className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Main agent area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         {/* Header */}
         <div className="flex h-16 items-center justify-between border-b border-[#e5e5e5] px-4">
-          <h2 className="text-sm font-medium text-[#0a0a0a] truncate max-w-[50%]">
-            {activeAgent?.title || 'New conversation'}
-          </h2>
+          <div className="flex items-center gap-2 min-w-0 max-w-[50%]">
+            <h2 className="text-sm font-medium text-[#0a0a0a] truncate">
+              {activeAgent?.title || 'New conversation'}
+            </h2>
+            {projectName && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-[#f0f0f0] text-[#525252] border border-[#e8e8e8] shrink-0 whitespace-nowrap">
+                <FolderOpen size={9} />
+                {projectName}
+              </span>
+            )}
+          </div>
           <div className="relative">
             <button
               onClick={() => setShowModelPicker(!showModelPicker)}

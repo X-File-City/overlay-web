@@ -1,9 +1,10 @@
 'use client'
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Send, Plus, Trash2, ChevronDown, Loader2, ImageIcon, X, AlertCircle, Check } from 'lucide-react'
+import { Send, Plus, Trash2, ChevronDown, Loader2, ImageIcon, X, AlertCircle, Check, FolderOpen } from 'lucide-react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
+import { useSearchParams } from 'next/navigation'
 import { AVAILABLE_MODELS, DEFAULT_MODEL_ID } from '@/lib/models'
 import { MarkdownMessage } from './MarkdownMessage'
 
@@ -152,8 +153,9 @@ const CHAT_MODEL_KEY = 'overlay_chat_model'
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-export default function ChatInterface({ userId: _userId }: { userId: string }) {
+export default function ChatInterface({ userId: _userId, hideSidebar, projectName }: { userId: string; hideSidebar?: boolean; projectName?: string }) {
   void _userId
+  const searchParams = useSearchParams()
 
   const [chats, setChats] = useState<Chat[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
@@ -260,6 +262,11 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadChats(); loadSubscription() }, [loadChats, loadSubscription])
+
+  // Auto-load a specific chat when embedded in project view
+  const idParam = hideSidebar ? searchParams.get('id') : null
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (idParam) void loadChat(idParam) }, [idParam])
 
   useEffect(() => {
     const isStreaming = chatInstances.some((c) => c.status === 'streaming' || c.status === 'submitted')
@@ -553,47 +560,57 @@ export default function ChatInterface({ userId: _userId }: { userId: string }) {
   // ── render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex h-full">
-      {/* Sidebar */}
-      <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5]">
-        <div className="flex h-16 items-center border-b border-[#e5e5e5] px-3">
-          <button
-            onClick={createNewChat}
-            className="flex items-center gap-1.5 w-full px-3 py-1.5 rounded-md text-sm bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222] transition-colors"
-          >
-            <Plus size={13} />
-            New chat
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
-          {chats.map((chat) => (
-            <div
-              key={chat._id}
-              onClick={() => loadChat(chat._id)}
-              className={`group flex items-center justify-between px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${
-                activeChatId === chat._id
-                  ? 'bg-[#e8e8e8] text-[#0a0a0a]'
-                  : 'text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a]'
-              }`}
+      {/* Sidebar — hidden when embedded in a project */}
+      {!hideSidebar && (
+        <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5]">
+          <div className="flex h-16 items-center border-b border-[#e5e5e5] px-3">
+            <button
+              onClick={createNewChat}
+              className="flex items-center gap-1.5 w-full px-3 py-1.5 rounded-md text-sm bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222] transition-colors"
             >
-              <span className="truncate">{chat.title}</span>
-              <button
-                onClick={(e) => deleteChat(chat._id, e)}
-                className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity"
+              <Plus size={13} />
+              New chat
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+            {chats.map((chat) => (
+              <div
+                key={chat._id}
+                onClick={() => loadChat(chat._id)}
+                className={`group flex items-center justify-between px-2.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${
+                  activeChatId === chat._id
+                    ? 'bg-[#e8e8e8] text-[#0a0a0a]'
+                    : 'text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a]'
+                }`}
               >
-                <Trash2 size={11} />
-              </button>
-            </div>
-          ))}
+                <span className="truncate">{chat.title}</span>
+                <button
+                  onClick={(e) => deleteChat(chat._id, e)}
+                  className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Main area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         {/* Sticky header */}
         <div className="flex h-16 items-center justify-between border-b border-[#e5e5e5] px-4 shrink-0">
-          <h2 className="text-sm font-medium text-[#0a0a0a] truncate max-w-[30%]">
-            {activeChat?.title || 'New conversation'}
-          </h2>
+          <div className="flex items-center gap-2 min-w-0 max-w-[40%]">
+            <h2 className="text-sm font-medium text-[#0a0a0a] truncate">
+              {activeChat?.title || 'New conversation'}
+            </h2>
+            {projectName && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-[#f0f0f0] text-[#525252] border border-[#e8e8e8] shrink-0 whitespace-nowrap">
+                <FolderOpen size={9} />
+                {projectName}
+              </span>
+            )}
+          </div>
 
           {/* Model tabs for the visible exchange — center of header */}
           {showHeaderTabs && (

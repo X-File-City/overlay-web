@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { FolderOpen, Loader2 } from 'lucide-react'
 import ChatInterface from './ChatInterface'
 import NotebookEditor from './NotebookEditor'
+import AgentChat from './AgentChat'
 import { FileViewerPanel, isEditableType } from './FileViewer'
 
 // ─── File viewer fetched by ID ────────────────────────────────────────────────
@@ -77,13 +78,18 @@ export default function ProjectsView({ userId }: { userId: string }) {
   const searchParams = useSearchParams()
   const view = searchParams.get('view')
   const id = searchParams.get('id')
+  const projectName = searchParams.get('projectName') ?? undefined
 
   if (view === 'chat' && id) {
-    return <ChatInterface userId={userId} />
+    return <ChatInterface userId={userId} hideSidebar projectName={projectName} />
   }
 
   if (view === 'note' && id) {
-    return <NotebookEditor userId={userId} />
+    return <NotebookEditor userId={userId} hideSidebar projectName={projectName} />
+  }
+
+  if (view === 'agent' && id) {
+    return <AgentChat hideSidebar projectName={projectName} />
   }
 
   if (view === 'file' && id) {

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -8,6 +9,7 @@ import {
   Plus,
   Trash2,
   Loader2,
+  FolderOpen,
   Heading1,
   Heading2,
   List,
@@ -179,8 +181,9 @@ function normalizeNoteContent(content: string): string {
   return markdownToHtml(content)
 }
 
-export default function NotebookEditor({ userId: _userId }: { userId: string }) {
+export default function NotebookEditor({ userId: _userId, hideSidebar, projectName }: { userId: string; hideSidebar?: boolean; projectName?: string }) {
   void _userId
+  const searchParams = useSearchParams()
   const [notes, setNotes] = useState<Note[]>([])
   const [activeNote, setActiveNote] = useState<Note | null>(null)
   const [title, setTitle] = useState('')
@@ -339,6 +342,15 @@ export default function NotebookEditor({ userId: _userId }: { userId: string }) 
     loadNotes()
   }, [loadNotes])
 
+  // Auto-open a specific note when embedded in project view
+  const idParam = hideSidebar ? searchParams.get('id') : null
+  useEffect(() => {
+    if (!idParam || notes.length === 0) return
+    const note = notes.find((n) => n._id === idParam)
+    if (note && activeNote?._id !== idParam) openNote(note)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idParam, notes])
+
   useEffect(() => {
     if (!editor) return
     if (!activeNote) {
@@ -475,39 +487,41 @@ export default function NotebookEditor({ userId: _userId }: { userId: string }) 
 
   return (
     <div className="flex h-full">
-      {/* Notes sidebar */}
-      <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5]">
-        <div className="flex h-16 items-center border-b border-[#e5e5e5] px-3">
-          <button
-            onClick={createNote}
-            className="flex items-center gap-1.5 w-full px-3 py-1.5 rounded-md text-sm bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222] transition-colors"
-          >
-            <Plus size={13} />
-            New note
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
-          {notes.map((note) => (
-            <div
-              key={note._id}
-              onClick={() => openNote(note)}
-              className={`group flex items-center justify-between px-2.5 py-1.5 rounded-md cursor-pointer transition-colors ${
-                activeNote?._id === note._id
-                  ? 'bg-[#e8e8e8] text-[#0a0a0a]'
-                  : 'text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a]'
-              }`}
+      {/* Notes sidebar — hidden when embedded in a project */}
+      {!hideSidebar && (
+        <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5]">
+          <div className="flex h-16 items-center border-b border-[#e5e5e5] px-3">
+            <button
+              onClick={createNote}
+              className="flex items-center gap-1.5 w-full px-3 py-1.5 rounded-md text-sm bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222] transition-colors"
             >
-              <span className="text-xs truncate">{note.title || 'Untitled'}</span>
-              <button
-                onClick={(e) => deleteNote(note._id, e)}
-                className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity"
+              <Plus size={13} />
+              New note
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+            {notes.map((note) => (
+              <div
+                key={note._id}
+                onClick={() => openNote(note)}
+                className={`group flex items-center justify-between px-2.5 py-1.5 rounded-md cursor-pointer transition-colors ${
+                  activeNote?._id === note._id
+                    ? 'bg-[#e8e8e8] text-[#0a0a0a]'
+                    : 'text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a]'
+                }`}
               >
-                <Trash2 size={11} />
-              </button>
-            </div>
-          ))}
+                <span className="text-xs truncate">{note.title || 'Untitled'}</span>
+                <button
+                  onClick={(e) => deleteNote(note._id, e)}
+                  className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Editor */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -522,9 +536,15 @@ export default function NotebookEditor({ userId: _userId }: { userId: string }) 
                 className="text-xl font-medium text-[#0a0a0a] bg-transparent outline-none placeholder-[#ccc] flex-1"
                 style={{ fontFamily: 'var(--font-instrument-serif)' }}
               />
-              {isSaving && (
-                <Loader2 size={14} className="text-[#aaa] animate-spin ml-3" />
-              )}
+              <div className="flex items-center gap-2 ml-3 shrink-0">
+                {projectName && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-[#f0f0f0] text-[#525252] border border-[#e8e8e8] whitespace-nowrap">
+                    <FolderOpen size={9} />
+                    {projectName}
+                  </span>
+                )}
+                {isSaving && <Loader2 size={14} className="text-[#aaa] animate-spin" />}
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-4">
               <EditorContent editor={editor} />
