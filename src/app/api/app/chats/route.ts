@@ -13,6 +13,15 @@ export async function GET(request: NextRequest) {
     const includeMessages = searchParams.get('messages') === 'true'
     const projectId = searchParams.get('projectId')
 
+    // Return single chat metadata (no messages)
+    if (chatId && !includeMessages) {
+      const chat = await convex.query<{
+        _id: string; title: string; model: string; lastModified: number
+      } | null>('chats:get', { chatId })
+      if (!chat) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      return NextResponse.json(chat)
+    }
+
     if (chatId && includeMessages) {
       const messages = await convex.query<Array<{
         _id: string

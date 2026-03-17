@@ -25,7 +25,7 @@ interface ProjectAgent { _id: string; title: string; lastModified: number }
 // ─── Project tree node ────────────────────────────────────────────────────────
 
 function ProjectNode({
-  project, allProjects, depth, selectedId, expandedIds, onNavigate, onToggle, onDelete,
+  project, allProjects, depth, selectedId, expandedIds, onNavigate, onToggle, onDelete, onNavigateItem, onDeleteItem,
 }: {
   project: Project
   allProjects: Project[]
@@ -35,10 +35,44 @@ function ProjectNode({
   onNavigate: (project: Project) => void
   onToggle: (id: string, e: React.MouseEvent) => void
   onDelete: (id: string, e: React.MouseEvent) => void
+  onNavigateItem: (project: Project, view: string, id: string) => void
+  onDeleteItem: (type: 'chat' | 'note' | 'agent', id: string, e: React.MouseEvent) => void
 }) {
   const children = allProjects.filter((p) => p.parentId === project._id)
   const isOpen = expandedIds.has(project._id)
   const isSelected = project._id === selectedId
+
+  // Inline items loaded on-demand when expanded
+  const [items, setItems] = useState<{ chats: ProjectChat[]; notes: ProjectNote[]; agents: ProjectAgent[] } | null>(null)
+  const [itemsLoading, setItemsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!isOpen || items !== null) return
+    let cancelled = false
+    async function load() {
+      setItemsLoading(true)
+      try {
+        const [cr, nr, ar] = await Promise.all([
+          fetch(`/api/app/chats?projectId=${project._id}`),
+          fetch(`/api/app/notes?projectId=${project._id}`),
+          fetch(`/api/app/agents?projectId=${project._id}`),
+        ])
+        if (cancelled) return
+        const [chats, notes, agents] = await Promise.all([
+          cr.ok ? cr.json() : [],
+          nr.ok ? nr.json() : [],
+          ar.ok ? ar.json() : [],
+        ])
+        if (!cancelled) setItems({ chats, notes, agents })
+      } finally {
+        if (!cancelled) setItemsLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [isOpen, project._id, items])
+
+  const itemPl = `${depth * 16 + 28}px`
 
   return (
     <div>
@@ -49,14 +83,13 @@ function ProjectNode({
         style={{ paddingLeft: `${depth * 16 + 8}px`, paddingRight: '8px' }}
         onClick={() => onNavigate(project)}
       >
-        {children.length > 0 && (
-          <button
-            onClick={(e) => onToggle(project._id, e)}
-            className="shrink-0"
-          >
-            <ChevronRight size={10} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
-          </button>
-        )}
+        {/* Chevron always visible — toggles inline expansion */}
+        <button
+          onClick={(e) => onToggle(project._id, e)}
+          className="shrink-0 p-0.5 rounded hover:bg-[#d8d8d8] transition-colors"
+        >
+          <ChevronRight size={10} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+        </button>
         {isOpen
           ? <FolderOpen size={12} className="shrink-0 text-[#888]" />
           : <Folder size={12} className="shrink-0 text-[#888]" />
@@ -69,19 +102,91 @@ function ProjectNode({
           <Trash2 size={10} />
         </button>
       </div>
-      {isOpen && children.map((child) => (
-        <ProjectNode
-          key={child._id}
-          project={child}
-          allProjects={allProjects}
-          depth={depth + 1}
-          selectedId={selectedId}
-          expandedIds={expandedIds}
-          onNavigate={onNavigate}
-          onToggle={onToggle}
-          onDelete={onDelete}
-        />
-      ))}
+
+      {isOpen && (
+        <>
+          {/* Subprojects */}
+          {children.map((child) => (
+            <ProjectNode
+              key={child._id}
+              project={child}
+              allProjects={allProjects}
+              depth={depth + 1}
+              selectedId={selectedId}
+              expandedIds={expandedIds}
+              onNavigate={onNavigate}
+              onToggle={onToggle}
+              onDelete={onDelete}
+              onNavigateItem={onNavigateItem}
+              onDeleteItem={onDeleteItem}
+            />
+          ))}
+
+          {/* Inline items */}
+          {itemsLoading ? (
+            <div className="flex items-center py-1.5" style={{ paddingLeft: itemPl }}>
+              <Loader2 size={10} className="animate-spin text-[#bbb]" />
+            </div>
+          ) : items && (
+            <>
+              {items.chats.map((chat) => (
+                <div
+                  key={chat._id}
+                  onClick={() => onNavigateItem(project, 'chat', chat._id)}
+                  className="group flex items-center gap-1.5 py-1 rounded-md cursor-pointer text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors"
+                  style={{ paddingLeft: itemPl, paddingRight: '8px' }}
+                >
+                  <MessageSquare size={10} className="shrink-0 text-[#aaa]" />
+                  <span className="flex-1 truncate">{chat.title}</span>
+                  <button
+                    onClick={(e) => onDeleteItem('chat', chat._id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
+                  >
+                    <Trash2 size={9} />
+                  </button>
+                </div>
+              ))}
+              {items.notes.map((note) => (
+                <div
+                  key={note._id}
+                  onClick={() => onNavigateItem(project, 'note', note._id)}
+                  className="group flex items-center gap-1.5 py-1 rounded-md cursor-pointer text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors"
+                  style={{ paddingLeft: itemPl, paddingRight: '8px' }}
+                >
+                  <BookOpen size={10} className="shrink-0 text-[#aaa]" />
+                  <span className="flex-1 truncate">{note.title || 'Untitled'}</span>
+                  <button
+                    onClick={(e) => onDeleteItem('note', note._id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
+                  >
+                    <Trash2 size={9} />
+                  </button>
+                </div>
+              ))}
+              {items.agents.map((agent) => (
+                <div
+                  key={agent._id}
+                  onClick={() => onNavigateItem(project, 'agent', agent._id)}
+                  className="group flex items-center gap-1.5 py-1 rounded-md cursor-pointer text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors"
+                  style={{ paddingLeft: itemPl, paddingRight: '8px' }}
+                >
+                  <Bot size={10} className="shrink-0 text-[#aaa]" />
+                  <span className="flex-1 truncate">{agent.title}</span>
+                  <button
+                    onClick={(e) => onDeleteItem('agent', agent._id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
+                  >
+                    <Trash2 size={9} />
+                  </button>
+                </div>
+              ))}
+              {children.length === 0 && items.chats.length === 0 && items.notes.length === 0 && items.agents.length === 0 && (
+                <p className="text-[10px] text-[#bbb] py-1" style={{ paddingLeft: itemPl }}>Empty</p>
+              )}
+            </>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -109,7 +214,7 @@ export default function ProjectsSidebar() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
 
-  // Project items
+  // Project items (detail view)
   const [projectChats, setProjectChats] = useState<ProjectChat[]>([])
   const [projectNotes, setProjectNotes] = useState<ProjectNote[]>([])
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([])
@@ -161,8 +266,6 @@ export default function ProjectsSidebar() {
     function handleChatTitleUpdated(event: Event) {
       const { detail } = event as CustomEvent<ChatTitleUpdatedDetail>
       if (!detail?.chatId || !detail.title) return
-      console.log('[ChatTitle][projects-sidebar] Received chat title update event', detail)
-
       setProjectChats((prev) => {
         let changed = false
         const next = prev.map((chat) => {
@@ -173,7 +276,6 @@ export default function ProjectsSidebar() {
         return changed ? next : prev
       })
     }
-
     window.addEventListener(CHAT_TITLE_UPDATED_EVENT, handleChatTitleUpdated)
     return () => window.removeEventListener(CHAT_TITLE_UPDATED_EVENT, handleChatTitleUpdated)
   }, [])
@@ -223,10 +325,35 @@ export default function ProjectsSidebar() {
     setExpandedIds((prev) => new Set([...prev, project._id]))
   }
 
-  function projectNav(view: string, id: string) {
-    if (!selectedProject) return
-    const pn = encodeURIComponent(selectedProject.name)
-    router.push(`/app/projects?view=${view}&id=${id}&projectId=${selectedProject._id}&projectName=${pn}`)
+  function projectNav(view: string, id: string, project?: Project) {
+    const p = project ?? selectedProject
+    if (!p) return
+    const pn = encodeURIComponent(p.name)
+    router.push(`/app/projects?view=${view}&id=${id}&projectId=${p._id}&projectName=${pn}`)
+  }
+
+  function handleNavigateItem(project: Project, view: string, id: string) {
+    projectNav(view, id, project)
+  }
+
+  async function handleDeleteItem(type: 'chat' | 'note' | 'agent', id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (type === 'chat') {
+      await fetch(`/api/app/chats?chatId=${id}`, { method: 'DELETE' })
+      setProjectChats((prev) => prev.filter((c) => c._id !== id))
+    } else if (type === 'note') {
+      await fetch(`/api/app/notes?noteId=${id}`, { method: 'DELETE' })
+      setProjectNotes((prev) => prev.filter((n) => n._id !== id))
+    } else {
+      await fetch(`/api/app/agents?agentId=${id}`, { method: 'DELETE' })
+      setProjectAgents((prev) => prev.filter((a) => a._id !== id))
+    }
+  }
+
+  async function handleDeleteFile(fileId: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    await fetch(`/api/app/files?fileId=${fileId}`, { method: 'DELETE' })
+    setProjectFiles((prev) => prev.filter((f) => f._id !== fileId))
   }
 
   async function handleNewChat() {
@@ -455,10 +582,16 @@ export default function ProjectsSidebar() {
                 <div
                   key={chat._id}
                   onClick={() => projectNav('chat', chat._id)}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
+                  className="group flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
                 >
                   <MessageSquare size={12} className="shrink-0 text-[#888]" />
                   <span className="flex-1 truncate">{chat.title}</span>
+                  <button
+                    onClick={(e) => handleDeleteItem('chat', chat._id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
+                  >
+                    <Trash2 size={10} />
+                  </button>
                 </div>
               ))}
               {/* Notes */}
@@ -466,10 +599,16 @@ export default function ProjectsSidebar() {
                 <div
                   key={note._id}
                   onClick={() => projectNav('note', note._id)}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
+                  className="group flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
                 >
                   <BookOpen size={12} className="shrink-0 text-[#888]" />
                   <span className="flex-1 truncate">{note.title || 'Untitled'}</span>
+                  <button
+                    onClick={(e) => handleDeleteItem('note', note._id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
+                  >
+                    <Trash2 size={10} />
+                  </button>
                 </div>
               ))}
               {/* Agents */}
@@ -477,10 +616,16 @@ export default function ProjectsSidebar() {
                 <div
                   key={agent._id}
                   onClick={() => projectNav('agent', agent._id)}
-                  className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
+                  className="group flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
                 >
                   <Bot size={12} className="shrink-0 text-[#888]" />
                   <span className="flex-1 truncate">{agent.title}</span>
+                  <button
+                    onClick={(e) => handleDeleteItem('agent', agent._id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
+                  >
+                    <Trash2 size={10} />
+                  </button>
                 </div>
               ))}
               {/* Files */}
@@ -488,12 +633,18 @@ export default function ProjectsSidebar() {
                 <div
                   key={file._id}
                   onClick={() => file.type === 'file' && projectNav('file', file._id)}
-                  className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] transition-colors ${file.type === 'file' ? 'cursor-pointer hover:bg-[#ebebeb] hover:text-[#0a0a0a]' : ''}`}
+                  className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] transition-colors ${file.type === 'file' ? 'cursor-pointer hover:bg-[#ebebeb] hover:text-[#0a0a0a]' : ''}`}
                 >
                   {file.type === 'folder'
                     ? <Folder size={12} className="shrink-0 text-[#888]" />
                     : <FileText size={12} className="shrink-0 text-[#888]" />}
                   <span className="flex-1 truncate">{file.name}</span>
+                  <button
+                    onClick={(e) => handleDeleteFile(file._id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
+                  >
+                    <Trash2 size={10} />
+                  </button>
                 </div>
               ))}
               {subprojects.length === 0 && projectChats.length === 0 && projectNotes.length === 0 && projectAgents.length === 0 && projectFiles.length === 0 && (
@@ -519,11 +670,13 @@ export default function ProjectsSidebar() {
                   project={project}
                   allProjects={projects}
                   depth={0}
-                  selectedId={null}
+                  selectedId={selectedProject?._id ?? null}
                   expandedIds={expandedIds}
                   onNavigate={handleNavigate}
                   onToggle={toggleExpanded}
                   onDelete={handleDeleteProject}
+                  onNavigateItem={handleNavigateItem}
+                  onDeleteItem={handleDeleteItem}
                 />
               ))}
             </div>

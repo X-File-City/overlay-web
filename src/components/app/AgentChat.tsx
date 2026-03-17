@@ -392,7 +392,7 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
                     agent
                   </p>
                   <p className="text-sm text-[#888] mb-6">
-                    A simple AI agent
+                    Let AI do the work for you
                   </p>
                   <div className="grid grid-cols-2 gap-2 text-xs text-[#525252]">
                     {SUGGESTIONS.map((prompt) => (

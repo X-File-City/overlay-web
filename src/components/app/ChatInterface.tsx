@@ -181,6 +181,10 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   // Which exchange the user is currently scrolled to (drives the sticky header tabs)
   const [visibleExchangeIdx, setVisibleExchangeIdx] = useState(0)
 
+  // Tracks the title of the active chat independently of the sidebar `chats` list.
+  // Needed for project chats which are excluded from the global chats:list query.
+  const [activeChatTitle, setActiveChatTitle] = useState<string | null>(null)
+
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [input, setInput] = useState('')
   const [isFirstMessage, setIsFirstMessage] = useState(true)
@@ -280,6 +284,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       }
       return prev.map((c) => (c._id === chatId ? { ...c, title: nextTitle } : c))
     })
+    setActiveChatTitle((prev) => prev !== null ? nextTitle : prev)
     dispatchChatTitleUpdated({ chatId, title: nextTitle })
     return nextTitle
   }, [])
@@ -405,6 +410,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       const newChat: Chat = { _id: data.id, title: DEFAULT_CHAT_TITLE, model: selectedModels[0], lastModified: Date.now() }
       setChats((prev) => [newChat, ...prev])
       setActiveChatId(data.id)
+      setActiveChatTitle(DEFAULT_CHAT_TITLE)
       setIsFirstMessage(true)
       resetChatState()
       return data.id
@@ -414,8 +420,20 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   async function loadChat(chatId: string) {
     setActiveChatId(chatId)
+    setActiveChatTitle(null) // clear while loading
     const existingChat = chats.find((chat) => chat._id === chatId)
-    setIsFirstMessage(existingChat?.title === DEFAULT_CHAT_TITLE)
+    if (existingChat) {
+      setActiveChatTitle(existingChat.title)
+      setIsFirstMessage(existingChat.title === DEFAULT_CHAT_TITLE)
+    } else {
+      // Project chat not in the global list — fetch its metadata
+      fetch(`/api/app/chats?chatId=${chatId}`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data: { title?: string } | null) => {
+          if (data?.title) setActiveChatTitle(data.title)
+        })
+        .catch(() => {})
+    }
     pendingTitleRef.current = null
     resetChatState()
     try {
@@ -626,7 +644,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         <div className="flex h-16 items-center justify-between border-b border-[#e5e5e5] px-4 shrink-0">
           <div className="flex items-center gap-2 min-w-0 max-w-[40%]">
             <h2 className="text-sm font-medium text-[#0a0a0a] truncate">
-              {activeChat?.title || 'New conversation'}
+              {activeChatTitle ?? activeChat?.title ?? 'New conversation'}
             </h2>
             {projectName && (
               <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-[#f0f0f0] text-[#525252] border border-[#e8e8e8] shrink-0 whitespace-nowrap">
