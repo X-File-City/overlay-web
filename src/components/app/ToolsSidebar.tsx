@@ -18,11 +18,15 @@ const KNOWN_NAMES: Record<string, string> = {
   linkedin: 'LinkedIn',
 }
 
+function sanitizeName(name: string): string {
+  // Fix snake_case names from Composio (e.g. "Rocket_reach" → "Rocket Reach")
+  return name.replace(/_([a-z])/g, (_, c: string) => ' ' + c.toUpperCase()).replace(/_/g, ' ')
+}
+
 function resolvedName(slug: string, apiName: string): string {
   if (KNOWN_NAMES[slug]) return KNOWN_NAMES[slug]
-  // If API returned a different (non-slug) name, use it; otherwise capitalize slug
-  if (apiName && apiName !== slug) return apiName
-  return slug.charAt(0).toUpperCase() + slug.slice(1)
+  const base = (apiName && apiName.toLowerCase() !== slug.toLowerCase()) ? apiName : slug
+  return sanitizeName(base.charAt(0).toUpperCase() + base.slice(1))
 }
 
 interface ConnectorItem {

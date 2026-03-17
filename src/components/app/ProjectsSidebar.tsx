@@ -46,18 +46,16 @@ function ProjectNode({
         className={`group flex items-center gap-1.5 py-1.5 rounded-md cursor-pointer text-xs transition-colors ${
           isSelected ? 'bg-[#e8e8e8] text-[#0a0a0a]' : 'text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a]'
         }`}
-        style={{ paddingLeft: `${depth * 12 + 8}px`, paddingRight: '8px' }}
+        style={{ paddingLeft: `${depth * 16 + 8}px`, paddingRight: '8px' }}
         onClick={() => onNavigate(project)}
       >
-        {children.length > 0 ? (
+        {children.length > 0 && (
           <button
             onClick={(e) => onToggle(project._id, e)}
             className="shrink-0"
           >
             <ChevronRight size={10} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
           </button>
-        ) : (
-          <span className="w-[10px] shrink-0" />
         )}
         {isOpen
           ? <FolderOpen size={12} className="shrink-0 text-[#888]" />
@@ -323,9 +321,9 @@ export default function ProjectsSidebar() {
     e.target.value = ''
   }
 
-  const rootProjects = projects.filter((p) => p.parentId === null)
+  const rootProjects = projects.filter((p) => p.parentId == null)
   const subprojects = selectedProject ? projects.filter((p) => p.parentId === selectedProject._id) : []
-  const rootProjectFiles = projectFiles.filter((f) => f.parentId === null)
+  const rootProjectFiles = projectFiles.filter((f) => f.parentId == null)
 
   return (
     <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5] shrink-0">

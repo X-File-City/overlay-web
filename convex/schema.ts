@@ -68,13 +68,34 @@ export default defineSchema({
     expiresAt: v.number(),
   }).index('by_token', ['token']),
 
+  projects: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    parentId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_userId', ['userId']),
+
+  skills: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    description: v.string(),
+    instructions: v.string(),
+    projectId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_userId', ['userId']).index('by_projectId', ['projectId']),
+
   chats: defineTable({
     userId: v.string(),
     title: v.string(),
     folderId: v.optional(v.string()),
+    projectId: v.optional(v.string()),
     lastModified: v.number(),
     model: v.string(),
-  }).index('by_userId', ['userId']).index('by_userId_lastModified', ['userId', 'lastModified']),
+  }).index('by_userId', ['userId'])
+    .index('by_userId_lastModified', ['userId', 'lastModified'])
+    .index('by_projectId', ['projectId']),
 
   messages: defineTable({
     chatId: v.id('chats'),
@@ -91,8 +112,11 @@ export default defineSchema({
     title: v.string(),
     content: v.string(),
     tags: v.array(v.string()),
+    projectId: v.optional(v.string()),
     updatedAt: v.number(),
-  }).index('by_userId', ['userId']).index('by_userId_updatedAt', ['userId', 'updatedAt']),
+  }).index('by_userId', ['userId'])
+    .index('by_userId_updatedAt', ['userId', 'updatedAt'])
+    .index('by_projectId', ['projectId']),
 
   memories: defineTable({
     userId: v.string(),
@@ -104,8 +128,11 @@ export default defineSchema({
   agents: defineTable({
     userId: v.string(),
     title: v.string(),
+    projectId: v.optional(v.string()),
     lastModified: v.number(),
-  }).index('by_userId', ['userId']).index('by_userId_lastModified', ['userId', 'lastModified']),
+  }).index('by_userId', ['userId'])
+    .index('by_userId_lastModified', ['userId', 'lastModified'])
+    .index('by_projectId', ['projectId']),
 
   agentMessages: defineTable({
     agentId: v.id('agents'),

@@ -65,6 +65,32 @@ interface PickerItem {
 
 const SEARCH_DEBOUNCE_MS = 300
 
+const KNOWN_NAMES: Record<string, string> = {
+  gmail: 'Gmail',
+  googlecalendar: 'Google Calendar',
+  googlesheets: 'Google Sheets',
+  googledrive: 'Google Drive',
+  notion: 'Notion',
+  slack: 'Slack',
+  outlook: 'Outlook',
+  twitter: 'X (Twitter)',
+  asana: 'Asana',
+  linkedin: 'LinkedIn',
+  github: 'GitHub',
+  composio: 'Composio',
+}
+
+function sanitizeName(name: string): string {
+  // Fix snake_case names from Composio (e.g. "Rocket_reach" → "Rocket Reach")
+  return name.replace(/_([a-z])/g, (_, c: string) => ' ' + c.toUpperCase()).replace(/_/g, ' ')
+}
+
+function resolvedName(slug: string, apiName: string): string {
+  if (KNOWN_NAMES[slug]) return KNOWN_NAMES[slug]
+  const base = (apiName && apiName.toLowerCase() !== slug.toLowerCase()) ? apiName : slug
+  return sanitizeName(base.charAt(0).toUpperCase() + base.slice(1))
+}
+
 function truncateDescription(desc: string): string {
   const compact = desc.replace(/\s+/g, ' ').trim()
   return compact.length <= 84 ? compact : `${compact.slice(0, 83).trimEnd()}...`
@@ -121,8 +147,11 @@ function IntegrationsDialog({
       if (!res.ok) throw new Error('Failed to load integrations')
       const data = await res.json()
 
+      const resolve = (items: PickerItem[]) =>
+        items.map((item) => ({ ...item, name: resolvedName(item.slug, item.name) }))
+
       setItems((prev) => {
-        const merged = append ? [...prev, ...data.items] : data.items
+        const merged = append ? [...prev, ...resolve(data.items)] : resolve(data.items)
         const map = new Map<string, PickerItem>()
         for (const item of merged) map.set(item.slug, item)
         return [...map.values()]
@@ -130,7 +159,7 @@ function IntegrationsDialog({
       setNextCursor(data.nextCursor ?? null)
 
       if (!fetchQuery) {
-        const merged = append ? [...(defaultCacheRef.current?.items || []), ...data.items] : data.items
+        const merged = append ? [...(defaultCacheRef.current?.items || []), ...resolve(data.items)] : resolve(data.items)
         const map = new Map<string, PickerItem>()
         for (const item of merged) map.set(item.slug, item)
         defaultCacheRef.current = { items: [...map.values()], nextCursor: data.nextCursor ?? null }

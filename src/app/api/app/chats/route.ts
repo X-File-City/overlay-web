@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/workos-auth'
 import { convex } from '@/lib/convex'
-import { createChat, deleteChat, listChats, listMessages, updateChat } from '@/lib/app-store'
+import { listMessages } from '@/lib/app-store'
 
 export async function GET(request: NextRequest) {
   try {
@@ -38,9 +38,14 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // When filtering by project, use the in-memory store (Convex doesn't track projectId)
     if (projectId !== null) {
-      return NextResponse.json(listChats(session.user.id, projectId))
+      const chats = await convex.query<Array<{
+        _id: string
+        title: string
+        model: string
+        lastModified: number
+      }>>('chats:listByProject', { projectId })
+      return NextResponse.json(chats || [])
     }
 
     const chats = await convex.query<Array<{
@@ -50,7 +55,7 @@ export async function GET(request: NextRequest) {
       lastModified: number
     }>>('chats:list', { userId: session.user.id })
 
-    return NextResponse.json(chats || listChats(session.user.id))
+    return NextResponse.json(chats || [])
   } catch {
     return NextResponse.json({ error: 'Failed to fetch chats' }, { status: 500 })
   }
@@ -65,10 +70,9 @@ export async function POST(request: NextRequest) {
       userId: session.user.id,
       title: title || 'New Chat',
       model: model || 'claude-sonnet-4-6',
+      projectId: projectId ?? undefined,
     })
-
-    const storeId = createChat(session.user.id, title || 'New Chat', model || 'claude-sonnet-4-6', projectId)
-    return NextResponse.json({ id: chatId || storeId })
+    return NextResponse.json({ id: chatId })
   } catch {
     return NextResponse.json({ error: 'Failed to create chat' }, { status: 500 })
   }
@@ -88,11 +92,7 @@ export async function PATCH(request: NextRequest) {
     })
 
     await convex.mutation('chats:update', { chatId, title })
-    updateChat(chatId, { title })
-    console.log('[ChatTitle][server] PATCH /api/app/chats applied', {
-      chatId,
-      title,
-    })
+    console.log('[ChatTitle][server] PATCH /api/app/chats applied', { chatId, title })
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('[ChatTitle][server] Failed to patch chat title', error)
@@ -108,11 +108,7 @@ export async function DELETE(request: NextRequest) {
     const chatId = request.nextUrl.searchParams.get('chatId')
     if (!chatId) return NextResponse.json({ error: 'chatId required' }, { status: 400 })
 
-    const deleted = await convex.mutation('chats:remove', { chatId })
-    if (!deleted) {
-      deleteChat(chatId)
-    }
-
+    await convex.mutation('chats:remove', { chatId })
     return NextResponse.json({ success: true })
   } catch {
     return NextResponse.json({ error: 'Failed to delete chat' }, { status: 500 })

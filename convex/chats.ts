@@ -1,14 +1,28 @@
 import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 
+// Returns only chats NOT scoped to a project (for the main Chats tab).
 export const list = query({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => {
-    return await ctx.db
+    const all = await ctx.db
       .query('chats')
       .withIndex('by_userId', (q) => q.eq('userId', userId))
       .order('desc')
-      .take(100)
+      .take(200)
+    return all.filter((c) => !c.projectId).slice(0, 100)
+  },
+})
+
+// Returns chats belonging to a specific project.
+export const listByProject = query({
+  args: { projectId: v.string() },
+  handler: async (ctx, { projectId }) => {
+    return await ctx.db
+      .query('chats')
+      .withIndex('by_projectId', (q) => q.eq('projectId', projectId))
+      .order('desc')
+      .collect()
   },
 })
 
@@ -20,12 +34,18 @@ export const get = query({
 })
 
 export const create = mutation({
-  args: { userId: v.string(), title: v.string(), model: v.string() },
-  handler: async (ctx, { userId, title, model }) => {
+  args: {
+    userId: v.string(),
+    title: v.string(),
+    model: v.string(),
+    projectId: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, title, model, projectId }) => {
     return await ctx.db.insert('chats', {
       userId,
       title,
       model,
+      projectId,
       lastModified: Date.now(),
     })
   },
@@ -44,7 +64,6 @@ export const update = mutation({
 export const remove = mutation({
   args: { chatId: v.id('chats') },
   handler: async (ctx, { chatId }) => {
-    // Delete all messages first
     const messages = await ctx.db
       .query('messages')
       .withIndex('by_chatId', (q) => q.eq('chatId', chatId))

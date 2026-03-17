@@ -1,14 +1,28 @@
 import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
 
+// Returns only agents NOT scoped to a project (for the main Agents tab).
 export const list = query({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => {
-    return await ctx.db
+    const all = await ctx.db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', userId))
       .order('desc')
-      .take(100)
+      .take(200)
+    return all.filter((a) => !a.projectId).slice(0, 100)
+  },
+})
+
+// Returns agents belonging to a specific project.
+export const listByProject = query({
+  args: { projectId: v.string() },
+  handler: async (ctx, { projectId }) => {
+    return await ctx.db
+      .query('agents')
+      .withIndex('by_projectId', (q) => q.eq('projectId', projectId))
+      .order('desc')
+      .collect()
   },
 })
 
@@ -20,11 +34,16 @@ export const get = query({
 })
 
 export const create = mutation({
-  args: { userId: v.string(), title: v.string() },
-  handler: async (ctx, { userId, title }) => {
+  args: {
+    userId: v.string(),
+    title: v.string(),
+    projectId: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, title, projectId }) => {
     return await ctx.db.insert('agents', {
       userId,
       title,
+      projectId,
       lastModified: Date.now(),
     })
   },
