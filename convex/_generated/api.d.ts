@@ -10,6 +10,7 @@
 
 import type * as agents from "../agents.js";
 import type * as chats from "../chats.js";
+import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as keys from "../keys.js";
 import type * as memories from "../memories.js";
@@ -32,6 +33,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   chats: typeof chats;
+  files: typeof files;
   http: typeof http;
   keys: typeof keys;
   memories: typeof memories;

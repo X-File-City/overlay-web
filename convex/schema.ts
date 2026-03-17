@@ -169,4 +169,21 @@ export default defineSchema({
     })),
     updatedAt: v.number(),
   }).index('by_channel_thread', ['slackChannelId', 'slackThreadTs']).index('by_overlayUserId', ['overlayUserId']),
+
+  // Knowledge base and project files. Text content is stored in `content`;
+  // binary files (images, PDFs, audio, video) are stored in Convex File Storage
+  // and referenced via `storageId` — the serving URL is resolved at query time.
+  files: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    type: v.union(v.literal('file'), v.literal('folder')),
+    parentId: v.optional(v.string()),
+    content: v.optional(v.string()),
+    storageId: v.optional(v.id('_storage')),
+    projectId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_userId', ['userId'])
+    .index('by_projectId', ['projectId'])
+    .index('by_parentId', ['parentId']),
 })

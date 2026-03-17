@@ -5,7 +5,7 @@ import {
   Brain, Trash2, Plus, X, FilePlus, FolderPlus,
   ChevronRight, FileText, Folder, FolderOpen, Loader2,
 } from 'lucide-react'
-import { FileViewerPanel, readFileAsContent, isEditableType } from './FileViewer'
+import { FileViewerPanel, getFileType, isEditableType } from './FileViewer'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -182,7 +182,7 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
     e.stopPropagation()
     await fetch(`/api/app/files?fileId=${id}`, { method: 'DELETE' })
     if (selectedFile?._id === id) { setSelectedFile(null); setFileContent('') }
-    setFiles((prev) => prev.filter((f) => f._id !== id))
+    await loadFiles()
   }
 
   function handleFileContentChange(val: string) {
@@ -201,16 +201,41 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
     }, 800)
   }
 
+  async function uploadSingleFile(file: File, parentId: string | null) {
+    const fileType = getFileType(file.name)
+    const isText = fileType === 'text' || fileType === 'markdown' || fileType === 'csv'
+    if (isText) {
+      const content = await file.text()
+      await fetch('/api/app/files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: file.name, type: 'file', parentId, content }),
+      })
+    } else {
+      // Binary file: upload directly to Convex storage
+      const urlRes = await fetch('/api/app/files/upload-url', { method: 'POST' })
+      if (!urlRes.ok) return
+      const { uploadUrl } = await urlRes.json()
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      })
+      if (!uploadRes.ok) return
+      const { storageId } = await uploadRes.json()
+      await fetch('/api/app/files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: file.name, type: 'file', parentId, storageId }),
+      })
+    }
+  }
+
   async function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    const content = await readFileAsContent(file)
-    const res = await fetch('/api/app/files', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: file.name, type: 'file', parentId: null, content }),
-    })
-    if (res.ok) await loadFiles()
+    await uploadSingleFile(file, null)
+    await loadFiles()
     e.target.value = ''
   }
 
@@ -233,14 +258,9 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
           if (res.ok) { const { id } = await res.json(); folders.set(folderPath, id) }
         }
       }
-      const content = await readFileAsContent(file)
       const parentFolderPath = parts.slice(0, -1).join('/')
       const parentId = folders.get(parentFolderPath) ?? null
-      await fetch('/api/app/files', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: parts[parts.length - 1], type: 'file', parentId, content }),
-      })
+      await uploadSingleFile(file, parentId)
     }
     await loadFiles()
     e.target.value = ''
