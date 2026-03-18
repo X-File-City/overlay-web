@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { AlertCircle, Loader2, Send } from 'lucide-react'
+import { AlertCircle, ChevronDown, Loader2, Send } from 'lucide-react'
 import { convex } from '@/lib/convex'
 import { MarkdownMessage } from '@/components/app/MarkdownMessage'
+import { AVAILABLE_MODELS, DEFAULT_MODEL_ID } from '@/lib/models'
 
 type ComputerStatus =
   | 'pending_payment'
@@ -38,6 +39,8 @@ interface ChatMessage {
   createdAt: number
   isError?: boolean
 }
+
+const COMPUTER_MODEL_KEY = 'overlay_agent_model'
 
 function stepIndex(step?: string): number {
   if (!step) return 0
@@ -139,7 +142,6 @@ function ProvisioningView({ step, logs }: { step?: string; logs: LogEvent[] }) {
 }
 
 function ChatView({
-  computerName,
   messages,
   draft,
   isSending,
@@ -148,7 +150,6 @@ function ChatView({
   onDraftChange,
   onSubmit,
 }: {
-  computerName: string
   messages: ChatMessage[]
   draft: string
   isSending: boolean
@@ -174,8 +175,8 @@ function ChatView({
     <div className="flex min-h-0 flex-1 flex-col bg-[#fbfbfb]">
       
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
           {!hasMessages && (
             <div className="rounded-2xl border border-dashed border-[#ddd] bg-white px-5 py-6 text-center">
               <p className="text-sm text-[#444]">Your computer is ready.</p>
@@ -188,24 +189,27 @@ function ChatView({
           {messages.map((message) => (
             <div
               key={message._id}
-              className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
+              className={`flex message-appear ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               {message.role === 'user' ? (
-                <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-3 text-sm text-white">
-                  <p className="whitespace-pre-wrap">{message.content}</p>
+                <div className="max-w-[75%] space-y-2">
+                  <div className="rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm text-[#fafafa]">
+                    <p className="whitespace-pre-wrap">{message.content}</p>
+                  </div>
                 </div>
               ) : (
-                <div
-                  className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm ${
-                    message.isError
-                      ? 'border border-[#ffd2d2] bg-[#fff6f6] text-[#b42318]'
-                      : 'bg-white text-[#0a0a0a] shadow-[0_1px_0_rgba(10,10,10,0.04)]'
-                  }`}
-                >
+                <div className="w-full space-y-2">
                   {message.isError ? (
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    <div className="flex justify-start">
+                      <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                        <AlertCircle size={12} />
+                        <span className="whitespace-pre-wrap">{message.content}</span>
+                      </div>
+                    </div>
                   ) : (
-                    <MarkdownMessage text={message.content} isStreaming={false} />
+                    <div className="w-full px-1 py-1 text-sm leading-relaxed text-[#0a0a0a]">
+                      <MarkdownMessage text={message.content} isStreaming={false} />
+                    </div>
                   )}
                 </div>
               )}
@@ -214,60 +218,63 @@ function ChatView({
 
           {shouldShowPendingMessage && pendingMessage && (
             <div className="flex justify-end">
-              <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-3 text-sm text-white opacity-90">
-                <p className="whitespace-pre-wrap">{pendingMessage}</p>
+              <div className="max-w-[75%] space-y-2">
+                <div className="rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm text-[#fafafa] opacity-90">
+                  <p className="whitespace-pre-wrap">{pendingMessage}</p>
+                </div>
               </div>
             </div>
           )}
 
           {isSending && (
-            <div className="flex justify-start">
-              <div className="rounded-2xl bg-white px-4 py-3 shadow-[0_1px_0_rgba(10,10,10,0.04)]">
-                <div className="flex items-center gap-2 text-sm text-[#666]">
-                  <Loader2 size={14} className="animate-spin" />
-                  OpenClaw is thinking...
-                </div>
-              </div>
+            <div className="px-1 py-2">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#e0e0e0] border-t-[#525252]" />
             </div>
           )}
         </div>
       </div>
 
-      <div className="border-t border-[#e9e9e9] px-6 py-4">
-        <div className="mx-auto w-full max-w-3xl space-y-3">
+      <div className="px-4 pb-4">
+        <div className="mx-auto w-full max-w-4xl space-y-3">
           {submitError && (
-            <div className="flex items-center gap-2 rounded-xl border border-[#ffd2d2] bg-[#fff6f6] px-3 py-2 text-xs text-[#b42318]">
+            <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
               <AlertCircle size={14} />
               <span>{submitError}</span>
             </div>
           )}
 
-          <div className="rounded-2xl border border-[#ddd] bg-white p-2 shadow-[0_1px_0_rgba(10,10,10,0.03)]">
+          <div className="flex items-end gap-2 rounded-2xl bg-[#f0f0f0] px-4 py-3">
             <textarea
               value={draft}
               onChange={(event) => onDraftChange(event.target.value)}
+              rows={1}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault()
                   onSubmit()
                 }
               }}
-              placeholder="Message OpenClaw..."
-              className="min-h-[92px] w-full resize-none border-0 bg-transparent px-3 py-2 text-sm text-[#0a0a0a] outline-none placeholder:text-[#9a9a9a]"
+              placeholder="Ask the computer to do something..."
+              className="max-h-32 flex-1 resize-none bg-transparent text-sm text-[#0a0a0a] outline-none placeholder:text-[#aaa]"
               disabled={isSending}
             />
-
-            <div className="flex items-center justify-between px-2 pb-1 pt-2">
-              <p className="text-[11px] text-[#999]">Enter to send. Shift+Enter for a new line.</p>
+            {isSending ? (
               <button
                 onClick={onSubmit}
-                disabled={isSending || draft.trim().length === 0}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#0a0a0a] px-4 text-sm text-white transition hover:bg-[#222] disabled:cursor-not-allowed disabled:bg-[#d5d5d5] disabled:text-[#888]"
+                className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333]"
+                title="Sending..."
               >
-                {isSending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                Send
+                <Loader2 size={14} className="animate-spin" />
               </button>
-            </div>
+            ) : (
+              <button
+                onClick={onSubmit}
+                disabled={draft.trim().length === 0}
+                className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333] disabled:opacity-40"
+              >
+                <Send size={14} />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -294,6 +301,15 @@ export default function ComputerDetailClient({
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_ID)
+  const [showModelPicker, setShowModelPicker] = useState(false)
+
+  useEffect(() => {
+    const savedModel = localStorage.getItem(COMPUTER_MODEL_KEY)
+    if (savedModel) {
+      setSelectedModel(savedModel)
+    }
+  }, [])
 
   const fetchComputer = useCallback(async () => {
     const result = await convex.query<Computer>('computers:get', {
@@ -339,9 +355,10 @@ export default function ComputerDetailClient({
           userId,
           accessToken,
           message,
+          modelId: selectedModel,
         },
         {
-          timeoutMs: 130_000,
+          timeoutMs: 190_000,
           throwOnError: true,
         },
       )
@@ -354,7 +371,7 @@ export default function ComputerDetailClient({
       setIsSending(false)
       await fetchChatMessages()
     }
-  }, [accessToken, computerId, draft, fetchChatMessages, isSending, userId])
+  }, [accessToken, computerId, draft, fetchChatMessages, isSending, selectedModel, userId])
 
   useEffect(() => {
     void fetchComputer()
@@ -418,13 +435,44 @@ export default function ComputerDetailClient({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#e5e5e5] px-6">
-        <h2 className="text-sm font-medium text-[#0a0a0a]">{computer.name}</h2>
+      <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#e5e5e5] px-4">
+        <h2 className="min-w-0 truncate text-sm font-medium text-[#0a0a0a]">{computer.name}</h2>
 
         {computer.status === 'ready' && (
-          <div className="flex items-center gap-2 text-xs text-[#888]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#27ae60]" />
-            Online{computer.hetznerServerIp ? ` · ${computer.hetznerServerIp}` : ''}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs text-[#888]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#27ae60]" />
+              Online{computer.hetznerServerIp ? ` · ${computer.hetznerServerIp}` : ''}
+            </div>
+            <div className="relative">
+              <button
+                onClick={() => setShowModelPicker((current) => !current)}
+                className="flex items-center gap-1.5 rounded-md bg-[#f0f0f0] px-2.5 py-1 text-xs text-[#525252] transition-colors hover:bg-[#e8e8e8]"
+              >
+                {AVAILABLE_MODELS.find((model) => model.id === selectedModel)?.name || 'Select model'}
+                <ChevronDown size={11} />
+              </button>
+              {showModelPicker && (
+                <div className="absolute right-0 top-full z-10 mt-1 max-h-72 w-56 overflow-y-auto rounded-lg border border-[#e5e5e5] bg-white py-1 shadow-lg">
+                  {AVAILABLE_MODELS.map((model) => (
+                    <button
+                      key={model.id}
+                      onClick={() => {
+                        setSelectedModel(model.id)
+                        localStorage.setItem(COMPUTER_MODEL_KEY, model.id)
+                        setShowModelPicker(false)
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-[#f5f5f5] ${
+                        model.id === selectedModel ? 'font-medium text-[#0a0a0a]' : 'text-[#525252]'
+                      }`}
+                    >
+                      <span>{model.name}</span>
+                      <span className="ml-2 text-[#aaa]">{model.provider}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -459,7 +507,6 @@ export default function ComputerDetailClient({
 
       {computer.status === 'ready' && (
         <ChatView
-          computerName={computer.name}
           messages={chatMessages}
           draft={draft}
           isSending={isSending}

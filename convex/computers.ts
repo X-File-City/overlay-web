@@ -5,6 +5,7 @@ import {
 import { internal, components } from './_generated/api'
 import { StripeSubscriptions } from '@convex-dev/stripe'
 import { validateAccessToken } from './lib/auth'
+import { DEFAULT_MODEL_ID, getModel } from '../src/lib/models'
 
 const TAG = '[Computer]'
 const stripeClient = new StripeSubscriptions(components.stripe, {})
@@ -272,6 +273,7 @@ export const sendChatMessage = action({
     userId: v.string(),
     accessToken: v.string(),
     message: v.string(),
+    modelId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     console.log(`${TAG} sendChatMessage — START computerId=${args.computerId} userId=${args.userId}`)
@@ -308,49 +310,117 @@ export const sendChatMessage = action({
     })
 
     try {
-      const response = await fetch(
-        `http://${computer.hetznerServerIp}:18789/v1/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${computer.gatewayToken}`,
-            'Content-Type': 'application/json',
-            'x-openclaw-agent-id': 'default',
-          },
-          body: JSON.stringify({
-            model: 'openclaw:default',
-            user: `overlay:${args.userId}:computer:${args.computerId}`,
-            stream: false,
-            messages: [
-              {
-                role: 'user',
-                content: message,
-              },
-            ],
-          }),
-          signal: AbortSignal.timeout(120_000),
-        },
-      )
+      const sessionKey = getComputerSessionKey(args.userId, args.computerId)
+      const selectedModelId = args.modelId?.trim() || DEFAULT_MODEL_ID
+      const modelCandidates = getComputerModelCandidates(selectedModelId)
+      let content = ''
+      const failures: string[] = []
+      let succeededModelRef: string | null = null
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error(
-            'This computer was provisioned before Overlay chat support. Delete and recreate it to enable in-page OpenClaw chat.'
+      for (const candidate of modelCandidates) {
+        let pendingModelOverrideRetry = false
+
+        try {
+          await applySessionModelOverride({
+            ip: computer.hetznerServerIp,
+            gatewayToken: computer.gatewayToken,
+            sessionKey,
+            model: candidate.ref,
+          })
+        } catch (error) {
+          pendingModelOverrideRetry = true
+          console.warn(
+            `${TAG} sendChatMessage — model override deferred for ${candidate.ref}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
           )
         }
 
-        if (response.status === 401) {
-          throw new Error('OpenClaw gateway authentication failed.')
+        const response = await fetch(
+          `http://${computer.hetznerServerIp}:18789/v1/chat/completions`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${computer.gatewayToken}`,
+              'Content-Type': 'application/json',
+              'x-openclaw-agent-id': 'default',
+              'x-openclaw-session-key': sessionKey,
+            },
+            body: JSON.stringify({
+              model: 'openclaw:default',
+              user: sessionKey,
+              stream: false,
+              messages: [
+                {
+                  role: 'user',
+                  content: message,
+                },
+              ],
+            }),
+            signal: AbortSignal.timeout(180_000),
+          },
+        )
+
+        if (!response.ok) {
+          const responseText = await response.text()
+
+          if (response.status === 404) {
+            throw new Error(
+              'This computer was provisioned before Overlay chat support. Delete and recreate it to enable in-page OpenClaw chat.'
+            )
+          }
+
+          if (response.status === 401) {
+            throw new Error('OpenClaw gateway authentication failed.')
+          }
+
+          const failure = `${candidate.ref}: HTTP ${response.status} ${responseText}`
+          failures.push(failure)
+          console.warn(`${TAG} sendChatMessage — candidate failed ${failure}`)
+
+          if (response.status >= 500) {
+            continue
+          }
+
+          throw new Error(`Gateway returned ${response.status}: ${responseText}`)
         }
 
-        throw new Error(`Gateway returned ${response.status}: ${await response.text()}`)
+        const data = await response.json()
+        const candidateContent = extractAssistantContent(data)
+
+        if (!candidateContent) {
+          failures.push(`${candidate.ref}: empty response ${JSON.stringify(data)}`)
+          continue
+        }
+
+        content = candidateContent
+        succeededModelRef = candidate.ref
+
+        if (pendingModelOverrideRetry) {
+          try {
+            await applySessionModelOverride({
+              ip: computer.hetznerServerIp,
+              gatewayToken: computer.gatewayToken,
+              sessionKey,
+              model: candidate.ref,
+            })
+            console.log(
+              `${TAG} sendChatMessage — model override applied after session bootstrap computerId=${args.computerId} model=${candidate.ref}`
+            )
+          } catch (retryError) {
+            console.warn(
+              `${TAG} sendChatMessage — model override retry failed for ${candidate.ref}: ${
+                retryError instanceof Error ? retryError.message : String(retryError)
+              }`
+            )
+          }
+        }
+
+        break
       }
 
-      const data = await response.json()
-      const content = extractAssistantContent(data)
-
       if (!content) {
-        throw new Error(`Gateway returned an empty response: ${JSON.stringify(data)}`)
+        throw new Error(buildComputerChatFailureMessage(selectedModelId, failures))
       }
 
       await ctx.runMutation(internal.computers.logEvent, {
@@ -359,11 +429,23 @@ export const sendChatMessage = action({
         message: content,
       })
 
+      if (succeededModelRef && succeededModelRef !== modelCandidates[0]?.ref) {
+        await ctx.runMutation(internal.computers.logEvent, {
+          computerId: args.computerId,
+          type: 'status_change',
+          message: `Selected model was unavailable. OpenClaw replied using fallback model ${succeededModelRef}.`,
+        })
+      }
+
       console.log(`${TAG} sendChatMessage — SUCCESS computerId=${args.computerId}`)
       return { content }
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to reach OpenClaw'
+        error instanceof Error && error.name === 'AbortError'
+          ? 'OpenClaw request timed out after 3 minutes.'
+          : error instanceof Error
+            ? error.message
+            : 'Failed to reach OpenClaw'
 
       await ctx.runMutation(internal.computers.logEvent, {
         computerId: args.computerId,
@@ -437,12 +519,13 @@ export const provisionComputer = internalAction({
 
     const HETZNER_TOKEN = process.env.HETZNER_API_TOKEN!
     const CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL!
-    const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY!
+    const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY!
+    const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
 
     if (!HETZNER_TOKEN) console.error(`${TAG} provisionComputer — WARNING: HETZNER_API_TOKEN is not set`)
     if (!CONVEX_HTTP_URL) console.error(`${TAG} provisionComputer — WARNING: CONVEX_HTTP_URL is not set`)
-    if (!OPENROUTER_API_KEY) console.error(`${TAG} provisionComputer — WARNING: OPENROUTER_API_KEY is not set`)
-    if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured')
+    if (!AI_GATEWAY_API_KEY) console.error(`${TAG} provisionComputer — WARNING: AI_GATEWAY_API_KEY is not set`)
+    if (!AI_GATEWAY_API_KEY) throw new Error('AI_GATEWAY_API_KEY is not configured')
 
     const location = 'ash'
     console.log(`${TAG} provisionComputer — using Hetzner location=${location} for region=${computer.region}`)
@@ -452,6 +535,7 @@ export const provisionComputer = internalAction({
       readySecret: computer.readySecret!,
       computerId: computerId,
       convexHttpUrl: CONVEX_HTTP_URL,
+      aiGatewayApiKey: AI_GATEWAY_API_KEY,
       openrouterApiKey: OPENROUTER_API_KEY,
     })
     console.log(`${TAG} provisionComputer — cloud-init built (${userdata.length} chars)`)
@@ -872,6 +956,75 @@ async function ensureFirewallDeleted(firewallId: number, token: string): Promise
   return false
 }
 
+function getComputerSessionKey(userId: string, computerId: string): string {
+  return `computer:${userId}:${computerId}`
+}
+
+function resolveOpenClawModelRef(modelId: string): string | null {
+  const model = getModel(modelId)
+  if (!model) {
+    return null
+  }
+
+  if (model.provider === 'openrouter') {
+    return model.id
+  }
+
+  return `vercel-ai-gateway/${model.provider}/${model.id}`
+}
+
+function getComputerModelCandidates(selectedModelId: string): Array<{ id: string; ref: string }> {
+  const candidates = [selectedModelId, DEFAULT_MODEL_ID, 'openrouter/free']
+  const seen = new Set<string>()
+  const resolved: Array<{ id: string; ref: string }> = []
+
+  for (const candidateId of candidates) {
+    const ref = resolveOpenClawModelRef(candidateId)
+    if (!ref || seen.has(ref)) {
+      continue
+    }
+    seen.add(ref)
+    resolved.push({ id: candidateId, ref })
+  }
+
+  return resolved
+}
+
+function buildComputerChatFailureMessage(selectedModelId: string, failures: string[]): string {
+  const detail = failures.length > 0 ? failures.join(' | ') : 'no fallback details'
+  return `OpenClaw could not reply with model "${selectedModelId}". Retried Vercel AI Gateway and OpenRouter fallbacks, but all attempts failed. This computer likely has stale or missing provider credentials on the VPS. Delete and recreate it. Details: ${detail}`
+}
+
+async function applySessionModelOverride(params: {
+  ip: string
+  gatewayToken: string
+  sessionKey: string
+  model: string
+}) {
+  const response = await fetch(`http://${params.ip}:18789/tools/invoke`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${params.gatewayToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      tool: 'session_status',
+      sessionKey: params.sessionKey,
+      args: {
+        sessionKey: params.sessionKey,
+        model: params.model,
+      },
+    }),
+    signal: AbortSignal.timeout(30_000),
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to apply computer model override: ${response.status} ${await response.text()}`
+    )
+  }
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -922,7 +1075,8 @@ interface CloudInitParams {
   readySecret: string
   computerId: string
   convexHttpUrl: string
-  openrouterApiKey: string
+  aiGatewayApiKey: string
+  openrouterApiKey?: string
 }
 
 function buildCloudInit(p: CloudInitParams): string {
@@ -931,7 +1085,8 @@ function buildCloudInit(p: CloudInitParams): string {
     .replaceAll('{{READY_SECRET}}',     p.readySecret)
     .replaceAll('{{COMPUTER_ID}}',      p.computerId)
     .replaceAll('{{CONVEX_HTTP_URL}}',  p.convexHttpUrl)
-    .replaceAll('{{OPENROUTER_API_KEY}}', p.openrouterApiKey)
+    .replaceAll('{{AI_GATEWAY_API_KEY}}', p.aiGatewayApiKey)
+    .replaceAll('{{OPENROUTER_API_KEY}}', p.openrouterApiKey ?? '')
 }
 
 const CLOUD_INIT_TEMPLATE = `#cloud-config
@@ -945,6 +1100,7 @@ write_files:
   - path: /root/openclaw-deploy/.env
     permissions: '0600'
     content: |
+      AI_GATEWAY_API_KEY={{AI_GATEWAY_API_KEY}}
       OPENROUTER_API_KEY={{OPENROUTER_API_KEY}}
 
   - path: /root/openclaw-deploy/docker-compose.yml
@@ -959,6 +1115,7 @@ write_files:
             - HOME=/home/node
             - NODE_ENV=production
             - TERM=xterm-256color
+            - AI_GATEWAY_API_KEY=\${AI_GATEWAY_API_KEY}
             - OPENROUTER_API_KEY=\${OPENROUTER_API_KEY}
             - OPENCLAW_SKIP_CHANNELS=1
             - OPENCLAW_SKIP_CRON=1
@@ -1001,7 +1158,8 @@ write_files:
           "defaults": {
             "workspace": "/home/node/.openclaw/workspace",
             "model": {
-              "primary": "openrouter/anthropic/claude-sonnet-4-5"
+              "primary": "vercel-ai-gateway/anthropic/claude-sonnet-4-6",
+              "fallbacks": ["openrouter/free"]
             }
           },
           "list": [

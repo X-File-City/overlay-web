@@ -58,6 +58,7 @@ async function main() {
   log(logPrefix, `starting isolated Hetzner smoke in ${config.deployment} mode`)
 
   const hetznerToken = await resolveSecret('HETZNER_API_TOKEN', config.deployment)
+  const aiGatewayApiKey = await resolveSecret('AI_GATEWAY_API_KEY', config.deployment)
   const openrouterApiKey = await resolveSecret('OPENROUTER_API_KEY', config.deployment)
 
   const gatewayToken = crypto.randomBytes(24).toString('hex')
@@ -89,6 +90,7 @@ async function main() {
       image: config.image,
       userData: buildCloudInit({
         gatewayToken,
+        aiGatewayApiKey,
         openrouterApiKey,
       }),
       sshKeyIds: [sshContext.hetznerSshKeyId],
@@ -651,6 +653,7 @@ async function cleanupResources(
 
 function buildCloudInit(params: {
   gatewayToken: string
+  aiGatewayApiKey: string
   openrouterApiKey: string
 }): string {
   const configJson = JSON.stringify(
@@ -679,7 +682,8 @@ function buildCloudInit(params: {
         defaults: {
           workspace: '/home/node/.openclaw/workspace',
           model: {
-            primary: 'openrouter/anthropic/claude-sonnet-4-5',
+            primary: 'vercel-ai-gateway/anthropic/claude-sonnet-4-6',
+            fallbacks: ['openrouter/free'],
           },
         },
         list: [
@@ -709,6 +713,7 @@ function buildCloudInit(params: {
     '      - HOME=/home/node',
     '      - NODE_ENV=production',
     '      - TERM=xterm-256color',
+    '      - AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY}',
     '      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}',
     '      - OPENCLAW_SKIP_CHANNELS=1',
     '      - OPENCLAW_SKIP_CRON=1',
@@ -725,6 +730,7 @@ function buildCloudInit(params: {
   ].join('\n')
 
   const envFile = [
+    `AI_GATEWAY_API_KEY=${params.aiGatewayApiKey}`,
     `OPENROUTER_API_KEY=${params.openrouterApiKey}`,
   ].join('\n')
 

@@ -18,32 +18,45 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ type: string }> }
 ) {
-  const { type } = await context.params
+  try {
+    const { type } = await context.params
 
-  if (!isConvexRequestType(type)) {
-    return NextResponse.json({ error: 'Invalid Convex request type' }, { status: 404 })
+    if (!isConvexRequestType(type)) {
+      return NextResponse.json({ error: 'Invalid Convex request type' }, { status: 404 })
+    }
+
+    const convexUrl = resolveConvexUrl()
+    if (!convexUrl) {
+      return NextResponse.json({ error: 'Convex URL is not configured' }, { status: 500 })
+    }
+
+    const bodyText = await request.text()
+    const response = await fetch(`${convexUrl}/api/${type}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: bodyText,
+      cache: 'no-store',
+    })
+
+    const responseText = await response.text()
+
+    return new NextResponse(responseText, {
+      status: response.status,
+      headers: {
+        'Content-Type': response.headers.get('Content-Type') || 'application/json',
+        'Cache-Control': 'no-store',
+      },
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Convex proxy request failed'
+    return NextResponse.json(
+      {
+        status: 'error',
+        errorMessage: message,
+      },
+      { status: 502 }
+    )
   }
-
-  const convexUrl = resolveConvexUrl()
-  if (!convexUrl) {
-    return NextResponse.json({ error: 'Convex URL is not configured' }, { status: 500 })
-  }
-
-  const bodyText = await request.text()
-  const response = await fetch(`${convexUrl}/api/${type}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: bodyText,
-    cache: 'no-store',
-  })
-
-  return new NextResponse(response.body, {
-    status: response.status,
-    headers: {
-      'Content-Type': response.headers.get('Content-Type') || 'application/json',
-      'Cache-Control': 'no-store',
-    },
-  })
 }

@@ -70,7 +70,30 @@ async function callConvex<T>(
     })
     clearTimeout(timeoutId)
 
-    const data: ConvexResponse<T> = await response.json()
+    const rawText = await response.text()
+    if (!rawText.trim()) {
+      throw new Error(`Convex ${type} returned an empty response body`)
+    }
+
+    let data: ConvexResponse<T>
+    try {
+      data = JSON.parse(rawText) as ConvexResponse<T>
+    } catch {
+      throw new Error(`Convex ${type} returned invalid JSON: ${rawText.slice(0, 200)}`)
+    }
+
+    if (!response.ok) {
+      const message =
+        data.errorMessage ||
+        ('error' in data && typeof data.errorMessage === 'string'
+          ? data.errorMessage
+          : `Convex ${type} request failed with HTTP ${response.status}`)
+      if (options.throwOnError) {
+        throw new Error(message)
+      }
+      console.error(`Convex ${type} HTTP error:`, message)
+      return null
+    }
 
     if (data.status === 'error') {
       console.error(`Convex ${type} error:`, data.errorMessage)
@@ -84,6 +107,9 @@ async function callConvex<T>(
   } catch (error) {
     console.error(`Convex ${type} failed:`, error)
     if (options.throwOnError) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Convex ${type} request timed out`)
+      }
       throw error
     }
     return null
