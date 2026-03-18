@@ -297,9 +297,12 @@ export const provisionComputer = internalAction({
 
     const HETZNER_TOKEN = process.env.HETZNER_API_TOKEN!
     const CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL!
+    const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY!
 
     if (!HETZNER_TOKEN) console.error(`${TAG} provisionComputer — WARNING: HETZNER_API_TOKEN is not set`)
     if (!CONVEX_HTTP_URL) console.error(`${TAG} provisionComputer — WARNING: CONVEX_HTTP_URL is not set`)
+    if (!OPENROUTER_API_KEY) console.error(`${TAG} provisionComputer — WARNING: OPENROUTER_API_KEY is not set`)
+    if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured')
 
     const location = 'ash'
     console.log(`${TAG} provisionComputer — using Hetzner location=${location} for region=${computer.region}`)
@@ -309,7 +312,7 @@ export const provisionComputer = internalAction({
       readySecret: computer.readySecret!,
       computerId: computerId,
       convexHttpUrl: CONVEX_HTTP_URL,
-      keyringPassword: crypto.randomUUID().replace(/-/g, ''),
+      openrouterApiKey: OPENROUTER_API_KEY,
     })
     console.log(`${TAG} provisionComputer — cloud-init built (${userdata.length} chars)`)
 
@@ -738,7 +741,7 @@ interface CloudInitParams {
   readySecret: string
   computerId: string
   convexHttpUrl: string
-  keyringPassword: string
+  openrouterApiKey: string
 }
 
 function buildCloudInit(p: CloudInitParams): string {
@@ -747,7 +750,7 @@ function buildCloudInit(p: CloudInitParams): string {
     .replaceAll('{{READY_SECRET}}',     p.readySecret)
     .replaceAll('{{COMPUTER_ID}}',      p.computerId)
     .replaceAll('{{CONVEX_HTTP_URL}}',  p.convexHttpUrl)
-    .replaceAll('{{KEYRING_PASSWORD}}', p.keyringPassword)
+    .replaceAll('{{OPENROUTER_API_KEY}}', p.openrouterApiKey)
 }
 
 const CLOUD_INIT_TEMPLATE = `#cloud-config
@@ -761,32 +764,25 @@ write_files:
   - path: /root/openclaw-deploy/.env
     permissions: '0600'
     content: |
-      OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:main
-      OPENCLAW_GATEWAY_TOKEN={{GATEWAY_TOKEN}}
-      OPENCLAW_GATEWAY_BIND=lan
-      OPENCLAW_GATEWAY_PORT=18789
-      OPENCLAW_CONFIG_DIR=/root/.openclaw
-      OPENCLAW_WORKSPACE_DIR=/root/.openclaw/workspace
-      GOG_KEYRING_PASSWORD={{KEYRING_PASSWORD}}
-      XDG_CONFIG_HOME=/home/node/.openclaw
+      OPENROUTER_API_KEY={{OPENROUTER_API_KEY}}
 
   - path: /root/openclaw-deploy/docker-compose.yml
     permissions: '0644'
     content: |
       services:
         openclaw-gateway:
-          image: \${OPENCLAW_IMAGE}
+          image: ghcr.io/openclaw/openclaw:main
           restart: unless-stopped
           env_file: /root/openclaw-deploy/.env
           environment:
             - HOME=/home/node
             - NODE_ENV=production
             - TERM=xterm-256color
-            - OPENCLAW_GATEWAY_BIND=lan
-            - OPENCLAW_GATEWAY_PORT=18789
-            - OPENCLAW_GATEWAY_TOKEN=\${OPENCLAW_GATEWAY_TOKEN}
-            - GOG_KEYRING_PASSWORD=\${GOG_KEYRING_PASSWORD}
-            - XDG_CONFIG_HOME=/home/node/.openclaw
+            - OPENROUTER_API_KEY=\${OPENROUTER_API_KEY}
+            - OPENCLAW_SKIP_CHANNELS=1
+            - OPENCLAW_SKIP_CRON=1
+            - OPENCLAW_SKIP_GMAIL_WATCHER=1
+            - OPENCLAW_SKIP_CANVAS_HOST=1
             - PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           volumes:
             - /root/.openclaw:/home/node/.openclaw
@@ -794,7 +790,55 @@ write_files:
           ports:
             - "0.0.0.0:18789:18789"
           command:
-            ["node", "openclaw.mjs", "gateway", "--bind", "lan", "--port", "18789", "--allow-unconfigured"]
+            ["node", "openclaw.mjs", "gateway", "--bind", "lan", "--port", "18789"]
+
+  - path: /root/.openclaw/openclaw.json
+    permissions: '0600'
+    content: |
+      {
+        "gateway": {
+          "mode": "local",
+          "bind": "lan",
+          "port": 18789,
+          "auth": {
+            "mode": "token",
+            "token": "{{GATEWAY_TOKEN}}"
+          },
+          "controlUi": {
+            "enabled": true,
+            "dangerouslyAllowHostHeaderOriginFallback": true
+          }
+        },
+        "agents": {
+          "defaults": {
+            "workspace": "/home/node/.openclaw/workspace",
+            "model": {
+              "primary": "openrouter/anthropic/claude-sonnet-4-5"
+            }
+          },
+          "list": [
+            {
+              "id": "default",
+              "name": "OpenClaw Assistant",
+              "workspace": "/home/node/.openclaw/workspace"
+            }
+          ]
+        },
+        "cron": {
+          "enabled": false
+        }
+      }
+
+  - path: /usr/local/bin/openclaw
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      cd /root/openclaw-deploy
+      if [ -t 0 ] && [ -t 1 ]; then
+        exec docker compose exec openclaw-gateway openclaw "$@"
+      fi
+      exec docker compose exec -T openclaw-gateway openclaw "$@"
 
   - path: /root/provision.sh
     permissions: '0755'
@@ -838,69 +882,41 @@ write_files:
 
       # Step 1: Install Docker CE
       curl -fsSL https://get.docker.com | sh
-      systemctl enable docker
-      systemctl start docker
+      systemctl enable --now docker
       clog "Docker CE installed and daemon started"
 
       # Step 2: Prepare directories
       mkdir -p /root/.openclaw/workspace
       chown -R 1000:1000 /root/.openclaw
-
-      # Expose a host-side openclaw command that proxies into the running
-      # container. This keeps SSH troubleshooting consistent with the same
-      # gateway/config state the container uses.
-      printf '%s\n' \
-        '#!/bin/sh' \
-        'set -e' \
-        'cd /root/openclaw-deploy' \
-        'if [ -t 0 ] && [ -t 1 ]; then' \
-        '  exec docker compose exec openclaw-gateway openclaw "$@"' \
-        'fi' \
-        'exec docker compose exec -T openclaw-gateway openclaw "$@"' \
-        > /usr/local/bin/openclaw
-      chmod 0755 /usr/local/bin/openclaw
       clog "Installed host openclaw wrapper"
 
-      # Step 3: Pull the prebuilt OpenClaw image instead of building from source
+      # Step 3: Pull the prebuilt OpenClaw image and start the configured gateway
       clog "Pulling prebuilt OpenClaw image..."
       cd /root/openclaw-deploy
       docker compose pull
       clog "OpenClaw image pulled. Starting container..."
 
       docker compose up -d
-      clog "Docker container started. Running OpenClaw onboarding..."
+      clog "Docker container started. Waiting for healthz..."
 
-      onboard_ok=0
-      for i in $(seq 1 5); do
-        if openclaw onboard --non-interactive --accept-risk --mode local --auth-choice token --gateway-port 18789 --gateway-bind lan --gateway-token "{{GATEWAY_TOKEN}}" --skip-ui --skip-channels --skip-skills --skip-search --skip-health; then
-          onboard_ok=1
-          break
-        fi
-        sleep 5
-      done
-      if [ "$onboard_ok" -eq 1 ]; then
-        clog "OpenClaw onboarding completed"
-      else
-        clog "OpenClaw onboarding failed; continuing with health checks"
-      fi
-
-      clog "Waiting for healthz..."
-
-      # Step 5: Wait for OpenClaw to be healthy (60 x 30s = 30 min)
-      for i in $(seq 1 60); do
+      # Step 4: Wait for OpenClaw to be healthy (90 x 5s = 7.5 min)
+      for i in $(seq 1 90); do
         if curl -sf --max-time 5 http://localhost:18789/healthz > /dev/null 2>&1; then
           curl -s -X POST "$CONVEX_URL/computer/ready" \\
             -H "Content-Type: application/json" \\
             -d "{\\"computerId\\":\\"$COMPUTER_ID\\",\\"readySecret\\":\\"{{READY_SECRET}}\\"}"
           exit 0
         fi
-        if (( i % 5 == 0 )); then
-          clog "Health check $i/60 - not ready yet"
+        if (( i % 6 == 0 )); then
+          clog "Health check $i/90 - not ready yet"
         fi
-        sleep 30
+        sleep 5
       done
 
-      clog "Health check timed out after 30 min. Convex poll will retry."
+      clog "Health check timed out. Dumping docker diagnostics..."
+      docker compose ps || true
+      docker compose logs --tail 200 || true
+      clog "Health check timed out after bootstrap."
 
 runcmd:
   - /root/provision.sh

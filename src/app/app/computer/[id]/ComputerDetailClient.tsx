@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { AlertCircle, Send, Loader2 } from 'lucide-react'
+import { AlertCircle, Check, Copy, ExternalLink, Loader2 } from 'lucide-react'
 import { convex } from '@/lib/convex'
 
 type ComputerStatus = 'pending_payment' | 'provisioning' | 'ready' | 'error' | 'past_due' | 'deleted'
@@ -25,11 +25,6 @@ interface LogEvent {
   createdAt: number
 }
 
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-}
-
 // Provisioning stepper steps
 function stepIndex(step?: string): number {
   if (!step) return 0
@@ -42,8 +37,8 @@ function ProvisioningView({ step, logs }: { step?: string; logs: LogEvent[] }) {
   const labels = ['Paid', 'Server', 'Docker', 'Ready']
   const messages: Record<string, string> = {
     creating_server:   'Creating server on Hetzner… (1–2 min)',
-    server_created:    'Pulling OpenClaw image and preparing host CLI…',
-    openclaw_starting: 'Starting OpenClaw gateway and onboarding… (3–5 min total)',
+    server_created:    'Pulling OpenClaw image and writing gateway config…',
+    openclaw_starting: 'Starting OpenClaw gateway and waiting for healthz…',
   }
   const terminalRef = useRef<HTMLDivElement>(null)
 
@@ -116,113 +111,77 @@ function ProvisioningView({ step, logs }: { step?: string; logs: LogEvent[] }) {
   )
 }
 
-function ChatView({ ip, token }: { ip: string; token: string }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
-  const bottomRef = useRef<HTMLDivElement>(null)
+function ReadyView({ ip, token }: { ip: string; token: string }) {
+  const [copied, setCopied] = useState<'url' | 'token' | null>(null)
+  const gatewayUrl = `http://${ip}:18789`
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  async function sendMessage() {
-    const text = input.trim()
-    if (!text || sending) return
-    setInput('')
-    setSending(true)
-
-    const userMsg: ChatMessage = { role: 'user', content: text }
-    setMessages((prev) => [...prev, userMsg])
-
+  async function copyValue(kind: 'url' | 'token', value: string) {
     try {
-      const res = await fetch(`http://${ip}:18789/api/agent`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ message: text }),
-      })
-
-      if (!res.ok) throw new Error(`Gateway returned ${res.status}`)
-
-      // Handle streaming or JSON response
-      const contentType = res.headers.get('content-type') ?? ''
-      let reply = ''
-
-      if (contentType.includes('text/event-stream') || contentType.includes('text/plain')) {
-        const reader = res.body?.getReader()
-        const decoder = new TextDecoder()
-        setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            const chunk = decoder.decode(value)
-            reply += chunk
-            setMessages((prev) => {
-              const next = [...prev]
-              next[next.length - 1] = { role: 'assistant', content: reply }
-              return next
-            })
-          }
-        }
-      } else {
-        const data = await res.json()
-        reply = data.message ?? data.content ?? data.response ?? JSON.stringify(data)
-        setMessages((prev) => [...prev, { role: 'assistant', content: reply }])
-      }
-    } catch (err) {
-      setMessages((prev) => [...prev, {
-        role: 'assistant',
-        content: `Error: ${err instanceof Error ? err.message : 'Failed to reach gateway'}`,
-      }])
-    } finally {
-      setSending(false)
+      await navigator.clipboard.writeText(value)
+      setCopied(kind)
+      window.setTimeout(() => setCopied(null), 1500)
+    } catch {
+      setCopied(null)
     }
   }
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden">
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-        {messages.length === 0 && (
-          <div className="flex items-center justify-center h-full text-[#aaa] text-sm">
-            Send a message to start
-          </div>
-        )}
-        {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[75%] rounded-xl px-3.5 py-2.5 text-sm whitespace-pre-wrap ${
-              msg.role === 'user'
-                ? 'bg-[#0a0a0a] text-white'
-                : 'bg-[#f0f0f0] text-[#0a0a0a]'
-            }`}>
-              {msg.content}
+    <div className="flex flex-1 items-center justify-center px-8 py-10">
+      <div className="w-full max-w-xl space-y-5">
+        <div className="space-y-2 text-center">
+          <p className="text-xl font-medium text-[#0a0a0a]">OpenClaw is live</p>
+          <p className="text-sm text-[#666]">
+            Open the gateway UI running on your server and paste the gateway token on first connect.
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-[#e5e5e5] bg-white p-5 space-y-4">
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[#888]">Gateway URL</p>
+            <div className="flex items-center gap-2 rounded-xl bg-[#f6f6f6] px-3 py-3">
+              <code className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-[#0a0a0a]">
+                {gatewayUrl}
+              </code>
+              <button
+                onClick={() => copyValue('url', gatewayUrl)}
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#ddd] bg-white px-2.5 text-xs text-[#333] hover:border-[#bbb]"
+              >
+                {copied === 'url' ? <Check size={12} /> : <Copy size={12} />}
+                {copied === 'url' ? 'Copied' : 'Copy'}
+              </button>
             </div>
           </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
 
-      {/* Input */}
-      <div className="border-t border-[#e5e5e5] px-4 py-3 flex gap-2">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-          placeholder="Message OpenClaw…"
-          className="flex-1 text-sm border border-[#e5e5e5] rounded-lg px-3.5 py-2 outline-none placeholder-[#bbb] focus:border-[#0a0a0a] transition-colors bg-white"
-          disabled={sending}
-        />
-        <button
-          onClick={sendMessage}
-          disabled={!input.trim() || sending}
-          className="h-9 w-9 flex items-center justify-center rounded-lg bg-[#0a0a0a] text-white disabled:opacity-30 hover:bg-[#222] transition-colors shrink-0"
-        >
-          {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-        </button>
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-[#888]">Gateway Token</p>
+            <div className="flex items-center gap-2 rounded-xl bg-[#f6f6f6] px-3 py-3">
+              <code className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-[#0a0a0a]">
+                {token}
+              </code>
+              <button
+                onClick={() => copyValue('token', token)}
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#ddd] bg-white px-2.5 text-xs text-[#333] hover:border-[#bbb]"
+              >
+                {copied === 'token' ? <Check size={12} /> : <Copy size={12} />}
+                {copied === 'token' ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+
+          <a
+            href={gatewayUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#0a0a0a] text-sm text-white hover:bg-[#222]"
+          >
+            Open OpenClaw
+            <ExternalLink size={14} />
+          </a>
+
+          <p className="text-xs text-[#888]">
+            The server also exposes a host-side <code>openclaw</code> wrapper for SSH troubleshooting.
+          </p>
+        </div>
       </div>
     </div>
   )
@@ -347,7 +306,7 @@ export default function ComputerDetailClient({
       )}
 
       {computer.status === 'ready' && computer.hetznerServerIp && computer.gatewayToken && (
-        <ChatView ip={computer.hetznerServerIp} token={computer.gatewayToken} />
+        <ReadyView ip={computer.hetznerServerIp} token={computer.gatewayToken} />
       )}
 
       {computer.status === 'past_due' && (
