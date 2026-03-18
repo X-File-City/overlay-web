@@ -158,23 +158,21 @@ function ChatView({
   onSubmit: () => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const hasMessages = messages.length > 0 || pendingMessage
+  const lastMessage = messages[messages.length - 1]
+  const shouldShowPendingMessage = Boolean(
+    pendingMessage &&
+      !(lastMessage?.role === 'user' && lastMessage.content === pendingMessage)
+  )
+  const hasMessages = messages.length > 0 || shouldShowPendingMessage
 
   useEffect(() => {
     if (!scrollRef.current) return
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-  }, [messages.length, pendingMessage, isSending])
+  }, [isSending, messages.length, shouldShowPendingMessage])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-[#fbfbfb]">
-      <div className="border-b border-[#e9e9e9] px-6 py-5">
-        <div className="max-w-3xl space-y-1">
-          <h3 className="text-sm font-medium text-[#0a0a0a]">Chat with {computerName}</h3>
-          <p className="text-xs text-[#777]">
-            Overlay sends messages to your dedicated OpenClaw gateway and keeps the transcript here.
-          </p>
-        </div>
-      </div>
+      
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
@@ -214,7 +212,7 @@ function ChatView({
             </div>
           ))}
 
-          {pendingMessage && (
+          {shouldShowPendingMessage && pendingMessage && (
             <div className="flex justify-end">
               <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-3 text-sm text-white opacity-90">
                 <p className="whitespace-pre-wrap">{pendingMessage}</p>

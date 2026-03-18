@@ -17,10 +17,11 @@ function resolveConvexUrl(): { url: string | undefined; source: string } {
 }
 
 const { url: CONVEX_URL, source: CONVEX_URL_SOURCE } = resolveConvexUrl()
+const IS_BROWSER = typeof window !== 'undefined'
 
-if (!CONVEX_URL) {
+if (!CONVEX_URL && !IS_BROWSER) {
   console.warn('CONVEX_URL is not set')
-} else {
+} else if (CONVEX_URL) {
   console.log(
     `[Convex] Using ${IS_DEV ? 'DEV' : 'PROD'} environment: ${CONVEX_URL} (source: ${CONVEX_URL_SOURCE})`
   )
@@ -43,13 +44,14 @@ async function callConvex<T>(
   args: Record<string, unknown>,
   options: CallConvexOptions = {}
 ): Promise<T | null> {
-  if (!CONVEX_URL) {
+  if (!IS_BROWSER && !CONVEX_URL) {
     console.error('CONVEX_URL not configured')
     return null
   }
 
-  const url = CONVEX_URL.replace(/\.cloud\.convex\.cloud$/, '.convex.cloud')
-  const endpoint = `${url}/api/${type}`
+  const endpoint = IS_BROWSER
+    ? `/api/convex/${type}`
+    : `${CONVEX_URL}/api/${type}`
 
   try {
     const controller = new AbortController()
