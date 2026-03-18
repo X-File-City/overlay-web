@@ -91,7 +91,7 @@ function UsageBar({ entitlements }: { entitlements: Entitlements | null }) {
   )
 }
 
-export default function AppSidebar({ user }: { user: AuthUser }) {
+export default function AppSidebar({ user, accessToken }: { user: AuthUser; accessToken: string }) {
   const pathname = usePathname()
   const displayName = user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : user.email
 
@@ -249,7 +249,7 @@ export default function AppSidebar({ user }: { user: AuthUser }) {
     </aside>
     {projectsOpen && <ProjectsSidebar />}
     {toolsOpen && <ToolsSidebar />}
-    {computerOpen && <ComputerSidebar />}
+    {computerOpen && <ComputerSidebar userId={user.id} accessToken={accessToken} />}
     </>
   )
 }

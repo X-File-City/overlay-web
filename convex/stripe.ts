@@ -2,28 +2,9 @@ import { action } from './_generated/server'
 import { internal, components } from './_generated/api'
 import { StripeSubscriptions } from '@convex-dev/stripe'
 import { v } from 'convex/values'
+import { validateAccessToken } from './lib/auth'
 
 const stripeClient = new StripeSubscriptions(components.stripe, {})
-
-function validateAccessToken(accessToken: string): boolean {
-  if (!accessToken || typeof accessToken !== 'string') return false
-  const trimmed = accessToken.trim()
-  if (trimmed.length < 20) return false
-  const parts = trimmed.split('.')
-  if (parts.length === 3) {
-    try {
-      const payload = JSON.parse(
-        Buffer.from(parts[1], 'base64url').toString('utf-8')
-      )
-      if (typeof payload.exp === 'number' && payload.exp * 1000 < Date.now()) {
-        return false
-      }
-    } catch {
-      // Accept as opaque token
-    }
-  }
-  return true
-}
 
 // Create a checkout session for a subscription
 export const createSubscriptionCheckout = action({
@@ -117,4 +98,45 @@ export const cancelSubscription = action({
     })
     return { success: true }
   }
+})
+
+/**
+ * Creates a Stripe Checkout Session for a $10/mo computer subscription.
+ * The computerId is embedded in subscriptionMetadata so the webhook
+ * handler can route the payment confirmation to the right computer.
+ */
+export const createComputerCheckout = action({
+  args: {
+    computerId: v.string(),
+    userId: v.string(),
+    email: v.optional(v.string()),
+    successUrl: v.string(),
+    cancelUrl: v.string(),
+  },
+  returns: v.object({
+    sessionId: v.string(),
+    url: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const priceId = process.env.STRIPE_COMPUTER_PRICE_ID
+    if (!priceId) throw new Error('STRIPE_COMPUTER_PRICE_ID not configured')
+
+    const customer = await stripeClient.getOrCreateCustomer(ctx, {
+      userId: args.userId,
+      email: args.email,
+      name: undefined,
+    })
+
+    return await stripeClient.createCheckoutSession(ctx, {
+      priceId,
+      customerId: customer.customerId,
+      mode: 'subscription',
+      successUrl: args.successUrl,
+      cancelUrl: args.cancelUrl,
+      subscriptionMetadata: {
+        userId: args.userId,
+        computerId: args.computerId,
+      },
+    })
+  },
 })

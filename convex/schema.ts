@@ -89,7 +89,6 @@ export default defineSchema({
   chats: defineTable({
     userId: v.string(),
     title: v.string(),
-    folderId: v.optional(v.string()),
     projectId: v.optional(v.string()),
     lastModified: v.number(),
     model: v.string(),
@@ -169,6 +168,54 @@ export default defineSchema({
     })),
     updatedAt: v.number(),
   }).index('by_channel_thread', ['slackChannelId', 'slackThreadTs']).index('by_overlayUserId', ['overlayUserId']),
+
+  computers: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    setupType: v.literal('managed'),
+    region: v.union(v.literal('eu-central'), v.literal('us-east')),
+
+    // FSM status
+    status: v.union(
+      v.literal('pending_payment'),
+      v.literal('provisioning'),
+      v.literal('ready'),
+      v.literal('error'),
+      v.literal('past_due'),
+      v.literal('deleted'),
+    ),
+    provisioningStep: v.optional(v.string()),
+    // "creating_server" | "server_created" | "openclaw_starting"
+    errorMessage: v.optional(v.string()),
+
+    // Hetzner resources
+    hetznerServerId: v.optional(v.number()),
+    hetznerServerIp: v.optional(v.string()),
+    hetznerFirewallId: v.optional(v.number()),
+
+    // OpenClaw secrets — NEVER exposed outside owning userId
+    gatewayToken: v.optional(v.string()),  // 64-char hex — sent to browser on status=ready
+    readySecret: v.optional(v.string()),   // 32-char hex — baked into cloud-init, cleared after use
+
+    // Billing timestamps
+    pastDueAt: v.optional(v.number()),     // ms timestamp when past_due started (7-day calc)
+
+    // Stripe — one subscription per computer
+    stripeSubscriptionId: v.optional(v.string()),
+    stripeCustomerId: v.optional(v.string()),
+
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_userId', ['userId'])
+    .index('by_stripeSubscriptionId', ['stripeSubscriptionId']),
+
+  computerEvents: defineTable({
+    computerId: v.id('computers'),
+    type: v.string(),    // "status_change" | "provision_log" | "error" | "payment_event"
+    message: v.string(),
+    createdAt: v.number(),
+  }).index('by_computerId_createdAt', ['computerId', 'createdAt']),
 
   // Knowledge base and project files. Text content is stored in `content`;
   // binary files (images, PDFs, audio, video) are stored in Convex File Storage

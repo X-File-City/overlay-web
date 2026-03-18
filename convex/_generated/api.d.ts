@@ -10,9 +10,11 @@
 
 import type * as agents from "../agents.js";
 import type * as chats from "../chats.js";
+import type * as computers from "../computers.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as keys from "../keys.js";
+import type * as lib_auth from "../lib/auth.js";
 import type * as memories from "../memories.js";
 import type * as notes from "../notes.js";
 import type * as projects from "../projects.js";
@@ -33,9 +35,11 @@ import type {
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   chats: typeof chats;
+  computers: typeof computers;
   files: typeof files;
   http: typeof http;
   keys: typeof keys;
+  "lib/auth": typeof lib_auth;
   memories: typeof memories;
   notes: typeof notes;
   projects: typeof projects;

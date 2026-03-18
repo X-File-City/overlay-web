@@ -10,7 +10,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex h-screen bg-[#fafafa] text-[#0a0a0a] overflow-hidden">
-      <AppSidebar user={session.user} />
+      <AppSidebar user={session.user} accessToken={session.accessToken} />
       <main className="flex-1 overflow-auto">
         {children}
       </main>
