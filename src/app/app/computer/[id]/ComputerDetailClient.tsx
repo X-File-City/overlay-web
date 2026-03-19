@@ -226,7 +226,9 @@ export default function ComputerDetailClient({
       userId,
       accessToken,
     })
-    setComputer(result)
+    if (result !== null) {
+      setComputer(result)
+    }
   }, [accessToken, computerId, userId])
 
   const fetchLogs = useCallback(async () => {

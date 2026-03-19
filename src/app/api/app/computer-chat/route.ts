@@ -66,7 +66,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Computer ID is required' }, { status: 400 })
     }
 
-    const openClawMessages = serializeMessagesForOpenClaw(messages)
+    const openClawMessages: OpenClawChatMessage[] = [
+      {
+        role: 'system',
+        content:
+          'You are a helpful AI assistant. Respond directly and concisely to the user\'s questions and requests.',
+      },
+      ...serializeMessagesForOpenClaw(messages),
+    ]
     const latestUserText = extractLatestUserText(openClawMessages)
 
     if (!latestUserText) {
@@ -120,6 +127,14 @@ export async function POST(request: NextRequest) {
           model: candidate.ref,
         })
         canRetryWithModelFallbacks = modelOverrideApplied
+
+        if (!modelOverrideApplied) {
+          failures.push(`${candidate.ref}: model override rejected by gateway`)
+          if (modelCandidates.indexOf(candidate) < modelCandidates.length - 1) {
+            continue
+          }
+          // Last candidate: proceed with whatever model the session currently has
+        }
 
         const response = await fetch(
           `http://${connection.hetznerServerIp}:18789/v1/chat/completions`,
@@ -402,10 +417,6 @@ function resolveOpenClawModelRef(modelId: string): string | null {
 
   if (model.provider === 'openrouter') {
     return model.id
-  }
-
-  if (model.id.includes('/')) {
-    return `vercel-ai-gateway/${model.id}`
   }
 
   return `vercel-ai-gateway/${model.provider}/${model.id}`
