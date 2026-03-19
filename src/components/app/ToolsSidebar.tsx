@@ -38,12 +38,12 @@ interface ConnectorItem {
 type Tab = 'connectors' | 'skills'
 
 function ConnectorLogo({ logoUrl, name }: { logoUrl: string | null; name: string }) {
-  const [hasError, setHasError] = useState(false)
-  useEffect(() => { setHasError(false) }, [logoUrl])
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null)
+  const hasError = !logoUrl || failedLogoUrl === logoUrl
   return (
     <span className="inline-flex items-center justify-center shrink-0 rounded-md bg-white border border-black/10" style={{ width: 22, height: 22 }}>
       {logoUrl && !hasError ? (
-        <img src={logoUrl} alt={name} width={14} height={14} className="object-contain" onError={() => setHasError(true)} />
+        <img src={logoUrl} alt={name} width={14} height={14} className="object-contain" onError={() => setFailedLogoUrl(logoUrl)} />
       ) : (
         <span className="text-[9px] font-bold text-[#525252]">{name.charAt(0).toUpperCase()}</span>
       )}
@@ -71,7 +71,6 @@ export default function ToolsSidebar() {
       const { connected } = await statusRes.json() as { connected: string[] }
       const { items } = await searchRes.json() as { items: Array<{ slug: string; name: string; logoUrl: string | null }> }
 
-      const connectedSet = new Set(connected)
       // Build a lookup from search results for names + logos
       const searchMap = new Map(items.map((i) => [i.slug, i]))
 

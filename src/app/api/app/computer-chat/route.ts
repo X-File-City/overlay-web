@@ -5,6 +5,7 @@ import { getSession } from '@/lib/workos-auth'
 import { DEFAULT_MODEL_ID, getModel } from '@/lib/models'
 
 export const maxDuration = 300
+const GATEWAY_PROTOCOL_VERSION = 3
 
 interface ComputerConnectionInfo {
   gatewayToken: string
@@ -36,10 +37,44 @@ interface GatewaySessionModelState {
   model?: string
 }
 
-interface HookAgentResponse {
+interface GatewayErrorShape {
+  message?: string
+}
+
+interface GatewayResponseFrame {
+  type?: string
+  id?: string
   ok?: boolean
+  payload?: unknown
+  error?: GatewayErrorShape
+}
+
+interface GatewayAgentAcceptedPayload {
   runId?: string
-  error?: string
+  status?: string
+}
+
+interface GatewayAgentFinalPayload extends GatewayAgentAcceptedPayload {
+  summary?: string
+  result?: unknown
+}
+
+interface GatewayAgentEventPayload {
+  runId?: string
+  sessionKey?: string
+  stream?: string
+  data?: {
+    text?: string
+    delta?: string
+    phase?: string
+    error?: string
+  }
+}
+
+interface GatewayEventFrame {
+  type?: string
+  event?: string
+  payload?: GatewayAgentEventPayload
 }
 
 interface OpenClawTranscriptMessage {
@@ -60,11 +95,6 @@ interface SessionHistoryResponse {
   sessionKey?: string
   items?: OpenClawTranscriptMessage[]
   messages?: OpenClawTranscriptMessage[]
-}
-
-interface SessionHistoryEvent {
-  event: string
-  data: unknown
 }
 
 export async function POST(request: NextRequest) {
@@ -143,19 +173,12 @@ export async function POST(request: NextRequest) {
         try {
           writer.write({ type: 'text-start', id: textId })
 
-          await invokeOpenClawAgentHook({
-            ip: connection.hetznerServerIp,
-            hooksToken: connection.hooksToken,
-            sessionKey,
-            message: hookMessage,
-            model: requestedModelRef,
-          })
-
-          assistantText = await streamAssistantReplyFromSession({
+          assistantText = await streamAssistantReplyFromGateway({
             ip: connection.hetznerServerIp,
             gatewayToken: connection.gatewayToken,
             sessionKey,
-            baselineSeq,
+            message: hookMessage,
+            model: requestedModelRef,
             onText: (delta) => {
               if (!delta) return
               writer.write({ type: 'text-delta', id: textId, delta })
@@ -327,193 +350,35 @@ async function fetchSessionHistorySnapshot(params: {
   }
 }
 
-async function invokeOpenClawAgentHook(params: {
-  ip: string
-  hooksToken: string
-  sessionKey: string
-  message: string
-  model?: string | null
-}) {
-  const response = await fetch(`http://${params.ip}:18789/hooks/agent`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${params.hooksToken}`,
-      'Content-Type': 'application/json',
-      'Idempotency-Key': crypto.randomUUID(),
-    },
-    body: JSON.stringify({
-      message: params.message,
-      name: 'Overlay Computer Chat',
-      sessionKey: params.sessionKey,
-      wakeMode: 'now',
-      deliver: false,
-      timeoutSeconds: 240,
-      ...(params.model ? { model: params.model } : {}),
-    }),
-    signal: AbortSignal.timeout(30_000),
-  })
-
-  if (response.status === 404) {
-    throw new Error(
-      'This computer was provisioned before Overlay webhook chat support. Delete and recreate it to enable in-page OpenClaw chat.'
-    )
-  }
-
-  if (response.status === 401) {
-    throw new Error('OpenClaw webhook authentication failed.')
-  }
-
-  const responseText = await response.text()
-  let parsedBody: HookAgentResponse | null = null
-
-  try {
-    parsedBody = JSON.parse(responseText) as HookAgentResponse
-  } catch {
-    parsedBody = null
-  }
-
-  const recreateError =
-    parsedBody?.error?.includes('hooks.allowRequestSessionKey') ||
-    parsedBody?.error?.includes('sessionKey must start with one of')
-
-  if (!response.ok) {
-    if (recreateError) {
-      throw new Error(
-        'This computer was provisioned before Overlay webhook session support. Delete and recreate it to enable model-aware in-page OpenClaw chat.'
-      )
-    }
-    throw new Error(parsedBody?.error || `Webhook returned ${response.status}: ${responseText}`)
-  }
-
-  if (parsedBody?.ok !== true) {
-    throw new Error(parsedBody?.error || 'OpenClaw rejected the webhook request.')
-  }
-}
-
-async function streamAssistantReplyFromSession(params: {
+async function streamAssistantReplyFromGateway(params: {
   ip: string
   gatewayToken: string
   sessionKey: string
-  baselineSeq: number
+  message: string
+  model?: string | null
   onText: (delta: string) => void
 }): Promise<string> {
-  const deadline = Date.now() + 240_000
+  const ws = await openGatewaySocket(params.ip)
+  let assistantText = ''
 
-  while (Date.now() < deadline) {
-    const remainingMs = Math.max(1_000, deadline - Date.now())
-    const response = await fetch(
-      `http://${params.ip}:18789/sessions/${encodeURIComponent(params.sessionKey)}/history`,
-      {
-        headers: {
-          Authorization: `Bearer ${params.gatewayToken}`,
-          Accept: 'text/event-stream',
-        },
-        signal: AbortSignal.timeout(remainingMs),
-      }
-    )
+  try {
+    await connectGatewaySocket(ws, params.gatewayToken)
 
-    if (response.status === 404) {
-      await sleep(500)
-      continue
-    }
-
-    if (!response.ok) {
-      throw new Error(
-        `Failed to stream OpenClaw session history: ${response.status} ${await response.text()}`
-      )
-    }
-
-    if (!response.body) {
-      throw new Error('OpenClaw session history stream was empty.')
-    }
-
-    const text = await waitForAssistantMessageFromHistoryStream({
-      stream: response.body,
-      baselineSeq: params.baselineSeq,
-      onText: params.onText,
+    assistantText = await runGatewayAgentStream(ws, {
+      message: params.message,
+      sessionKey: params.sessionKey,
+      model: params.model,
+      onText: (delta) => {
+        if (!delta) return
+        assistantText += delta
+        params.onText(delta)
+      },
     })
-
-    if (text) {
-      return text
-    }
-  }
-
-  throw new Error('OpenClaw accepted the webhook request but did not append an assistant reply.')
-}
-
-async function waitForAssistantMessageFromHistoryStream(params: {
-  stream: ReadableStream<Uint8Array>
-  baselineSeq: number
-  onText: (delta: string) => void
-}): Promise<string | null> {
-  const reader = params.stream.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let emittedText = ''
-
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) {
-        return emittedText || null
-      }
-
-      buffer += decoder.decode(value, { stream: true })
-      const events = buffer.split('\n\n')
-      buffer = events.pop() ?? ''
-
-      for (const event of events) {
-        const parsed = parseSessionHistoryEvent(event)
-        if (!parsed) {
-          continue
-        }
-
-        const assistantMessage = findAssistantMessageAfterSeq(parsed.data, params.baselineSeq)
-        if (!assistantMessage) {
-          continue
-        }
-
-        const nextText = extractTranscriptMessageText(assistantMessage)
-        if (!nextText) {
-          continue
-        }
-
-        const delta = nextText.startsWith(emittedText) ? nextText.slice(emittedText.length) : nextText
-        if (delta) {
-          params.onText(delta)
-        }
-        emittedText = nextText
-        return emittedText
-      }
-    }
   } finally {
-    reader.releaseLock()
-  }
-}
-
-function parseSessionHistoryEvent(rawEvent: string): SessionHistoryEvent | null {
-  const lines = rawEvent.split('\n')
-  const eventName = lines
-    .find((line) => line.startsWith('event:'))
-    ?.slice(6)
-    .trim()
-  const data = lines
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trim())
-    .join('\n')
-
-  if (!eventName || !data) {
-    return null
+    ws.close()
   }
 
-  try {
-    return {
-      event: eventName,
-      data: JSON.parse(data),
-    }
-  } catch {
-    return null
-  }
+  return assistantText
 }
 
 function normalizeTranscriptMessages(payload: SessionHistoryResponse): OpenClawTranscriptMessage[] {
@@ -570,18 +435,6 @@ function findAssistantMessageAfterSeq(
   return latestAssistant
 }
 
-function extractTranscriptMessageText(message: OpenClawTranscriptMessage | null | undefined): string {
-  if (!message || !Array.isArray(message.content)) {
-    return ''
-  }
-
-  return message.content
-    .filter((part) => part.type === 'text' && typeof part.text === 'string')
-    .map((part) => part.text || '')
-    .join('')
-    .trim()
-}
-
 function getComputerSessionKey(userId: string, computerId: string): string {
   return `hook:computer:v1:${userId}:${computerId}`
 }
@@ -589,6 +442,350 @@ function getComputerSessionKey(userId: string, computerId: string): string {
 function resolveOpenClawModelRef(modelId: string): string | null {
   const model = getModel(modelId)
   return model?.openClawRef ?? null
+}
+
+async function openGatewaySocket(ip: string): Promise<WebSocket> {
+  const ws = new WebSocket(`ws://${ip}:18789`)
+  await new Promise<void>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      cleanup()
+      reject(new Error('Timed out opening OpenClaw gateway websocket.'))
+    }, 30_000)
+
+    const cleanup = () => {
+      clearTimeout(timeoutId)
+      ws.removeEventListener('open', handleOpen)
+      ws.removeEventListener('error', handleError)
+    }
+
+    const handleOpen = () => {
+      cleanup()
+      resolve()
+    }
+
+    const handleError = () => {
+      cleanup()
+      reject(new Error('Failed to open OpenClaw gateway websocket.'))
+    }
+
+    ws.addEventListener('open', handleOpen, { once: true })
+    ws.addEventListener('error', handleError, { once: true })
+  })
+  return ws
+}
+
+async function connectGatewaySocket(ws: WebSocket, gatewayToken: string): Promise<void> {
+  const response = await waitForGatewayResponse(ws, {
+    requestId: crypto.randomUUID(),
+    params: {
+      minProtocol: GATEWAY_PROTOCOL_VERSION,
+      maxProtocol: GATEWAY_PROTOCOL_VERSION,
+      client: {
+        id: 'gateway-client',
+        version: '1.0.0',
+        platform: 'overlay-nextjs',
+        mode: 'backend',
+      },
+      role: 'operator',
+      scopes: ['operator.admin', 'operator.read', 'operator.write'],
+      auth: {
+        token: gatewayToken,
+      },
+    },
+    method: 'connect',
+  })
+
+  const payload =
+    response.payload && typeof response.payload === 'object'
+      ? (response.payload as { type?: string })
+      : null
+
+  if (payload?.type !== 'hello-ok') {
+    throw new Error('OpenClaw gateway websocket handshake failed.')
+  }
+}
+
+async function runGatewayAgentStream(
+  ws: WebSocket,
+  params: {
+    message: string
+    sessionKey: string
+    model?: string | null
+    onText: (delta: string) => void
+  }
+): Promise<string> {
+  const requestId = crypto.randomUUID()
+  const idempotencyKey = crypto.randomUUID()
+  let assistantText = ''
+
+  return await new Promise<string>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      cleanup()
+      reject(new Error('OpenClaw request timed out after 4 minutes.'))
+    }, 240_000)
+    let runId: string | null = null
+    let accepted = false
+
+    const cleanup = () => {
+      clearTimeout(timeoutId)
+      ws.removeEventListener('message', handleMessage)
+      ws.removeEventListener('error', handleError)
+      ws.removeEventListener('close', handleClose)
+    }
+
+    const finish = (value: string) => {
+      cleanup()
+      resolve(value)
+    }
+
+    const fail = (error: Error) => {
+      cleanup()
+      reject(error)
+    }
+
+    const handleError = () => {
+      fail(new Error('OpenClaw gateway websocket errored during the run.'))
+    }
+
+    const handleClose = () => {
+      fail(new Error('OpenClaw gateway websocket closed before the run completed.'))
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const frame = parseGatewayFrame(event.data)
+      if (!frame) {
+        return
+      }
+
+      if (isGatewayEventFrame(frame) && frame.event === 'agent') {
+        const payload = frame.payload
+        if (!accepted || !runId || payload?.runId !== runId) {
+          return
+        }
+
+        if (payload.stream === 'assistant') {
+          const delta = extractGatewayAssistantDelta(payload, assistantText)
+          if (!delta) {
+            return
+          }
+          assistantText += delta
+          params.onText(delta)
+        }
+        return
+      }
+
+      if (!isGatewayResponseFrame(frame) || frame.id !== requestId) {
+        return
+      }
+
+      if (!accepted) {
+        if (!frame.ok) {
+          fail(buildGatewayResponseError(frame, 'OpenClaw rejected the chat request.'))
+          return
+        }
+
+        const payload =
+          frame.payload && typeof frame.payload === 'object'
+            ? (frame.payload as GatewayAgentAcceptedPayload)
+            : null
+        const nextRunId = payload?.runId?.trim()
+        if (!nextRunId) {
+          fail(new Error('OpenClaw did not return a run ID for this chat request.'))
+          return
+        }
+
+        runId = nextRunId
+        accepted = true
+        return
+      }
+
+      if (!frame.ok) {
+        fail(buildGatewayResponseError(frame, 'OpenClaw run failed.'))
+        return
+      }
+
+      const payload =
+        frame.payload && typeof frame.payload === 'object'
+          ? (frame.payload as GatewayAgentFinalPayload)
+          : null
+
+      if (payload?.status === 'error') {
+        fail(new Error(payload.summary || 'OpenClaw run failed.'))
+        return
+      }
+
+      if (!assistantText) {
+        const resultText = extractGatewayResultText(payload?.result)
+        if (resultText) {
+          assistantText = resultText
+          params.onText(resultText)
+        }
+      }
+
+      finish(assistantText.trim())
+    }
+
+    ws.addEventListener('message', handleMessage)
+    ws.addEventListener('error', handleError)
+    ws.addEventListener('close', handleClose)
+
+    ws.send(
+      JSON.stringify({
+        type: 'req',
+        id: requestId,
+        method: 'agent',
+        params: {
+          message: params.message,
+          sessionKey: params.sessionKey,
+          deliver: false,
+          timeout: 240,
+          idempotencyKey,
+          ...(params.model ? { model: params.model } : {}),
+        },
+      })
+    )
+  })
+}
+
+async function waitForGatewayResponse(
+  ws: WebSocket,
+  params: {
+    method: string
+    requestId: string
+    params?: unknown
+  }
+): Promise<GatewayResponseFrame> {
+  return await new Promise<GatewayResponseFrame>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      cleanup()
+      reject(new Error(`Timed out waiting for OpenClaw websocket response to ${params.method}.`))
+    }, 30_000)
+
+    const cleanup = () => {
+      clearTimeout(timeoutId)
+      ws.removeEventListener('message', handleMessage)
+      ws.removeEventListener('error', handleError)
+      ws.removeEventListener('close', handleClose)
+    }
+
+    const handleError = () => {
+      cleanup()
+      reject(new Error(`OpenClaw websocket errored during ${params.method}.`))
+    }
+
+    const handleClose = () => {
+      cleanup()
+      reject(new Error(`OpenClaw websocket closed during ${params.method}.`))
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const frame = parseGatewayFrame(event.data)
+      if (!frame || !isGatewayResponseFrame(frame) || frame.id !== params.requestId) {
+        return
+      }
+      cleanup()
+      if (!frame.ok) {
+        reject(buildGatewayResponseError(frame, `OpenClaw ${params.method} request failed.`))
+        return
+      }
+      resolve(frame)
+    }
+
+    ws.addEventListener('message', handleMessage)
+    ws.addEventListener('error', handleError)
+    ws.addEventListener('close', handleClose)
+    ws.send(
+      JSON.stringify({
+        type: 'req',
+        id: params.requestId,
+        method: params.method,
+        params: params.params,
+      })
+    )
+  })
+}
+
+function parseGatewayFrame(rawData: unknown): GatewayResponseFrame | GatewayEventFrame | null {
+  if (typeof rawData === 'string') {
+    return parseGatewayFrameText(rawData)
+  }
+
+  if (rawData instanceof ArrayBuffer) {
+    return parseGatewayFrameText(new TextDecoder().decode(rawData))
+  }
+
+  if (ArrayBuffer.isView(rawData)) {
+    return parseGatewayFrameText(
+      new TextDecoder().decode(rawData.buffer.slice(rawData.byteOffset, rawData.byteOffset + rawData.byteLength))
+    )
+  }
+
+  return null
+}
+
+function parseGatewayFrameText(text: string): GatewayResponseFrame | GatewayEventFrame | null {
+  if (!text.trim()) {
+    return null
+  }
+
+  try {
+    return JSON.parse(text) as GatewayResponseFrame | GatewayEventFrame
+  } catch {
+    return null
+  }
+}
+
+function isGatewayResponseFrame(frame: GatewayResponseFrame | GatewayEventFrame): frame is GatewayResponseFrame {
+  return frame.type === 'res'
+}
+
+function isGatewayEventFrame(frame: GatewayResponseFrame | GatewayEventFrame): frame is GatewayEventFrame {
+  return frame.type === 'event'
+}
+
+function extractGatewayAssistantDelta(
+  payload: GatewayAgentEventPayload,
+  accumulatedText: string
+): string {
+  const delta = payload.data?.delta
+  if (typeof delta === 'string' && delta.length > 0) {
+    return delta
+  }
+
+  const text = payload.data?.text
+  if (typeof text !== 'string' || text.length === 0) {
+    return ''
+  }
+
+  if (accumulatedText && text.startsWith(accumulatedText)) {
+    return text.slice(accumulatedText.length)
+  }
+
+  return text
+}
+
+function extractGatewayResultText(result: unknown): string {
+  if (!result || typeof result !== 'object') {
+    return ''
+  }
+
+  const payloads = Array.isArray((result as { payloads?: unknown[] }).payloads)
+    ? (result as { payloads: Array<{ text?: unknown }> }).payloads
+    : []
+
+  return payloads
+    .map((payload) => (typeof payload?.text === 'string' ? payload.text : ''))
+    .join('\n')
+    .trim()
+}
+
+function buildGatewayResponseError(frame: GatewayResponseFrame, fallbackMessage: string): Error {
+  const payload =
+    frame.payload && typeof frame.payload === 'object'
+      ? (frame.payload as { summary?: string; status?: string })
+      : null
+
+  return new Error(payload?.summary || frame.error?.message || fallbackMessage)
 }
 
 async function readGatewaySessionModel(params: {
@@ -678,10 +875,6 @@ function parseModelFromStatusText(statusText: string): { provider?: string; mode
     provider: rawLabel.slice(0, slashIndex).trim() || undefined,
     model: rawLabel.slice(slashIndex + 1).trim() || undefined,
   }
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function getErrorMessage(error: unknown): string {

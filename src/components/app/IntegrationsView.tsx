@@ -28,9 +28,8 @@ const INTEGRATIONS: Integration[] = [
 // ── Logo component ─────────────────────────────────────────────────────────────
 
 function IntegrationLogo({ logoUrl, name, size = 28 }: { logoUrl?: string | null; name: string; icon?: string; size?: number }) {
-  const [hasError, setHasError] = useState(false)
-
-  useEffect(() => { setHasError(false) }, [logoUrl])
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null)
+  const hasError = !logoUrl || failedLogoUrl === logoUrl
 
   return (
     <span
@@ -44,7 +43,7 @@ function IntegrationLogo({ logoUrl, name, size = 28 }: { logoUrl?: string | null
           width={size - 10}
           height={size - 10}
           className="object-contain"
-          onError={() => setHasError(true)}
+          onError={() => setFailedLogoUrl(logoUrl)}
         />
       ) : (
         <span className="text-xs font-bold text-[#525252]">{name.charAt(0).toUpperCase()}</span>

@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/.next.stale.*/
 /out/
 
 # production
@@ -42,3 +43,4 @@ next-env.d.ts
 
 archives/*
 openclaw/*
+.env*.local

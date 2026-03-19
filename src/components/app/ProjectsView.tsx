@@ -18,15 +18,28 @@ function ProjectFileView({ fileId }: { fileId: string }) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    setLoading(true)
-    fetch(`/api/app/files?fileId=${fileId}`)
-      .then((r) => r.json())
-      .then((data) => {
-        setFile(data)
-        setFileContent(data.content ?? '')
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
+    let cancelled = false
+    const timeoutId = setTimeout(() => {
+      setLoading(true)
+      fetch(`/api/app/files?fileId=${fileId}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (cancelled) return
+          setFile(data)
+          setFileContent(data.content ?? '')
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false)
+          }
+        })
+    }, 0)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timeoutId)
+    }
   }, [fileId])
 
   function handleContentChange(val: string) {

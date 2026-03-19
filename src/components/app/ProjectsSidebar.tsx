@@ -670,7 +670,7 @@ export default function ProjectsSidebar() {
                   project={project}
                   allProjects={projects}
                   depth={0}
-                  selectedId={selectedProject?._id ?? null}
+                  selectedId={null}
                   expandedIds={expandedIds}
                   onNavigate={handleNavigate}
                   onToggle={toggleExpanded}

@@ -112,7 +112,11 @@ export default function AppSidebar({ user, accessToken }: { user: AuthUser; acce
   }, [])
 
   useEffect(() => {
-    if (accountMenuOpen) loadEntitlements()
+    if (!accountMenuOpen) return
+    const timeoutId = window.setTimeout(() => {
+      void loadEntitlements()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [accountMenuOpen, loadEntitlements])
 
   // Close menu on outside click
