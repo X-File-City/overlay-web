@@ -2,7 +2,7 @@
 
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { FileText, Music, Video, FileQuestion, Download } from 'lucide-react'
+import { FileText, Music, FileQuestion, Download } from 'lucide-react'
 
 // ─── Type detection ───────────────────────────────────────────────────────────
 
@@ -24,7 +24,8 @@ export function getFileType(filename: string): FileViewerType {
 }
 
 export function isEditableType(filename: string): boolean {
-  return getFileType(filename) === 'text'
+  const type = getFileType(filename)
+  return type === 'text' || type === 'markdown'
 }
 
 /** Read a File object as the right content string (text or base64 data URL) */
@@ -130,7 +131,6 @@ export function FileViewer({ name, content }: { name: string; content: string })
           <Music size={28} className="text-[#888]" />
         </div>
         <p className="text-sm font-medium text-[#525252]">{name}</p>
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <audio controls src={content} className="w-full max-w-lg" />
       </div>
     )
@@ -139,7 +139,6 @@ export function FileViewer({ name, content }: { name: string; content: string })
   if (type === 'video') {
     return (
       <div className="flex-1 flex items-center justify-center overflow-hidden p-4 bg-black">
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <video controls src={content} className="max-w-full max-h-full" />
       </div>
     )
@@ -205,7 +204,7 @@ export function FileViewerPanel({
   onContentChange?: (val: string) => void
 }) {
   const type = getFileType(name)
-  const editable = isEditable && type === 'text' && onContentChange
+  const editable = isEditable && (type === 'text' || type === 'markdown') && onContentChange
 
   return (
     <>

@@ -59,6 +59,14 @@ export default function ComputerWorkspaceFileView({
           content: value,
         }),
       })
+      window.dispatchEvent(
+        new CustomEvent('overlay:computer-workspace-updated', {
+          detail: {
+            computerId,
+            fileName: file.name,
+          },
+        })
+      )
       setIsSaving(false)
     }, 800)
   }

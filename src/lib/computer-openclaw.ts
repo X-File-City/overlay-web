@@ -42,6 +42,11 @@ interface GatewaySessionsPatchPayload {
   }
 }
 
+interface GatewaySessionsDeletePayload {
+  ok?: boolean
+  deleted?: boolean
+}
+
 interface GatewayErrorShape {
   message?: string
 }
@@ -449,11 +454,11 @@ export async function updateComputerSession(params: {
 
   const resolvedModelId =
     params.modelId?.trim() ||
+    context.computer.chatRequestedModelId?.trim() ||
     resolveOverlayModelIdFromGatewayModel(
       latestSessionModel?.provider,
       latestSessionModel?.model
     ) ||
-    context.computer.chatRequestedModelId?.trim() ||
     DEFAULT_MODEL_ID
   const resolvedModelRef =
     resolveOpenClawModelRef(resolvedModelId) ??
@@ -482,6 +487,92 @@ export async function updateComputerSession(params: {
     requestedModelRef: resolvedModelRef,
     effectiveProvider: latestSessionModel?.provider ?? null,
     effectiveModel: latestSessionModel?.model ?? null,
+  }
+}
+
+export async function deleteComputerSession(params: {
+  computerId: string
+  sessionKey: string
+}): Promise<{
+  deleted: boolean
+  deletedSessionKey: string
+  sessionKey: string | null
+  requestedModelId: string | null
+  requestedModelRef: string | null
+  effectiveProvider: string | null
+  effectiveModel: string | null
+}> {
+  const context = await getAuthenticatedComputerContext(params.computerId)
+  const deletedSessionKey = params.sessionKey.trim()
+
+  const deleted = await callGatewayRequest<GatewaySessionsDeletePayload>({
+    ip: context.connection.hetznerServerIp,
+    gatewayToken: context.connection.gatewayToken,
+    method: 'sessions.delete',
+    params: {
+      key: deletedSessionKey,
+      deleteTranscript: true,
+    },
+  })
+
+  const isActiveSession = context.computer.chatSessionKey?.trim() === deletedSessionKey
+  if (!deleted?.deleted) {
+    return {
+      deleted: false,
+      deletedSessionKey,
+      sessionKey: context.computer.chatSessionKey?.trim() || null,
+      requestedModelId: context.computer.chatRequestedModelId?.trim() || null,
+      requestedModelRef: context.computer.chatRequestedModelRef?.trim() || null,
+      effectiveProvider: context.computer.chatEffectiveProvider?.trim() || null,
+      effectiveModel: context.computer.chatEffectiveModel?.trim() || null,
+    }
+  }
+
+  if (!isActiveSession) {
+    return {
+      deleted: true,
+      deletedSessionKey,
+      sessionKey: context.computer.chatSessionKey?.trim() || null,
+      requestedModelId: context.computer.chatRequestedModelId?.trim() || null,
+      requestedModelRef: context.computer.chatRequestedModelRef?.trim() || null,
+      effectiveProvider: context.computer.chatEffectiveProvider?.trim() || null,
+      effectiveModel: context.computer.chatEffectiveModel?.trim() || null,
+    }
+  }
+
+  const remainingSessions = await listComputerSessions(params.computerId)
+  const nextSession = remainingSessions.sessions[0]
+
+  if (nextSession) {
+    const runtime = await updateComputerSession({
+      computerId: params.computerId,
+      sessionKey: nextSession.key,
+    })
+
+    return {
+      deleted: true,
+      deletedSessionKey,
+      sessionKey: runtime.sessionKey,
+      requestedModelId: runtime.requestedModelId,
+      requestedModelRef: runtime.requestedModelRef,
+      effectiveProvider: runtime.effectiveProvider,
+      effectiveModel: runtime.effectiveModel,
+    }
+  }
+
+  const runtime = await createComputerSession({
+    computerId: params.computerId,
+    modelId: context.computer.chatRequestedModelId?.trim() || DEFAULT_MODEL_ID,
+  })
+
+  return {
+    deleted: true,
+    deletedSessionKey,
+    sessionKey: runtime.sessionKey,
+    requestedModelId: runtime.requestedModelId,
+    requestedModelRef: runtime.requestedModelRef,
+    effectiveProvider: runtime.effectiveProvider,
+    effectiveModel: runtime.effectiveModel,
   }
 }
 

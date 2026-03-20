@@ -56,6 +56,14 @@ interface ComputerSession {
   updatedAt: number | null
 }
 
+interface ComputerSessionsEventDetail {
+  computerId?: string
+  type?: 'created' | 'updated' | 'deleted'
+  sessionKey?: string
+  deletedSessionKey?: string
+  title?: string
+}
+
 const OPENCLAW_SLASH_COMMANDS = [
   { command: '/help', description: 'Show command help' },
   { command: '/commands', description: 'List available commands' },
@@ -154,6 +162,20 @@ async function generateTitle(text: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+function dispatchComputerSessionsUpdated(detail: {
+  computerId: string
+  type?: 'created' | 'updated' | 'deleted'
+  sessionKey?: string
+  deletedSessionKey?: string
+  title?: string
+}) {
+  window.dispatchEvent(
+    new CustomEvent<ComputerSessionsEventDetail>('overlay:computer-sessions-updated', {
+      detail,
+    })
+  )
 }
 
 function ProvisioningView({ step, logs }: { step?: string; logs: LogEvent[] }) {
@@ -272,7 +294,19 @@ export default function ComputerDetailClient({
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [hydratedTranscriptKey, setHydratedTranscriptKey] = useState<string | null>(null)
   const [isCreatingSession, setIsCreatingSession] = useState(false)
+  const [input, setInput] = useState('')
+  const [activeSlashIndex, setActiveSlashIndex] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const selectedModelRef = useRef(selectedModel)
+  const activeSessionKeyRef = useRef(activeSessionKey)
+
+  useEffect(() => {
+    selectedModelRef.current = selectedModel
+  }, [selectedModel])
+
+  useEffect(() => {
+    activeSessionKeyRef.current = activeSessionKey
+  }, [activeSessionKey])
 
   const transport = useMemo(
     () =>
@@ -283,12 +317,12 @@ export default function ComputerDetailClient({
             ...body,
             messages,
             computerId,
-            modelId: selectedModel,
-            sessionKey: activeSessionKey,
+            modelId: selectedModelRef.current,
+            sessionKey: activeSessionKeyRef.current,
           },
         }),
       }),
-    [activeSessionKey, computerId, selectedModel]
+    [computerId]
   )
 
   const { messages, sendMessage, setMessages, status, stop, error } = useChat({ transport })
@@ -343,7 +377,10 @@ export default function ComputerDetailClient({
     setHydratedTranscriptKey(sessionKey)
   }, [computerId, setMessages])
 
-  const syncComputerRuntime = useCallback((payload: ModelUpdateResponse) => {
+  const syncComputerRuntime = useCallback((
+    payload: ModelUpdateResponse,
+    options?: { emitEvent?: boolean; eventType?: 'created' | 'updated' | 'deleted' }
+  ) => {
     setComputer((current) => {
       if (!current) return current
       return {
@@ -358,7 +395,14 @@ export default function ComputerDetailClient({
     })
     setSelectedModel(payload.requestedModelId)
     setActiveSessionKey(payload.sessionKey)
-  }, [])
+    if (options?.emitEvent !== false) {
+      dispatchComputerSessionsUpdated({
+        computerId,
+        type: options?.eventType ?? 'updated',
+        sessionKey: payload.sessionKey,
+      })
+    }
+  }, [computerId])
 
   const refreshSessions = useCallback(async (preferredSessionKey?: string | null) => {
     const data = await loadSessions()
@@ -400,44 +444,88 @@ export default function ComputerDetailClient({
       }),
     })
     setActiveSessionTitle(title)
+    setSessions((current) =>
+      current.map((session) => (
+        session.key === sessionKey
+          ? { ...session, title, updatedAt: Date.now() }
+          : session
+      ))
+    )
+    dispatchComputerSessionsUpdated({
+      computerId,
+      type: 'updated',
+      sessionKey,
+      title,
+    })
     await refreshSessions(sessionKey)
   }, [computerId, refreshSessions])
+
+  const requestNewSession = useCallback(async () => {
+    const response = await fetch('/api/app/computer-sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        computerId,
+        modelId: selectedModelRef.current,
+      }),
+    })
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null
+      throw new Error(payload?.error || 'Failed to create chat')
+    }
+
+    return await response.json() as ModelUpdateResponse
+  }, [computerId])
+
+  const applyCreatedSession = useCallback((payload: ModelUpdateResponse, options?: { replace?: boolean }) => {
+    syncComputerRuntime(payload, { emitEvent: false })
+    setMessages([])
+    setInput('')
+    setActiveSessionTitle('New Chat')
+    setSessions((current) => [
+      {
+        key: payload.sessionKey,
+        title: 'New Chat',
+        updatedAt: Date.now(),
+      },
+      ...current.filter((session) => session.key !== payload.sessionKey),
+    ])
+    setHydratedTranscriptKey(null)
+    dispatchComputerSessionsUpdated({
+      computerId,
+      type: 'created',
+      sessionKey: payload.sessionKey,
+      title: 'New Chat',
+    })
+
+    const href = `/app/computer/${computerId}?view=session&sessionKey=${encodeURIComponent(payload.sessionKey)}`
+    if (options?.replace) {
+      router.replace(href)
+      return
+    }
+    router.push(href)
+  }, [computerId, router, setMessages, syncComputerRuntime])
 
   const createNewSession = useCallback(async () => {
     if (isLoading || isCreatingSession) return
     setIsCreatingSession(true)
     try {
-      const response = await fetch('/api/app/computer-sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          computerId,
-          modelId: selectedModel,
-        }),
-      })
-      if (!response.ok) return
-      const payload = await response.json() as ModelUpdateResponse
-      syncComputerRuntime(payload)
-      setMessages([])
-      setInput('')
-      setActiveSessionTitle('New Chat')
-      setHydratedTranscriptKey(null)
-      router.push(`/app/computer/${computerId}?view=session&sessionKey=${encodeURIComponent(payload.sessionKey)}`)
-      await fetchComputer()
-      await refreshSessions(payload.sessionKey)
+      const payload = await requestNewSession()
+      applyCreatedSession(payload)
+      await loadSessions()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to create chat'
+      window.alert(message)
     } finally {
       setIsCreatingSession(false)
     }
   }, [
-    computerId,
-    fetchComputer,
+    applyCreatedSession,
     isCreatingSession,
     isLoading,
-    refreshSessions,
-    router,
-    selectedModel,
-    setMessages,
-    syncComputerRuntime,
+    loadSessions,
+    requestNewSession,
   ])
 
   useEffect(() => {
@@ -493,19 +581,9 @@ export default function ComputerDetailClient({
       if (!isCreatingSession) {
         setIsCreatingSession(true)
         try {
-          const response = await fetch('/api/app/computer-sessions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ computerId, modelId: selectedModel }),
-          })
-          if (!response.ok) return
-          const payload = await response.json()
-          const createdSessionKey = payload.sessionKey as string | undefined
-          if (!createdSessionKey || cancelled) return
-          setActiveSessionKey(createdSessionKey)
-          setActiveSessionTitle('New Chat')
-          router.replace(`/app/computer/${computerId}?view=session&sessionKey=${encodeURIComponent(createdSessionKey)}`)
-          await fetchComputer()
+          const payload = await requestNewSession()
+          if (cancelled) return
+          applyCreatedSession(payload, { replace: true })
           await loadSessions()
         } finally {
           if (!cancelled) {
@@ -523,14 +601,12 @@ export default function ComputerDetailClient({
   }, [
     computer?.chatSessionKey,
     computer?.status,
-    computerId,
-    fetchComputer,
+    applyCreatedSession,
     isCreatingSession,
     isWorkspaceFileView,
     loadSessions,
     requestedSessionKey,
-    router,
-    selectedModel,
+    requestNewSession,
   ])
 
   useEffect(() => {
@@ -554,6 +630,56 @@ export default function ComputerDetailClient({
     if (requestedSessionKey === computer.chatSessionKey) return
     void selectSession(requestedSessionKey)
   }, [computer?.chatSessionKey, computer?.status, requestedSessionKey, selectSession])
+
+  useEffect(() => {
+    if (computer?.status !== 'ready') return
+
+    function handleSessionsUpdated(event: Event) {
+      const detail = (event as CustomEvent<ComputerSessionsEventDetail>).detail
+      if (detail?.computerId !== computerId) return
+
+      const nextSessionKey = detail.sessionKey?.trim() || null
+      const deletedSessionKey = detail.deletedSessionKey?.trim() || null
+      const deletingCurrentSession =
+        Boolean(deletedSessionKey) &&
+        (deletedSessionKey === requestedSessionKey || deletedSessionKey === activeSessionKey)
+      if (!deletingCurrentSession) {
+        return
+      }
+
+      void loadSessions().then((data) => {
+        if (!data) return
+
+        const resolvedSessionKey =
+          (deletingCurrentSession ? nextSessionKey : null) ||
+          requestedSessionKey ||
+          activeSessionKey ||
+          data.activeSessionKey ||
+          data.sessions[0]?.key ||
+          null
+
+        setMessages([])
+        setHydratedTranscriptKey(null)
+        setActiveSessionKey(resolvedSessionKey)
+        setActiveSessionTitle(
+          data.sessions.find((session) => session.key === resolvedSessionKey)?.title || 'New Chat'
+        )
+
+        if (resolvedSessionKey) {
+          router.replace(
+            `/app/computer/${computerId}?view=session&sessionKey=${encodeURIComponent(resolvedSessionKey)}`
+          )
+        } else {
+          router.replace(`/app/computer/${computerId}`)
+        }
+      })
+    }
+
+    window.addEventListener('overlay:computer-sessions-updated', handleSessionsUpdated)
+    return () => {
+      window.removeEventListener('overlay:computer-sessions-updated', handleSessionsUpdated)
+    }
+  }, [activeSessionKey, computer?.status, computerId, loadSessions, requestedSessionKey, router, setMessages])
 
   useEffect(() => {
     setMessages([])
@@ -596,7 +722,6 @@ export default function ComputerDetailClient({
       ? `${computer.chatEffectiveProvider}/${computer.chatEffectiveModel}`
       : computer?.chatRequestedModelRef || null
   const headerTitle = isWorkspaceFileView ? requestedFileName : activeSessionTitle || computer?.name || 'Computer'
-  const [input, setInput] = useState('')
   const slashMenuRef = useRef<HTMLDivElement>(null)
   const slashQuery = input.trimStart()
   const slashCommands = useMemo(() => {
@@ -617,7 +742,6 @@ export default function ComputerDetailClient({
       )
     })
   }, [slashQuery])
-  const [activeSlashIndex, setActiveSlashIndex] = useState(0)
   const showSlashCommands = slashCommands.length > 0 && slashQuery.startsWith('/')
 
   const insertSlashCommand = useCallback((command: string) => {
@@ -666,10 +790,25 @@ export default function ComputerDetailClient({
 
   const submitMessage = useCallback(async () => {
     const text = input.trim()
-    if (!text || isLoading || !activeSessionKey) return
+    const currentSessionKey = activeSessionKeyRef.current
+    const currentModelId = selectedModelRef.current
+    if (!text || isLoading || !currentSessionKey) return
     const isFirstMessageInSession = !messages.some((message) => message.role === 'user')
 
     setInput('')
+    setSessions((current) => {
+      const existing = current.find((session) => session.key === currentSessionKey)
+      if (!existing) return current
+      return [
+        { ...existing, updatedAt: Date.now() },
+        ...current.filter((session) => session.key !== currentSessionKey),
+      ]
+    })
+    dispatchComputerSessionsUpdated({
+      computerId,
+      type: 'updated',
+      sessionKey: currentSessionKey,
+    })
     await sendMessage(
       {
         role: 'user',
@@ -678,21 +817,20 @@ export default function ComputerDetailClient({
       {
         body: {
           computerId,
-          modelId: selectedModel,
-          sessionKey: activeSessionKey,
+          modelId: currentModelId,
+          sessionKey: currentSessionKey,
         },
       }
     )
     if (isFirstMessageInSession) {
       void generateTitle(text).then((title) => {
         if (!title) return
-        void renameSession(activeSessionKey, title)
+        void renameSession(currentSessionKey, title)
       })
     }
     await fetchComputer()
-    await refreshSessions(activeSessionKey)
+    await refreshSessions(currentSessionKey)
   }, [
-    activeSessionKey,
     computerId,
     fetchComputer,
     input,
@@ -700,7 +838,6 @@ export default function ComputerDetailClient({
     messages,
     refreshSessions,
     renameSession,
-    selectedModel,
     sendMessage,
   ])
 
@@ -904,7 +1041,7 @@ export default function ComputerDetailClient({
                   {showSlashCommands && (
                     <div
                       ref={slashMenuRef}
-                      className="absolute bottom-full left-0 right-0 mb-2 max-h-[22rem] overflow-y-auto overscroll-contain rounded-2xl border border-[#e5e5e5] bg-white p-2 shadow-lg"
+                      className="absolute bottom-full left-0 right-0 mb-2 max-h-[15.75rem] overflow-y-auto overscroll-contain rounded-2xl border border-[#e5e5e5] bg-white p-2 shadow-lg"
                     >
                       <div className="sticky top-0 z-10 mb-2 flex items-center gap-2 border-b border-[#f0f0f0] bg-white px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-[#8a8a8a]">
                         <Terminal size={12} />
@@ -916,12 +1053,14 @@ export default function ComputerDetailClient({
                           type="button"
                           data-command-index={index}
                           onClick={() => insertSlashCommand(entry.command)}
-                          className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-3 rounded-xl px-3 py-2 text-left transition-colors ${
+                          className={`grid min-h-11 w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-4 rounded-xl px-3 py-2 text-left transition-colors ${
                             index === activeSlashIndex ? 'bg-[#f5f5f5]' : 'hover:bg-[#fafafa]'
                           }`}
                         >
-                          <span className="min-w-0 text-[11px] text-[#8a8a8a]">{entry.description}</span>
                           <span className="whitespace-nowrap text-xs font-medium text-[#0a0a0a]">{entry.command}</span>
+                          <span className="min-w-0 truncate text-right text-[11px] text-[#8a8a8a]">
+                            {entry.description}
+                          </span>
                         </button>
                       ))}
                     </div>

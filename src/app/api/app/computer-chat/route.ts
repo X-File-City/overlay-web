@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
       persistedSessionKey?.trim() ||
       getComputerSessionKey(userId, computerId)
     const selectedModelId =
-      persistedRequestedModelId?.trim() || modelId?.trim() || DEFAULT_MODEL_ID
+      modelId?.trim() || persistedRequestedModelId?.trim() || DEFAULT_MODEL_ID
     const requestedModelRef =
       resolveOpenClawModelRef(selectedModelId) ?? resolveOpenClawModelRef(DEFAULT_MODEL_ID)
     let sessionModelBefore = await readGatewaySessionModel({
@@ -287,8 +287,8 @@ export async function POST(request: NextRequest) {
               sessionKey: latestSessionModel?.sessionKey ?? sessionKey,
               requestedModelId: selectedModelId,
               requestedModelRef: requestedModelRef ?? undefined,
-              effectiveProvider: latestAssistantMessage?.provider ?? latestSessionModel?.provider,
-              effectiveModel: latestAssistantMessage?.model ?? latestSessionModel?.model,
+            effectiveProvider: latestSessionModel?.provider ?? latestAssistantMessage?.provider,
+            effectiveModel: latestSessionModel?.model ?? latestAssistantMessage?.model,
             },
             { throwOnError: true, timeoutMs: 30_000 }
           )
@@ -491,46 +491,14 @@ function buildHookMessage(params: {
   latestUserText: string
   sessionHasConversationHistory: boolean
 }): string {
+  void params.messages
+  void params.sessionHasConversationHistory
+
   if (isStandaloneCommandMessage(params.latestUserText)) {
     return params.latestUserText
   }
 
-  if (params.sessionHasConversationHistory) {
-    return params.latestUserText
-  }
-
-  const transcript = params.messages
-    .map((message) => {
-      const text = extractTextFromUiMessage(message)
-      if (!text) {
-        return null
-      }
-
-      if (message.role === 'user') {
-        return `User: ${text}`
-      }
-      if (message.role === 'assistant') {
-        return `Assistant: ${text}`
-      }
-      if (message.role === 'system') {
-        return `System: ${text}`
-      }
-      return null
-    })
-    .filter((line): line is string => Boolean(line))
-    .join('\n\n')
-    .trim()
-
-  if (!transcript || transcript === `User: ${params.latestUserText}`) {
-    return params.latestUserText
-  }
-
-  return [
-    'Use the following transcript as prior conversation context and continue naturally.',
-    'Respond only to the latest user message.',
-    '',
-    transcript,
-  ].join('\n')
+  return params.latestUserText
 }
 
 async function fetchSessionHistorySnapshot(params: {

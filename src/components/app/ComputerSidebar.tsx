@@ -42,6 +42,14 @@ interface ComputerTreeData {
   sessions: SessionItem[]
 }
 
+interface ComputerSessionsEventDetail {
+  computerId?: string
+  type?: 'created' | 'updated' | 'deleted'
+  sessionKey?: string
+  deletedSessionKey?: string
+  title?: string
+}
+
 const STATUS_COLORS: Record<ComputerStatus, string> = {
   pending_payment: 'text-[#f5a623]',
   provisioning: 'text-[#f5a623]',
@@ -120,52 +128,153 @@ function ComputerNode({
   onDelete: (computerId: string, computerName: string, event: React.MouseEvent) => void
 }) {
   const router = useRouter()
-  const [details, setDetails] = useState<ComputerTreeData | null>(null)
-  const [loadingDetails, setLoadingDetails] = useState(false)
+  const [details, setDetails] = useState<ComputerTreeData>({
+    activeSessionKey: null,
+    files: [],
+    sessions: [],
+  })
+  const [hasLoadedDetails, setHasLoadedDetails] = useState(false)
+  const [loadingInitialDetails, setLoadingInitialDetails] = useState(false)
+  const [deletingSessionKey, setDeletingSessionKey] = useState<string | null>(null)
+  const [workspaceOpen, setWorkspaceOpen] = useState(true)
+  const [sessionsOpen, setSessionsOpen] = useState(true)
 
   const isComputerRoute = pathname === `/app/computer/${computer._id}`
   const currentView = searchParams.get('view')
   const currentFile = searchParams.get('file')
   const currentSessionKey = searchParams.get('sessionKey')
-  const activeSessionKey = currentSessionKey || details?.activeSessionKey || null
+  const activeSessionKey = currentSessionKey || details.activeSessionKey || null
   const computerRowActive = isComputerRoute && !currentView && !activeSessionKey
 
+  const refreshWorkspace = useCallback(async () => {
+    const response = await fetch(`/api/app/computer-workspace?computerId=${computer._id}`)
+    const payload = response.ok ? await response.json() : null
+    setDetails((current) => ({
+      ...current,
+      files: Array.isArray(payload?.files) ? payload.files : current.files,
+    }))
+  }, [computer._id])
+
+  const refreshSessions = useCallback(async () => {
+    const response = await fetch(`/api/app/computer-sessions?computerId=${computer._id}`)
+    const payload = response.ok ? await response.json() : null
+    setDetails((current) => ({
+      ...current,
+      activeSessionKey:
+        typeof payload?.activeSessionKey === 'string'
+          ? payload.activeSessionKey
+          : current.activeSessionKey,
+      sessions: Array.isArray(payload?.sessions) ? payload.sessions : current.sessions,
+    }))
+  }, [computer._id])
+
   useEffect(() => {
-    if (!isOpen || details !== null) return
-    let cancelled = false
+    if (!isOpen) return
+    const isInitialLoad = !hasLoadedDetails
+    if (isInitialLoad) {
+      setLoadingInitialDetails(true)
+    }
 
-    async function loadDetails() {
-      setLoadingDetails(true)
-      try {
-        const [workspaceRes, sessionsRes] = await Promise.all([
-          fetch(`/api/app/computer-workspace?computerId=${computer._id}`),
-          fetch(`/api/app/computer-sessions?computerId=${computer._id}`),
-        ])
+    void Promise.all([refreshWorkspace(), refreshSessions()]).finally(() => {
+      setHasLoadedDetails(true)
+      if (isInitialLoad) {
+        setLoadingInitialDetails(false)
+      }
+    })
+  }, [hasLoadedDetails, isOpen, refreshSessions, refreshWorkspace])
 
-        if (cancelled) return
+  useEffect(() => {
+    if (!isOpen) return
 
-        const workspaceData = workspaceRes.ok ? await workspaceRes.json() : null
-        const sessionsData = sessionsRes.ok ? await sessionsRes.json() : null
-
-        if (!cancelled) {
-          setDetails({
-            activeSessionKey: sessionsData?.activeSessionKey ?? null,
-            files: Array.isArray(workspaceData?.files) ? workspaceData.files : [],
-            sessions: Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : [],
-          })
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingDetails(false)
-        }
+    function handleWorkspaceUpdate(event: Event) {
+      const detail = (event as CustomEvent<{ computerId?: string }>).detail
+      if (detail?.computerId === computer._id) {
+        void refreshWorkspace()
       }
     }
 
-    void loadDetails()
-    return () => {
-      cancelled = true
+    function handleSessionsUpdate(event: Event) {
+      const detail = (event as CustomEvent<ComputerSessionsEventDetail>).detail
+      if (detail?.computerId === computer._id) {
+        void refreshSessions()
+      }
     }
-  }, [computer._id, details, isOpen])
+
+    window.addEventListener('overlay:computer-workspace-updated', handleWorkspaceUpdate)
+    window.addEventListener('overlay:computer-sessions-updated', handleSessionsUpdate)
+    return () => {
+      window.removeEventListener('overlay:computer-workspace-updated', handleWorkspaceUpdate)
+      window.removeEventListener('overlay:computer-sessions-updated', handleSessionsUpdate)
+    }
+  }, [computer._id, isOpen, refreshSessions, refreshWorkspace])
+
+  const handleDeleteSession = useCallback(async (session: SessionItem, event: React.MouseEvent) => {
+    event.stopPropagation()
+
+    if (deletingSessionKey) return
+
+    const confirmed = window.confirm(
+      `Delete chat "${session.title}"?\n\nThis deletes the session entry and archives its transcript.`
+    )
+    if (!confirmed) return
+
+    setDeletingSessionKey(session.key)
+    try {
+      const response = await fetch(
+        `/api/app/computer-sessions?computerId=${computer._id}&sessionKey=${encodeURIComponent(session.key)}`,
+        { method: 'DELETE' }
+      )
+
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            error?: string
+            sessionKey?: string | null
+            deletedSessionKey?: string
+          }
+        | null
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to delete chat')
+      }
+
+      const nextSessionKey = payload?.sessionKey?.trim() || null
+
+      setDetails((current) => ({
+        ...current,
+        activeSessionKey: nextSessionKey,
+        sessions: current.sessions.filter((entry) => entry.key !== session.key),
+      }))
+
+      window.dispatchEvent(
+        new CustomEvent<ComputerSessionsEventDetail>('overlay:computer-sessions-updated', {
+          detail: {
+            computerId: computer._id,
+            type: 'deleted',
+            sessionKey: nextSessionKey ?? undefined,
+            deletedSessionKey: session.key,
+          },
+        })
+      )
+
+      if (isComputerRoute && currentSessionKey === session.key) {
+        if (nextSessionKey) {
+          router.replace(
+            buildComputerHref(computer._id, {
+              view: 'session',
+              sessionKey: nextSessionKey,
+            })
+          )
+        } else {
+          router.replace(buildComputerHref(computer._id))
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete chat'
+      window.alert(message)
+    } finally {
+      setDeletingSessionKey((current) => (current === session.key ? null : current))
+    }
+  }, [computer._id, currentSessionKey, deletingSessionKey, isComputerRoute, router])
 
   return (
     <div>
@@ -186,7 +295,6 @@ function ComputerNode({
         </button>
         <Cpu size={12} className="shrink-0 text-[#888]" />
         <span className="flex-1 truncate">{computer.name}</span>
-        <StatusDot status={computer.status} />
         <button
           onClick={(event) => onDelete(computer._id, computer.name, event)}
           disabled={deleting}
@@ -196,31 +304,31 @@ function ComputerNode({
         >
           {deleting ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} className="text-[#c33]" />}
         </button>
+        <StatusDot status={computer.status} />
       </div>
 
       {isOpen && (
         <>
           <TreeRow
-            depth={1}
-            icon={<FolderOpen size={11} className="shrink-0 text-[#888]" />}
-            title=".openclaw"
-            muted
-          />
-
-          <TreeRow
             depth={2}
-            icon={<FolderOpen size={11} className="shrink-0 text-[#888]" />}
+            onClick={() => setWorkspaceOpen((current) => !current)}
+            icon={
+              <>
+                <ChevronRight size={10} className={`transition-transform ${workspaceOpen ? 'rotate-90' : ''}`} />
+                <FolderOpen size={11} className="shrink-0 text-[#888]" />
+              </>
+            }
             title="workspace"
             muted
           />
 
-          {loadingDetails && (
+          {loadingInitialDetails && !hasLoadedDetails && (
             <div className="flex items-center py-1" style={{ paddingLeft: `${3 * 16 + 8}px` }}>
               <Loader2 size={10} className="animate-spin text-[#bbb]" />
             </div>
           )}
 
-          {!loadingDetails && details && details.files.map((file) => {
+          {hasLoadedDetails && workspaceOpen && details.files.map((file) => {
             const active = isComputerRoute && currentView === 'file' && currentFile === file.name
             return (
               <TreeRow
@@ -242,28 +350,22 @@ function ComputerNode({
             )
           })}
 
-          {!loadingDetails && details && (
+          {hasLoadedDetails && (
             <>
               <TreeRow
                 depth={2}
-                icon={<FolderOpen size={11} className="shrink-0 text-[#888]" />}
-                title="agents"
-                muted
-              />
-              <TreeRow
-                depth={3}
-                icon={<FolderOpen size={11} className="shrink-0 text-[#888]" />}
-                title="main"
-                muted
-              />
-              <TreeRow
-                depth={4}
-                icon={<FolderOpen size={11} className="shrink-0 text-[#888]" />}
+                onClick={() => setSessionsOpen((current) => !current)}
+                icon={
+                  <>
+                    <ChevronRight size={10} className={`transition-transform ${sessionsOpen ? 'rotate-90' : ''}`} />
+                    <FolderOpen size={11} className="shrink-0 text-[#888]" />
+                  </>
+                }
                 title="sessions"
                 muted
               />
 
-              {details.sessions.map((session) => {
+              {sessionsOpen && details.sessions.map((session) => {
                 const active = Boolean(
                   isComputerRoute &&
                   (currentView === 'session' || currentSessionKey || (!currentView && activeSessionKey)) &&
@@ -273,7 +375,7 @@ function ComputerNode({
                 return (
                   <TreeRow
                     key={session.key}
-                    depth={5}
+                    depth={3}
                     active={active}
                     onClick={() =>
                       router.push(
@@ -285,14 +387,29 @@ function ComputerNode({
                     }
                     icon={<MessageSquare size={10} className="shrink-0 text-[#aaa]" />}
                     title={session.title}
+                    trailing={
+                      <button
+                        onClick={(event) => void handleDeleteSession(session, event)}
+                        disabled={deletingSessionKey === session.key}
+                        className="rounded p-0.5 text-[#b0b0b0] transition-colors hover:bg-[#d8d8d8] hover:text-[#c33] disabled:cursor-wait disabled:text-[#c33]"
+                        aria-label={`Delete ${session.title}`}
+                        title={`Delete ${session.title}`}
+                      >
+                        {deletingSessionKey === session.key ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                          <Trash2 size={10} />
+                        )}
+                      </button>
+                    }
                   />
                 )
               })}
 
-              {details.sessions.length === 0 && (
+              {sessionsOpen && details.sessions.length === 0 && (
                 <p
                   className="py-1 text-[10px] text-[#bbb]"
-                  style={{ paddingLeft: `${5 * 16 + 18}px` }}
+                  style={{ paddingLeft: `${3 * 16 + 18}px` }}
                 >
                   No chats yet
                 </p>

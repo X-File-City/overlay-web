@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   createComputerSession,
+  deleteComputerSession,
   extractTranscriptMessageText,
   getComputerSessionMessages,
   listComputerSessions,
@@ -19,11 +20,35 @@ function mapTranscriptMessages(
       parts: [
         {
           type: 'text',
-          text: extractTranscriptMessageText(message),
+          text: cleanTranscriptDisplayText(extractTranscriptMessageText(message), message.role),
         },
       ],
     }))
     .filter((message) => message.parts[0]?.text)
+}
+
+function cleanTranscriptDisplayText(
+  text: string,
+  role: 'user' | 'assistant' | string | undefined
+): string {
+  let next = text.trim()
+
+  if (role === 'user') {
+    if (next.startsWith('Use the following transcript as prior conversation context')) {
+      const userEntries = [...next.matchAll(/(?:^|\n)User:\s+([\s\S]*?)(?=\n(?:Assistant|System|User):|\s*$)/g)]
+      const lastUserEntry = userEntries.at(-1)?.[1]?.trim()
+      if (lastUserEntry) {
+        next = lastUserEntry
+      }
+    }
+    next = next.replace(
+      /^Sender \(untrusted metadata\):\s*```json[\s\S]*?```\s*/i,
+      ''
+    )
+    next = next.replace(/^\[[^\]]+(?:UTC|GMT)[^\]]*\]\s*/i, '')
+  }
+
+  return next.trim()
 }
 
 export async function GET(request: NextRequest) {
@@ -99,6 +124,27 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ ok: true, ...result })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update computer session'
+    const status = message === 'Unauthorized' ? 401 : 500
+    return NextResponse.json({ error: message }, { status })
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const computerId = request.nextUrl.searchParams.get('computerId')?.trim()
+    const sessionKey = request.nextUrl.searchParams.get('sessionKey')?.trim()
+
+    if (!computerId) {
+      return NextResponse.json({ error: 'Computer ID is required' }, { status: 400 })
+    }
+    if (!sessionKey) {
+      return NextResponse.json({ error: 'Session key is required' }, { status: 400 })
+    }
+
+    const result = await deleteComputerSession({ computerId, sessionKey })
+    return NextResponse.json({ ok: true, ...result })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to delete computer session'
     const status = message === 'Unauthorized' ? 401 : 500
     return NextResponse.json({ error: message }, { status })
   }
