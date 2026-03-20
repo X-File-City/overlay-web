@@ -59,6 +59,30 @@ interface GatewayResponseFrame {
   error?: GatewayErrorShape
 }
 
+interface GatewayChatAcceptedPayload {
+  runId?: string
+  status?: string
+}
+
+interface GatewayChatFinalPayload extends GatewayChatAcceptedPayload {
+  summary?: string
+  result?: unknown
+  message?: OpenClawTranscriptMessage
+}
+
+interface GatewayChatEventPayload {
+  runId?: string
+  state?: 'final' | 'aborted' | 'error'
+  message?: OpenClawTranscriptMessage
+  errorMessage?: string
+}
+
+interface GatewayEventFrame {
+  type?: string
+  event?: string
+  payload?: GatewayChatEventPayload
+}
+
 export interface GatewaySessionRow {
   key?: string
   label?: string
@@ -694,6 +718,39 @@ export async function readGatewaySessionModel(params: {
   }
 }
 
+export async function callComputerGatewayMethod<T>(params: {
+  computerId: string
+  method: string
+  params?: unknown
+}): Promise<T> {
+  const context = await getAuthenticatedComputerContext(params.computerId)
+  return await callGatewayRequest<T>({
+    ip: context.connection.hetznerServerIp,
+    gatewayToken: context.connection.gatewayToken,
+    method: params.method,
+    params: params.params,
+  })
+}
+
+export async function runComputerGatewayCommand(params: {
+  computerId: string
+  sessionKey: string
+  message: string
+}): Promise<string> {
+  const context = await getAuthenticatedComputerContext(params.computerId)
+  const ws = await openGatewaySocket(context.connection.hetznerServerIp)
+
+  try {
+    await connectGatewaySocket(ws, context.connection.gatewayToken)
+    return await runGatewayChatStream(ws, {
+      message: params.message,
+      sessionKey: params.sessionKey,
+    })
+  } finally {
+    ws.close()
+  }
+}
+
 export async function applyPreferredModel(params: {
   ip: string
   gatewayToken: string
@@ -754,6 +811,149 @@ async function callGatewayRequest<T>(params: {
   } finally {
     ws.close()
   }
+}
+
+async function runGatewayChatStream(
+  ws: WebSocket,
+  params: {
+    message: string
+    sessionKey: string
+  }
+): Promise<string> {
+  const requestId = crypto.randomUUID()
+  const idempotencyKey = crypto.randomUUID()
+  let assistantText = ''
+  let runId: string | null = null
+  let accepted = false
+
+  return await new Promise<string>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      cleanup()
+      reject(new Error('OpenClaw request timed out after 4 minutes.'))
+    }, 240_000)
+
+    const cleanup = () => {
+      clearTimeout(timeoutId)
+      ws.removeEventListener('message', handleMessage)
+      ws.removeEventListener('error', handleError)
+      ws.removeEventListener('close', handleClose)
+    }
+
+    const handleError = () => {
+      cleanup()
+      reject(new Error('OpenClaw gateway websocket errored during the run.'))
+    }
+
+    const handleClose = () => {
+      cleanup()
+      reject(new Error('OpenClaw gateway websocket closed before the run completed.'))
+    }
+
+    const fail = (error: Error) => {
+      cleanup()
+      reject(error)
+    }
+
+    const finish = (value: string) => {
+      cleanup()
+      resolve(value)
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const frame = parseGatewayFrame(event.data)
+      if (!frame) {
+        return
+      }
+
+      if (isGatewayEventFrame(frame) && frame.event === 'chat') {
+        const payload = frame.payload
+        if (!accepted || !runId || payload?.runId !== runId) {
+          return
+        }
+
+        if (payload.state === 'error') {
+          fail(new Error(payload.errorMessage || 'OpenClaw chat run failed.'))
+          return
+        }
+
+        if (payload.state === 'final' || payload.state === 'aborted') {
+          const finalText = extractTranscriptMessageText(payload.message ?? {})
+          if (finalText && !assistantText) {
+            assistantText = finalText
+          }
+          finish(assistantText.trim() || finalText.trim())
+        }
+        return
+      }
+
+      if (!isGatewayResponseFrame(frame) || frame.id !== requestId) {
+        return
+      }
+
+      if (!accepted) {
+        if (!frame.ok) {
+          fail(buildGatewayResponseError(frame, 'OpenClaw rejected the chat request.'))
+          return
+        }
+
+        const payload =
+          frame.payload && typeof frame.payload === 'object'
+            ? (frame.payload as GatewayChatAcceptedPayload)
+            : null
+        const nextRunId = payload?.runId?.trim()
+        if (!nextRunId) {
+          fail(new Error('OpenClaw did not return a run ID for this chat request.'))
+          return
+        }
+
+        runId = nextRunId
+        accepted = true
+        return
+      }
+
+      if (!frame.ok) {
+        fail(buildGatewayResponseError(frame, 'OpenClaw run failed.'))
+        return
+      }
+
+      const payload =
+        frame.payload && typeof frame.payload === 'object'
+          ? (frame.payload as GatewayChatFinalPayload)
+          : null
+      const finalText =
+        extractTranscriptMessageText(payload?.message ?? {}) ||
+        extractGatewayResultText(payload?.result)
+
+      if (payload?.status === 'error') {
+        fail(new Error(payload.summary || finalText || 'OpenClaw run failed.'))
+        return
+      }
+
+      if (finalText && !assistantText) {
+        assistantText = finalText
+      }
+
+      finish(assistantText.trim() || finalText.trim())
+    }
+
+    ws.addEventListener('message', handleMessage)
+    ws.addEventListener('error', handleError)
+    ws.addEventListener('close', handleClose)
+    ws.send(
+      JSON.stringify({
+        type: 'req',
+        id: requestId,
+        method: 'chat.send',
+        params: {
+          message: params.message,
+          sessionKey: params.sessionKey,
+          deliver: false,
+          timeoutMs: 240_000,
+          idempotencyKey,
+        },
+      })
+    )
+  })
 }
 
 async function openGatewaySocket(ip: string): Promise<WebSocket> {
@@ -850,7 +1050,7 @@ async function waitForGatewayResponse(
 
     const handleMessage = (event: MessageEvent) => {
       const frame = parseGatewayFrame(event.data)
-      if (!frame || frame.type !== 'res' || frame.id !== params.requestId) {
+      if (!frame || !isGatewayResponseFrame(frame) || frame.id !== params.requestId) {
         return
       }
       cleanup()
@@ -875,13 +1075,13 @@ async function waitForGatewayResponse(
   })
 }
 
-function parseGatewayFrame(value: unknown): GatewayResponseFrame | null {
+function parseGatewayFrame(value: unknown): GatewayResponseFrame | GatewayEventFrame | null {
   if (typeof value !== 'string') {
     return null
   }
 
   try {
-    const parsed = JSON.parse(value) as GatewayResponseFrame
+    const parsed = JSON.parse(value) as GatewayResponseFrame | GatewayEventFrame
     return parsed && typeof parsed === 'object' ? parsed : null
   } catch {
     return null
@@ -903,4 +1103,39 @@ function getErrorMessage(error: unknown): string {
     return 'OpenClaw request timed out after 4 minutes.'
   }
   return error instanceof Error ? error.message : 'Computer request failed'
+}
+
+function buildGatewayResponseError(frame: GatewayResponseFrame, fallbackMessage: string): Error {
+  return new Error(frame.error?.message || fallbackMessage)
+}
+
+function extractGatewayResultText(result: unknown): string {
+  if (typeof result === 'string') {
+    return result.trim()
+  }
+
+  if (result && typeof result === 'object') {
+    const value = result as {
+      text?: unknown
+      content?: unknown
+      summary?: unknown
+      message?: unknown
+    }
+
+    for (const candidate of [value.text, value.content, value.summary, value.message]) {
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate.trim()
+      }
+    }
+  }
+
+  return ''
+}
+
+function isGatewayResponseFrame(frame: GatewayResponseFrame | GatewayEventFrame): frame is GatewayResponseFrame {
+  return frame.type === 'res'
+}
+
+function isGatewayEventFrame(frame: GatewayResponseFrame | GatewayEventFrame): frame is GatewayEventFrame {
+  return frame.type === 'event'
 }

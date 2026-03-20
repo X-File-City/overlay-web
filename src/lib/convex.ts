@@ -36,6 +36,39 @@ interface ConvexResponse<T> {
 interface CallConvexOptions {
   timeoutMs?: number
   throwOnError?: boolean
+  background?: boolean
+  suppressNetworkConsoleError?: boolean
+}
+
+function isBenignBackgroundConvexError(message: string): boolean {
+  const normalized = message.trim().toLowerCase()
+  return (
+    normalized.includes('fetch failed') ||
+    normalized.includes('failed to fetch') ||
+    normalized.includes('networkerror') ||
+    normalized.includes('load failed') ||
+    normalized.includes('network request failed') ||
+    normalized.includes('aborted') ||
+    normalized.includes('timed out')
+  )
+}
+
+function shouldSuppressConvexError(
+  options: CallConvexOptions,
+  errorOrMessage: unknown
+): boolean {
+  if (!options.background && !options.suppressNetworkConsoleError) {
+    return false
+  }
+
+  const message =
+    typeof errorOrMessage === 'string'
+      ? errorOrMessage
+      : errorOrMessage instanceof Error
+        ? errorOrMessage.message
+        : String(errorOrMessage ?? '')
+
+  return isBenignBackgroundConvexError(message)
 }
 
 async function callConvex<T>(
@@ -97,26 +130,32 @@ async function callConvex<T>(
       if (options.throwOnError) {
         throw new Error(message)
       }
-      console.error(`Convex ${type} HTTP error:`, message)
+      if (!shouldSuppressConvexError(options, message)) {
+        console.error(`Convex ${type} HTTP error:`, message)
+      }
       return null
     }
 
     if (data.status === 'error') {
-      console.error(`Convex ${type} error:`, data.errorMessage)
       if (options.throwOnError) {
         throw new Error(data.errorMessage || `Convex ${type} error`)
+      }
+      if (!shouldSuppressConvexError(options, data.errorMessage ?? '')) {
+        console.error(`Convex ${type} error:`, data.errorMessage)
       }
       return null
     }
 
     return data.value ?? null
   } catch (error) {
-    console.error(`Convex ${type} failed:`, error)
     if (options.throwOnError) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw controllerSignalReasonMessage(error) ?? new Error(`Convex ${type} request timed out`)
       }
       throw error
+    }
+    if (!shouldSuppressConvexError(options, error)) {
+      console.error(`Convex ${type} failed:`, error)
     }
     return null
   }

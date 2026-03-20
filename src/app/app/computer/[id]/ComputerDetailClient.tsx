@@ -2,13 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { DefaultChatTransport } from 'ai'
+import { DefaultChatTransport, type UIMessage } from 'ai'
 import { useChat } from '@ai-sdk/react'
 import { AlertCircle, ChevronDown, Loader2, Plus, Send } from 'lucide-react'
 import { convex } from '@/lib/convex'
 import { MarkdownMessage } from '@/components/app/MarkdownMessage'
 import { AVAILABLE_MODELS, DEFAULT_MODEL_ID } from '@/lib/models'
 import ComputerWorkspaceFileView from '@/components/app/ComputerWorkspaceFileView'
+import { CommandBubble, CommandResultCard } from '@/components/app/ComputerCommandResults'
+import {
+  type ComputerCommandResult,
+  buildComputerCommandCatalogResult,
+  getComputerCommandLabel,
+  getComputerCommandMenuItems,
+  parseStandaloneComputerCommand,
+  resolveOverlayModelSelection,
+} from '@/lib/computer-commands'
 
 type ComputerStatus =
   | 'pending_payment'
@@ -64,72 +73,20 @@ interface ComputerSessionsEventDetail {
   title?: string
 }
 
-const OPENCLAW_SLASH_COMMANDS = [
-  { command: '/help', description: 'Show command help' },
-  { command: '/commands', description: 'List available commands' },
-  { command: '/skill <name> [input]', description: 'Run a skill by name' },
-  { command: '/status', description: 'Show session and model status' },
-  { command: '/allowlist', description: 'List or edit allowlist entries' },
-  { command: '/approve <id> allow-once|allow-always|deny', description: 'Resolve exec approvals' },
-  { command: '/context [list|detail|json]', description: 'Inspect session context' },
-  { command: '/btw <question>', description: 'Ask an ephemeral side question' },
-  { command: '/export-session [path]', description: 'Export the current session' },
-  { command: '/whoami', description: 'Show sender id' },
-  { command: '/session idle <duration|off>', description: 'Set idle auto-unfocus' },
-  { command: '/session max-age <duration|off>', description: 'Set hard max-age auto-unfocus' },
-  { command: '/subagents list|kill|log|info|send|steer|spawn', description: 'Control sub-agents' },
-  { command: '/acp spawn|cancel|steer|close|status|set-mode|set|cwd|permissions|timeout|model|reset-options|doctor|install|sessions', description: 'Control ACP sessions' },
-  { command: '/agents', description: 'List thread-bound agents' },
-  { command: '/focus <target>', description: 'Bind thread to a target session' },
-  { command: '/unfocus', description: 'Remove current thread binding' },
-  { command: '/kill <id|#|all>', description: 'Abort running sub-agents' },
-  { command: '/steer <id|#> <message>', description: 'Steer a running sub-agent' },
-  { command: '/tell <id|#> <message>', description: 'Alias for /steer' },
-  { command: '/config show|get|set|unset', description: 'Read or write config' },
-  { command: '/mcp show|get|set|unset', description: 'Manage MCP server config' },
-  { command: '/plugins list|show|get|enable|disable', description: 'Inspect or toggle plugins' },
-  { command: '/debug show|set|unset|reset', description: 'Manage runtime-only overrides' },
-  { command: '/usage off|tokens|full|cost', description: 'Control usage footer output' },
-  { command: '/tts off|always|inbound|tagged|status|provider|limit|summary|audio', description: 'Control TTS' },
-  { command: '/stop', description: 'Stop the current run' },
-  { command: '/restart', description: 'Restart the gateway/runtime flow' },
-  { command: '/dock-telegram', description: 'Switch replies to Telegram' },
-  { command: '/dock-discord', description: 'Switch replies to Discord' },
-  { command: '/dock-slack', description: 'Switch replies to Slack' },
-  { command: '/activation mention|always', description: 'Change group activation mode' },
-  { command: '/send on|off|inherit', description: 'Control reply delivery' },
-  { command: '/reset', description: 'Reset the current session' },
-  { command: '/new [model]', description: 'Start a fresh session' },
-  { command: '/new', description: 'Start a fresh session' },
-  { command: '/think <off|minimal|low|medium|high|xhigh>', description: 'Set thinking depth' },
-  { command: '/thinking <off|minimal|low|medium|high|xhigh>', description: 'Alias for /think' },
-  { command: '/t <off|minimal|low|medium|high|xhigh>', description: 'Short alias for /think' },
-  { command: '/fast status|on|off', description: 'Toggle fast mode' },
-  { command: '/verbose on|full|off', description: 'Control verbose output' },
-  { command: '/v on|full|off', description: 'Alias for /verbose' },
-  { command: '/reasoning on|off|stream', description: 'Control reasoning output' },
-  { command: '/reason on|off|stream', description: 'Alias for /reasoning' },
-  { command: '/elevated on|off|ask|full', description: 'Control elevated execution' },
-  { command: '/elev on|off|ask|full', description: 'Alias for /elevated' },
-  { command: '/exec host=<sandbox|gateway|node> security=<deny|allowlist|full> ask=<off|on-miss|always> node=<id>', description: 'Set exec defaults' },
-  { command: '/model <name>', description: 'Switch models' },
-  { command: '/model', description: 'Show compact model picker' },
-  { command: '/model list', description: 'List available models' },
-  { command: '/model status', description: 'Show active model details' },
-  { command: '/models <provider>', description: 'Browse models by provider' },
-  { command: '/models', description: 'Browse models' },
-  { command: '/queue <mode>', description: 'Configure queue mode' },
-  { command: '/queue', description: 'Show current queue settings' },
-  { command: '/bash <command>', description: 'Run a host bash command' },
-  { command: '/compact [instructions]', description: 'Compact the session' },
-  { command: '/id', description: 'Alias for /whoami' },
-  { command: '/export [path]', description: 'Alias for /export-session' },
-  { command: '/voice join|leave|status', description: 'Discord alias for /vc' },
-  { command: '/dock_telegram', description: 'Alias for /dock-telegram' },
-  { command: '/dock_discord', description: 'Alias for /dock-discord' },
-  { command: '/dock_slack', description: 'Alias for /dock-slack' },
-  { command: '/vc join|leave|status', description: 'Discord voice control' },
-] as const
+type ComputerCommandMessageMetadata =
+  | {
+      overlayKind: 'computer-command-user'
+      commandId: string
+      sessionKey: string
+    }
+  | {
+      overlayKind: 'computer-command-result'
+      commandId: string
+      sessionKey: string
+      result: ComputerCommandResult
+    }
+
+type ComputerUiMessage = UIMessage<ComputerCommandMessageMetadata>
 
 function stepIndex(step?: string): number {
   if (!step) return 0
@@ -147,6 +104,30 @@ function getMessageText(msg: { parts?: Array<{ type: string; text?: string }> })
     .filter((part) => part.type === 'text')
     .map((part) => part.text || '')
     .join('')
+}
+
+function isCommandMetadata(
+  metadata: unknown
+): metadata is ComputerCommandMessageMetadata {
+  if (!metadata || typeof metadata !== 'object') {
+    return false
+  }
+
+  const value = metadata as { overlayKind?: string }
+  return (
+    value.overlayKind === 'computer-command-user' ||
+    value.overlayKind === 'computer-command-result'
+  )
+}
+
+function isLocalCommandMessage(message: { metadata?: unknown }) {
+  return isCommandMetadata(message.metadata)
+}
+
+function isCommandResultMessage(
+  message: { metadata?: unknown }
+): message is { metadata: Extract<ComputerCommandMessageMetadata, { overlayKind: 'computer-command-result' }> } {
+  return isCommandMetadata(message.metadata) && message.metadata.overlayKind === 'computer-command-result'
 }
 
 async function generateTitle(text: string): Promise<string | null> {
@@ -315,7 +296,7 @@ export default function ComputerDetailClient({
         prepareSendMessagesRequest: ({ messages, body }) => ({
           body: {
             ...body,
-            messages,
+            messages: messages.filter((message) => !isLocalCommandMessage(message)),
             computerId,
             modelId: selectedModelRef.current,
             sessionKey: activeSessionKeyRef.current,
@@ -325,9 +306,9 @@ export default function ComputerDetailClient({
     [computerId]
   )
 
-  const { messages, sendMessage, setMessages, status, stop, error } = useChat({ transport })
+  const { messages, sendMessage, setMessages, status, stop, error } = useChat<ComputerUiMessage>({ transport })
   const isLoading = status === 'streaming' || status === 'submitted'
-  const lastMessage = messages[messages.length - 1]
+  const lastMessage = [...messages].reverse().find((message) => !isLocalCommandMessage(message))
   const showLoadingIndicator =
     isLoading &&
     !(
@@ -346,12 +327,46 @@ export default function ComputerDetailClient({
     }
   }, [accessToken, computerId, userId])
 
+  const fetchComputerInBackground = useCallback(async () => {
+    const result = await convex.query<Computer>(
+      'computers:get',
+      {
+        computerId,
+        userId,
+        accessToken,
+      },
+      {
+        background: true,
+        suppressNetworkConsoleError: true,
+      }
+    )
+    if (result !== null) {
+      setComputer(result)
+    }
+  }, [accessToken, computerId, userId])
+
   const fetchLogs = useCallback(async () => {
     const result = await convex.query<LogEvent[]>('computers:listEvents', {
       computerId,
       userId,
       accessToken,
     })
+    if (result) setLogs(result)
+  }, [accessToken, computerId, userId])
+
+  const fetchLogsInBackground = useCallback(async () => {
+    const result = await convex.query<LogEvent[]>(
+      'computers:listEvents',
+      {
+        computerId,
+        userId,
+        accessToken,
+      },
+      {
+        background: true,
+        suppressNetworkConsoleError: true,
+      }
+    )
     if (result) setLogs(result)
   }, [accessToken, computerId, userId])
 
@@ -373,7 +388,7 @@ export default function ComputerDetailClient({
     )
     if (!response.ok) return
     const data = await response.json()
-    setMessages(Array.isArray(data.messages) ? data.messages : [])
+    setMessages((Array.isArray(data.messages) ? data.messages : []) as ComputerUiMessage[])
     setHydratedTranscriptKey(sessionKey)
   }, [computerId, setMessages])
 
@@ -460,13 +475,13 @@ export default function ComputerDetailClient({
     await refreshSessions(sessionKey)
   }, [computerId, refreshSessions])
 
-  const requestNewSession = useCallback(async () => {
+  const requestNewSession = useCallback(async (modelIdOverride?: string) => {
     const response = await fetch('/api/app/computer-sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         computerId,
-        modelId: selectedModelRef.current,
+        modelId: modelIdOverride?.trim() || selectedModelRef.current,
       }),
     })
 
@@ -507,16 +522,18 @@ export default function ComputerDetailClient({
     router.push(href)
   }, [computerId, router, setMessages, syncComputerRuntime])
 
-  const createNewSession = useCallback(async () => {
+  const createNewSession = useCallback(async (modelIdOverride?: string) => {
     if (isLoading || isCreatingSession) return
     setIsCreatingSession(true)
     try {
-      const payload = await requestNewSession()
+      const payload = await requestNewSession(modelIdOverride)
       applyCreatedSession(payload)
       await loadSessions()
+      return payload
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create chat'
       window.alert(message)
+      return null
     } finally {
       setIsCreatingSession(false)
     }
@@ -539,22 +556,22 @@ export default function ComputerDetailClient({
       computer?.status === 'provisioning' || computer?.status === 'pending_payment' ? 4000 : 20000
 
     const intervalId = window.setInterval(() => {
-      void fetchComputer()
+      void fetchComputerInBackground()
     }, intervalMs)
 
     return () => window.clearInterval(intervalId)
-  }, [computer, fetchComputer])
+  }, [computer, fetchComputerInBackground])
 
   useEffect(() => {
     if (computer?.status !== 'provisioning') return
 
     void fetchLogs()
     const intervalId = window.setInterval(() => {
-      void fetchLogs()
+      void fetchLogsInBackground()
     }, 5000)
 
     return () => window.clearInterval(intervalId)
-  }, [computer?.status, fetchLogs])
+  }, [computer?.status, fetchLogs, fetchLogsInBackground])
 
   useEffect(() => {
     if (computer?.status !== 'ready' || isWorkspaceFileView) return
@@ -724,28 +741,13 @@ export default function ComputerDetailClient({
   const headerTitle = isWorkspaceFileView ? requestedFileName : activeSessionTitle || computer?.name || 'Computer'
   const slashMenuRef = useRef<HTMLDivElement>(null)
   const slashQuery = input.trimStart()
-  const slashCommands = useMemo(() => {
-    if (!slashQuery.startsWith('/')) return []
-
-    const normalizedQuery = slashQuery.toLowerCase()
-    if (normalizedQuery === '/') {
-      return OPENCLAW_SLASH_COMMANDS
-    }
-
-    return OPENCLAW_SLASH_COMMANDS.filter(({ command, description }) => {
-      const normalizedCommand = command.toLowerCase()
-      const normalizedDescription = description.toLowerCase()
-      return (
-        normalizedCommand.startsWith(normalizedQuery) ||
-        normalizedCommand.includes(normalizedQuery) ||
-        normalizedDescription.includes(normalizedQuery.slice(1))
-      )
-    })
-  }, [slashQuery])
+  const slashCommands = useMemo(() => (
+    slashQuery.startsWith('/') ? getComputerCommandMenuItems(slashQuery) : []
+  ), [slashQuery])
   const showSlashCommands = slashCommands.length > 0 && slashQuery.startsWith('/')
 
-  const insertSlashCommand = useCallback((command: string) => {
-    setInput(`${command} `)
+  const insertSlashCommand = useCallback((commandLabel: string) => {
+    setInput(`${commandLabel} `)
     setActiveSlashIndex(0)
   }, [])
 
@@ -777,23 +779,189 @@ export default function ComputerDetailClient({
 
         await fetchComputer()
         await refreshSessions(payload.sessionKey)
+        return payload
       } catch (error) {
         console.error('[Computer Page] Failed to apply model selection:', {
           computerId,
           modelId,
           error: error instanceof Error ? error.message : String(error),
         })
+        return null
       }
     },
     [activeSessionKey, computerId, fetchComputer, refreshSessions, syncComputerRuntime]
   )
+
+  const appendLocalCommandResult = useCallback((
+    sessionKey: string,
+    commandText: string,
+    result: ComputerCommandResult,
+    options?: { replace?: boolean }
+  ) => {
+    const commandId = crypto.randomUUID()
+    const nextMessages: ComputerUiMessage[] = [
+      {
+        id: `command-user:${commandId}`,
+        role: 'user',
+        parts: [{ type: 'text', text: commandText }],
+        metadata: {
+          overlayKind: 'computer-command-user',
+          commandId,
+          sessionKey,
+        },
+      },
+      {
+        id: `command-result:${commandId}`,
+        role: 'assistant',
+        parts: [],
+        metadata: {
+          overlayKind: 'computer-command-result',
+          commandId,
+          sessionKey,
+          result,
+        },
+      },
+    ]
+
+    setMessages((current) => (options?.replace ? nextMessages : [...current, ...nextMessages]))
+  }, [setMessages])
+
+  const executeComputerCommand = useCallback(async (
+    commandText: string,
+    currentSessionKey: string
+  ) => {
+    const parsedCommand = parseStandaloneComputerCommand(commandText)
+    if (!parsedCommand) {
+      return false
+    }
+
+    if (parsedCommand.descriptor.name === 'help' || parsedCommand.descriptor.name === 'commands') {
+      appendLocalCommandResult(currentSessionKey, commandText, buildComputerCommandCatalogResult())
+      setInput('')
+      return true
+    }
+
+    if (parsedCommand.descriptor.name === 'new') {
+      const nextModelId = resolveOverlayModelSelection(parsedCommand.args)
+      const payload = await createNewSession(nextModelId || undefined)
+      if (payload) {
+        const nextLabel = nextModelId
+          ? AVAILABLE_MODELS.find((model) => model.id === nextModelId)?.name || nextModelId
+          : 'the current model'
+        appendLocalCommandResult(
+          payload.sessionKey,
+          commandText,
+          {
+            kind: 'action',
+            title: 'New Session',
+            status: 'success',
+            message: `Started a fresh session with ${nextLabel}.`,
+          },
+          { replace: true }
+        )
+      }
+      setInput('')
+      return true
+    }
+
+    if (
+      parsedCommand.descriptor.name === 'model' &&
+      parsedCommand.args &&
+      !['list', 'status'].includes(parsedCommand.args.trim().toLowerCase())
+    ) {
+      const nextModelId = resolveOverlayModelSelection(parsedCommand.args)
+      if (nextModelId) {
+        const payload = await applyModelSelection(nextModelId)
+        if (payload) {
+          appendLocalCommandResult(currentSessionKey, commandText, {
+            kind: 'action',
+            title: 'Model Updated',
+            status: 'success',
+            message: `Session model changed to ${AVAILABLE_MODELS.find((model) => model.id === nextModelId)?.name || nextModelId}.`,
+            fields: [
+              { label: 'Requested', value: payload.requestedModelRef },
+              { label: 'Effective', value: [payload.effectiveProvider, payload.effectiveModel].filter(Boolean).join('/') || 'Unknown' },
+            ],
+          })
+        }
+        setInput('')
+        return true
+      }
+    }
+
+    if (parsedCommand.descriptor.name === 'stop') {
+      stop()
+    }
+
+    const response = await fetch('/api/app/computer-command', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        computerId,
+        sessionKey: currentSessionKey,
+        commandText,
+      }),
+    })
+
+    const payload = (await response.json().catch(() => null)) as
+      | {
+          error?: string
+          result?: ComputerCommandResult
+        }
+      | null
+
+    if (!response.ok || !payload?.result) {
+      throw new Error(payload?.error || 'Failed to execute OpenClaw command.')
+    }
+
+    if (parsedCommand.descriptor.name === 'reset') {
+      setHydratedTranscriptKey(null)
+      appendLocalCommandResult(currentSessionKey, commandText, payload.result, { replace: true })
+    } else {
+      appendLocalCommandResult(currentSessionKey, commandText, payload.result)
+    }
+
+    await fetchComputer()
+    await refreshSessions(currentSessionKey)
+    setInput('')
+    return true
+  }, [
+    appendLocalCommandResult,
+    applyModelSelection,
+    computerId,
+    createNewSession,
+    fetchComputer,
+    refreshSessions,
+    stop,
+  ])
 
   const submitMessage = useCallback(async () => {
     const text = input.trim()
     const currentSessionKey = activeSessionKeyRef.current
     const currentModelId = selectedModelRef.current
     if (!text || isLoading || !currentSessionKey) return
-    const isFirstMessageInSession = !messages.some((message) => message.role === 'user')
+    const isFirstMessageInSession = !messages.some(
+      (message) => message.role === 'user' && !isLocalCommandMessage(message)
+    )
+
+    const parsedCommand = parseStandaloneComputerCommand(text)
+    if (parsedCommand) {
+      try {
+        await executeComputerCommand(text, currentSessionKey)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to execute command.'
+        appendLocalCommandResult(currentSessionKey, text, {
+          kind: 'action',
+          title: 'Command Error',
+          status: 'error',
+          message,
+        })
+        setInput('')
+      }
+      return
+    }
 
     setInput('')
     setSessions((current) => {
@@ -839,6 +1007,8 @@ export default function ComputerDetailClient({
     refreshSessions,
     renameSession,
     sendMessage,
+    appendLocalCommandResult,
+    executeComputerCommand,
   ])
 
   useEffect(() => {
@@ -991,6 +1161,24 @@ export default function ComputerDetailClient({
                   const text = getMessageText(message)
                   const isAssistantStreaming = isLoading && message.id === lastMessage?.id && message.role === 'assistant'
 
+                  if (isCommandResultMessage(message)) {
+                    return (
+                      <div key={message.id} className="flex justify-start message-appear">
+                        <div className="w-full space-y-3">
+                          <CommandResultCard result={message.metadata.result} />
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  if (isLocalCommandMessage(message) && message.role === 'user') {
+                    return (
+                      <div key={message.id} className="flex justify-end message-appear">
+                        <CommandBubble command={text} />
+                      </div>
+                    )
+                  }
+
                   return (
                     <div
                       key={message.id}
@@ -1041,20 +1229,22 @@ export default function ComputerDetailClient({
                   {showSlashCommands && (
                     <div
                       ref={slashMenuRef}
-                      className="absolute bottom-full left-0 right-0 z-10 mb-2 max-h-72 overflow-y-auto rounded-2xl border border-[#e5e5e5] bg-white p-1 shadow-lg"
+                      className="absolute bottom-full left-0 right-0 z-10 mb-2 max-h-[260px] overflow-y-auto rounded-2xl border border-[#e5e5e5] bg-white p-1 shadow-lg"
                     >
                       {slashCommands.map((entry, index) => (
                         <button
-                          key={entry.command}
+                          key={entry.name}
                           type="button"
                           data-command-index={index}
-                          onClick={() => insertSlashCommand(entry.command)}
-                          className={`flex w-full items-center gap-4 rounded-xl px-3 py-2 text-left transition-colors ${
+                          onClick={() => insertSlashCommand(getComputerCommandLabel(entry))}
+                          className={`flex w-full items-center justify-between gap-4 rounded-xl px-3 py-2 text-left transition-colors ${
                             index === activeSlashIndex ? 'bg-[#f5f5f5]' : 'hover:bg-[#fafafa]'
                           }`}
                         >
-                          <span className="whitespace-nowrap text-xs font-medium text-[#0a0a0a]">{entry.command}</span>
-                          <span className="ml-auto min-w-0 truncate text-right text-[11px] text-[#8a8a8a]">
+                          <span className="whitespace-nowrap text-xs font-medium text-[#0a0a0a]">
+                            {getComputerCommandLabel(entry)}
+                          </span>
+                          <span className="min-w-0 truncate text-right text-[11px] text-[#8a8a8a]">
                             {entry.description}
                           </span>
                         </button>
@@ -1088,7 +1278,7 @@ export default function ComputerDetailClient({
                           event.preventDefault()
                           const activeCommand = slashCommands[activeSlashIndex]
                           if (activeCommand) {
-                            insertSlashCommand(activeCommand.command)
+                            insertSlashCommand(getComputerCommandLabel(activeCommand))
                           }
                           return
                         }
@@ -1102,7 +1292,11 @@ export default function ComputerDetailClient({
                     />
                     {isLoading ? (
                       <button
-                        onClick={() => stop()}
+                        onClick={() => {
+                          if (activeSessionKey) {
+                            void executeComputerCommand('/stop', activeSessionKey)
+                          }
+                        }}
                         className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333]"
                         title="Stop generating"
                       >

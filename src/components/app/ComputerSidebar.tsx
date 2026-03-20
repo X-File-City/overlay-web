@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import {
   Plus,
@@ -429,10 +429,33 @@ export default function ComputerSidebar({ userId, accessToken }: { userId: strin
   const [computers, setComputers] = useState<ComputerItem[]>([])
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const inFlightFetchRef = useRef<Promise<ComputerItem[] | null> | null>(null)
 
-  const fetchComputers = useCallback(async () => {
-    const result = await convex.query<ComputerItem[]>('computers:list', { userId, accessToken })
-    if (result) setComputers(result)
+  const fetchComputers = useCallback(async (options?: { background?: boolean }) => {
+    if (inFlightFetchRef.current) {
+      return await inFlightFetchRef.current
+    }
+
+    const nextRequest = convex.query<ComputerItem[]>(
+      'computers:list',
+      { userId, accessToken },
+      {
+        background: options?.background,
+        suppressNetworkConsoleError: options?.background,
+      }
+    )
+      .then((result) => {
+        if (result) {
+          setComputers(result)
+        }
+        return result
+      })
+      .finally(() => {
+        inFlightFetchRef.current = null
+      })
+
+    inFlightFetchRef.current = nextRequest
+    return await nextRequest
   }, [userId, accessToken])
 
   const handleDeleteComputer = useCallback(async (computerId: string, computerName: string, event: React.MouseEvent) => {
@@ -458,6 +481,14 @@ export default function ComputerSidebar({ userId, accessToken }: { userId: strin
       }
 
       setComputers((prev) => prev.filter((computer) => computer._id !== computerId))
+      window.dispatchEvent(
+        new CustomEvent('overlay:computers-updated', {
+          detail: {
+            computerId,
+            type: 'deleted',
+          },
+        })
+      )
 
       if (pathname === `/app/computer/${computerId}`) {
         router.replace('/app/computer')
@@ -484,9 +515,28 @@ export default function ComputerSidebar({ userId, accessToken }: { userId: strin
   }, [])
 
   useEffect(() => {
-    fetchComputers()
-    const interval = setInterval(fetchComputers, 10000)
-    return () => clearInterval(interval)
+    void fetchComputers()
+  }, [fetchComputers])
+
+  useEffect(() => {
+    function refreshInBackground() {
+      void fetchComputers({ background: true })
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        refreshInBackground()
+      }
+    }
+
+    window.addEventListener('focus', refreshInBackground)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('overlay:computers-updated', refreshInBackground)
+    return () => {
+      window.removeEventListener('focus', refreshInBackground)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('overlay:computers-updated', refreshInBackground)
+    }
   }, [fetchComputers])
 
   useEffect(() => {
