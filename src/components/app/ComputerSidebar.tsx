@@ -310,7 +310,7 @@ function ComputerNode({
       {isOpen && (
         <>
           <TreeRow
-            depth={2}
+            depth={1}
             onClick={() => setWorkspaceOpen((current) => !current)}
             icon={
               <>
@@ -323,7 +323,7 @@ function ComputerNode({
           />
 
           {loadingInitialDetails && !hasLoadedDetails && (
-            <div className="flex items-center py-1" style={{ paddingLeft: `${3 * 16 + 8}px` }}>
+            <div className="flex items-center py-1" style={{ paddingLeft: `${2 * 16 + 8}px` }}>
               <Loader2 size={10} className="animate-spin text-[#bbb]" />
             </div>
           )}
@@ -333,7 +333,7 @@ function ComputerNode({
             return (
               <TreeRow
                 key={file.name}
-                depth={3}
+                depth={2}
                 active={active}
                 onClick={() =>
                   router.push(
@@ -353,7 +353,7 @@ function ComputerNode({
           {hasLoadedDetails && (
             <>
               <TreeRow
-                depth={2}
+                depth={1}
                 onClick={() => setSessionsOpen((current) => !current)}
                 icon={
                   <>
@@ -375,7 +375,7 @@ function ComputerNode({
                 return (
                   <TreeRow
                     key={session.key}
-                    depth={3}
+                    depth={2}
                     active={active}
                     onClick={() =>
                       router.push(
@@ -409,7 +409,7 @@ function ComputerNode({
               {sessionsOpen && details.sessions.length === 0 && (
                 <p
                   className="py-1 text-[10px] text-[#bbb]"
-                  style={{ paddingLeft: `${3 * 16 + 18}px` }}
+                  style={{ paddingLeft: `${2 * 16 + 18}px` }}
                 >
                   No chats yet
                 </p>

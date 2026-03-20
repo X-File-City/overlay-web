@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { DefaultChatTransport } from 'ai'
 import { useChat } from '@ai-sdk/react'
-import { AlertCircle, ChevronDown, Loader2, Plus, Send, Terminal } from 'lucide-react'
+import { AlertCircle, ChevronDown, Loader2, Plus, Send } from 'lucide-react'
 import { convex } from '@/lib/convex'
 import { MarkdownMessage } from '@/components/app/MarkdownMessage'
 import { AVAILABLE_MODELS, DEFAULT_MODEL_ID } from '@/lib/models'
@@ -1041,24 +1041,20 @@ export default function ComputerDetailClient({
                   {showSlashCommands && (
                     <div
                       ref={slashMenuRef}
-                      className="absolute bottom-full left-0 right-0 mb-2 max-h-[15.75rem] overflow-y-auto overscroll-contain rounded-2xl border border-[#e5e5e5] bg-white p-2 shadow-lg"
+                      className="absolute bottom-full left-0 right-0 z-10 mb-2 max-h-72 overflow-y-auto rounded-2xl border border-[#e5e5e5] bg-white p-1 shadow-lg"
                     >
-                      <div className="sticky top-0 z-10 mb-2 flex items-center gap-2 border-b border-[#f0f0f0] bg-white px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-[#8a8a8a]">
-                        <Terminal size={12} />
-                        OpenClaw Slash Commands
-                      </div>
                       {slashCommands.map((entry, index) => (
                         <button
                           key={entry.command}
                           type="button"
                           data-command-index={index}
                           onClick={() => insertSlashCommand(entry.command)}
-                          className={`grid min-h-11 w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-4 rounded-xl px-3 py-2 text-left transition-colors ${
+                          className={`flex w-full items-center gap-4 rounded-xl px-3 py-2 text-left transition-colors ${
                             index === activeSlashIndex ? 'bg-[#f5f5f5]' : 'hover:bg-[#fafafa]'
                           }`}
                         >
                           <span className="whitespace-nowrap text-xs font-medium text-[#0a0a0a]">{entry.command}</span>
-                          <span className="min-w-0 truncate text-right text-[11px] text-[#8a8a8a]">
+                          <span className="ml-auto min-w-0 truncate text-right text-[11px] text-[#8a8a8a]">
                             {entry.description}
                           </span>
                         </button>
