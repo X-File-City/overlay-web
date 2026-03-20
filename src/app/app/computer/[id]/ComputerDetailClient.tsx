@@ -1,13 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { DefaultChatTransport } from 'ai'
 import { useChat } from '@ai-sdk/react'
-import { AlertCircle, ChevronDown, Loader2, Send, Terminal } from 'lucide-react'
+import { AlertCircle, ChevronDown, Loader2, Plus, Send, Terminal } from 'lucide-react'
 import { convex } from '@/lib/convex'
 import { MarkdownMessage } from '@/components/app/MarkdownMessage'
 import { AVAILABLE_MODELS, DEFAULT_MODEL_ID } from '@/lib/models'
+import ComputerWorkspaceFileView from '@/components/app/ComputerWorkspaceFileView'
 
 type ComputerStatus =
   | 'pending_payment'
@@ -49,12 +50,10 @@ interface LogEvent {
   createdAt: number
 }
 
-interface PersistedChatMessage {
-  _id: string
-  role: 'user' | 'assistant'
-  content: string
-  createdAt: number
-  isError?: boolean
+interface ComputerSession {
+  key: string
+  title: string
+  updatedAt: number | null
 }
 
 const OPENCLAW_SLASH_COMMANDS = [
@@ -140,6 +139,21 @@ function getMessageText(msg: { parts?: Array<{ type: string; text?: string }> })
     .filter((part) => part.type === 'text')
     .map((part) => part.text || '')
     .join('')
+}
+
+async function generateTitle(text: string): Promise<string | null> {
+  try {
+    const response = await fetch('/api/app/generate-title', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    return (data.title as string)?.trim() || null
+  } catch {
+    return null
+  }
 }
 
 function ProvisioningView({ step, logs }: { step?: string; logs: LogEvent[] }) {
@@ -231,21 +245,6 @@ function ProvisioningView({ step, logs }: { step?: string; logs: LogEvent[] }) {
   )
 }
 
-function mapPersistedMessages(messages: PersistedChatMessage[]) {
-  return messages
-    .filter((message) => !message.isError)
-    .map((message) => ({
-      id: message._id,
-      role: message.role,
-      parts: [
-        {
-          type: 'text' as const,
-          text: message.content,
-        },
-      ],
-    }))
-}
-
 export default function ComputerDetailClient({
   computerId,
   userId,
@@ -255,15 +254,24 @@ export default function ComputerDetailClient({
   userId: string
   accessToken: string
 }) {
+  const router = useRouter()
   const searchParams = useSearchParams()
+  const currentView = searchParams.get('view')
+  const requestedFileName = searchParams.get('file')?.trim() || ''
+  const requestedSessionKey = searchParams.get('sessionKey')?.trim() || null
+  const isWorkspaceFileView = currentView === 'file' && Boolean(requestedFileName)
   const justPaid = searchParams.get('paid') === '1'
   const [now] = useState(Date.now)
   const [computer, setComputer] = useState<Computer | null | undefined>(undefined)
   const [logs, setLogs] = useState<LogEvent[]>([])
+  const [sessions, setSessions] = useState<ComputerSession[]>([])
+  const [activeSessionKey, setActiveSessionKey] = useState<string | null>(requestedSessionKey)
+  const [activeSessionTitle, setActiveSessionTitle] = useState('New Chat')
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_ID)
   const [hasHydratedSelectedModel, setHasHydratedSelectedModel] = useState(false)
   const [showModelPicker, setShowModelPicker] = useState(false)
-  const [hydratedTranscript, setHydratedTranscript] = useState(false)
+  const [hydratedTranscriptKey, setHydratedTranscriptKey] = useState<string | null>(null)
+  const [isCreatingSession, setIsCreatingSession] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const transport = useMemo(
@@ -276,10 +284,11 @@ export default function ComputerDetailClient({
             messages,
             computerId,
             modelId: selectedModel,
+            sessionKey: activeSessionKey,
           },
         }),
       }),
-    [computerId, selectedModel]
+    [activeSessionKey, computerId, selectedModel]
   )
 
   const { messages, sendMessage, setMessages, status, stop, error } = useChat({ transport })
@@ -312,17 +321,124 @@ export default function ComputerDetailClient({
     if (result) setLogs(result)
   }, [accessToken, computerId, userId])
 
-  const hydrateMessages = useCallback(async () => {
-    const result = await convex.query<PersistedChatMessage[]>('computers:listChatMessages', {
-      computerId,
-      userId,
-      accessToken,
-    })
-    if (result) {
-      setMessages(mapPersistedMessages(result))
+  const loadSessions = useCallback(async () => {
+    const response = await fetch(`/api/app/computer-sessions?computerId=${computerId}`)
+    if (!response.ok) return null
+    const data = await response.json()
+    const nextSessions = Array.isArray(data.sessions) ? data.sessions as ComputerSession[] : []
+    setSessions(nextSessions)
+    return {
+      activeSessionKey: data.activeSessionKey as string | null,
+      sessions: nextSessions,
     }
-    setHydratedTranscript(true)
-  }, [accessToken, computerId, setMessages, userId])
+  }, [computerId])
+
+  const hydrateMessages = useCallback(async (sessionKey: string) => {
+    const response = await fetch(
+      `/api/app/computer-sessions?computerId=${computerId}&sessionKey=${encodeURIComponent(sessionKey)}&messages=true`
+    )
+    if (!response.ok) return
+    const data = await response.json()
+    setMessages(Array.isArray(data.messages) ? data.messages : [])
+    setHydratedTranscriptKey(sessionKey)
+  }, [computerId, setMessages])
+
+  const syncComputerRuntime = useCallback((payload: ModelUpdateResponse) => {
+    setComputer((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        chatSessionKey: payload.sessionKey,
+        chatRequestedModelId: payload.requestedModelId,
+        chatRequestedModelRef: payload.requestedModelRef,
+        chatEffectiveProvider: payload.effectiveProvider ?? undefined,
+        chatEffectiveModel: payload.effectiveModel ?? undefined,
+        chatModelResolvedAt: Date.now(),
+      }
+    })
+    setSelectedModel(payload.requestedModelId)
+    setActiveSessionKey(payload.sessionKey)
+  }, [])
+
+  const refreshSessions = useCallback(async (preferredSessionKey?: string | null) => {
+    const data = await loadSessions()
+    if (!data) return
+    const resolvedKey = preferredSessionKey || activeSessionKey
+    if (!resolvedKey) return
+    const matchingSession = data.sessions.find((session) => session.key === resolvedKey)
+    if (matchingSession) {
+      setActiveSessionTitle(matchingSession.title)
+    }
+  }, [activeSessionKey, loadSessions])
+
+  const selectSession = useCallback(async (sessionKey: string) => {
+    const response = await fetch('/api/app/computer-sessions', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        computerId,
+        sessionKey,
+      }),
+    })
+    if (!response.ok) return
+    const payload = await response.json() as ModelUpdateResponse
+    syncComputerRuntime(payload)
+    setHydratedTranscriptKey(null)
+    await fetchComputer()
+    await refreshSessions(payload.sessionKey)
+  }, [computerId, fetchComputer, refreshSessions, syncComputerRuntime])
+
+  const renameSession = useCallback(async (sessionKey: string, title: string) => {
+    if (!title.trim()) return
+    await fetch('/api/app/computer-sessions', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        computerId,
+        sessionKey,
+        label: title,
+      }),
+    })
+    setActiveSessionTitle(title)
+    await refreshSessions(sessionKey)
+  }, [computerId, refreshSessions])
+
+  const createNewSession = useCallback(async () => {
+    if (isLoading || isCreatingSession) return
+    setIsCreatingSession(true)
+    try {
+      const response = await fetch('/api/app/computer-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          computerId,
+          modelId: selectedModel,
+        }),
+      })
+      if (!response.ok) return
+      const payload = await response.json() as ModelUpdateResponse
+      syncComputerRuntime(payload)
+      setMessages([])
+      setInput('')
+      setActiveSessionTitle('New Chat')
+      setHydratedTranscriptKey(null)
+      router.push(`/app/computer/${computerId}?view=session&sessionKey=${encodeURIComponent(payload.sessionKey)}`)
+      await fetchComputer()
+      await refreshSessions(payload.sessionKey)
+    } finally {
+      setIsCreatingSession(false)
+    }
+  }, [
+    computerId,
+    fetchComputer,
+    isCreatingSession,
+    isLoading,
+    refreshSessions,
+    router,
+    selectedModel,
+    setMessages,
+    syncComputerRuntime,
+  ])
 
   useEffect(() => {
     void fetchComputer()
@@ -353,9 +469,108 @@ export default function ComputerDetailClient({
   }, [computer?.status, fetchLogs])
 
   useEffect(() => {
-    if (computer?.status !== 'ready' || hydratedTranscript) return
-    void hydrateMessages()
-  }, [computer?.status, hydrateMessages, hydratedTranscript])
+    if (computer?.status !== 'ready' || isWorkspaceFileView) return
+    let cancelled = false
+
+    async function syncSessions() {
+      const data = await loadSessions()
+      if (!data || cancelled) return
+
+      const nextActiveKey =
+        requestedSessionKey ||
+        computer?.chatSessionKey?.trim() ||
+        data.activeSessionKey ||
+        data.sessions[0]?.key ||
+        null
+
+      if (nextActiveKey) {
+        setActiveSessionKey(nextActiveKey)
+        const matchingSession = data.sessions.find((session) => session.key === nextActiveKey)
+        setActiveSessionTitle(matchingSession?.title || 'New Chat')
+        return
+      }
+
+      if (!isCreatingSession) {
+        setIsCreatingSession(true)
+        try {
+          const response = await fetch('/api/app/computer-sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ computerId, modelId: selectedModel }),
+          })
+          if (!response.ok) return
+          const payload = await response.json()
+          const createdSessionKey = payload.sessionKey as string | undefined
+          if (!createdSessionKey || cancelled) return
+          setActiveSessionKey(createdSessionKey)
+          setActiveSessionTitle('New Chat')
+          router.replace(`/app/computer/${computerId}?view=session&sessionKey=${encodeURIComponent(createdSessionKey)}`)
+          await fetchComputer()
+          await loadSessions()
+        } finally {
+          if (!cancelled) {
+            setIsCreatingSession(false)
+          }
+        }
+      }
+    }
+
+    void syncSessions()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    computer?.chatSessionKey,
+    computer?.status,
+    computerId,
+    fetchComputer,
+    isCreatingSession,
+    isWorkspaceFileView,
+    loadSessions,
+    requestedSessionKey,
+    router,
+    selectedModel,
+  ])
+
+  useEffect(() => {
+    if (requestedSessionKey) {
+      setActiveSessionKey(requestedSessionKey)
+      const matchingSession = sessions.find((session) => session.key === requestedSessionKey)
+      setActiveSessionTitle(matchingSession?.title || 'New Chat')
+    }
+  }, [requestedSessionKey, sessions])
+
+  useEffect(() => {
+    if (!activeSessionKey) return
+    const matchingSession = sessions.find((session) => session.key === activeSessionKey)
+    if (matchingSession) {
+      setActiveSessionTitle(matchingSession.title)
+    }
+  }, [activeSessionKey, sessions])
+
+  useEffect(() => {
+    if (computer?.status !== 'ready' || !requestedSessionKey) return
+    if (requestedSessionKey === computer.chatSessionKey) return
+    void selectSession(requestedSessionKey)
+  }, [computer?.chatSessionKey, computer?.status, requestedSessionKey, selectSession])
+
+  useEffect(() => {
+    setMessages([])
+    setHydratedTranscriptKey(null)
+  }, [activeSessionKey, setMessages])
+
+  useEffect(() => {
+    if (computer?.status !== 'ready' || isWorkspaceFileView || !activeSessionKey) return
+    if (hydratedTranscriptKey === activeSessionKey) return
+    void hydrateMessages(activeSessionKey)
+  }, [
+    activeSessionKey,
+    computer?.status,
+    hydrateMessages,
+    hydratedTranscriptKey,
+    isWorkspaceFileView,
+  ])
 
   useEffect(() => {
     if (hasHydratedSelectedModel || computer === undefined) return
@@ -380,6 +595,7 @@ export default function ComputerDetailClient({
     computer?.chatEffectiveProvider && computer?.chatEffectiveModel
       ? `${computer.chatEffectiveProvider}/${computer.chatEffectiveModel}`
       : computer?.chatRequestedModelRef || null
+  const headerTitle = isWorkspaceFileView ? requestedFileName : activeSessionTitle || computer?.name || 'Computer'
   const [input, setInput] = useState('')
   const slashMenuRef = useRef<HTMLDivElement>(null)
   const slashQuery = input.trimStart()
@@ -423,6 +639,7 @@ export default function ComputerDetailClient({
           body: JSON.stringify({
             computerId,
             modelId,
+            sessionKey: activeSessionKey,
           }),
         })
 
@@ -432,20 +649,10 @@ export default function ComputerDetailClient({
         }
 
         const payload = (await response.json()) as ModelUpdateResponse
-        setComputer((current) => {
-          if (!current) return current
-          return {
-            ...current,
-            chatSessionKey: payload.sessionKey,
-            chatRequestedModelId: payload.requestedModelId,
-            chatRequestedModelRef: payload.requestedModelRef,
-            chatEffectiveProvider: payload.effectiveProvider ?? undefined,
-            chatEffectiveModel: payload.effectiveModel ?? undefined,
-            chatModelResolvedAt: Date.now(),
-          }
-        })
+        syncComputerRuntime(payload)
 
         await fetchComputer()
+        await refreshSessions(payload.sessionKey)
       } catch (error) {
         console.error('[Computer Page] Failed to apply model selection:', {
           computerId,
@@ -454,12 +661,13 @@ export default function ComputerDetailClient({
         })
       }
     },
-    [computerId, fetchComputer]
+    [activeSessionKey, computerId, fetchComputer, refreshSessions, syncComputerRuntime]
   )
 
   const submitMessage = useCallback(async () => {
     const text = input.trim()
-    if (!text || isLoading) return
+    if (!text || isLoading || !activeSessionKey) return
+    const isFirstMessageInSession = !messages.some((message) => message.role === 'user')
 
     setInput('')
     await sendMessage(
@@ -471,11 +679,30 @@ export default function ComputerDetailClient({
         body: {
           computerId,
           modelId: selectedModel,
+          sessionKey: activeSessionKey,
         },
       }
     )
+    if (isFirstMessageInSession) {
+      void generateTitle(text).then((title) => {
+        if (!title) return
+        void renameSession(activeSessionKey, title)
+      })
+    }
     await fetchComputer()
-  }, [computerId, fetchComputer, input, isLoading, selectedModel, sendMessage])
+    await refreshSessions(activeSessionKey)
+  }, [
+    activeSessionKey,
+    computerId,
+    fetchComputer,
+    input,
+    isLoading,
+    messages,
+    refreshSessions,
+    renameSession,
+    selectedModel,
+    sendMessage,
+  ])
 
   useEffect(() => {
     if (!showSlashCommands) return
@@ -531,35 +758,46 @@ export default function ComputerDetailClient({
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#e5e5e5] px-4">
-        <h2 className="min-w-0 truncate text-sm font-medium text-[#0a0a0a]">{computer.name}</h2>
+        <h2 className="min-w-0 truncate text-sm font-medium text-[#0a0a0a]">{headerTitle}</h2>
 
-        {computer.status === 'ready' && (
-          <div className="relative">
+        {computer.status === 'ready' && !isWorkspaceFileView && (
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowModelPicker((current) => !current)}
-              className="flex items-center gap-1.5 rounded-md bg-[#f0f0f0] px-2.5 py-1 text-xs text-[#525252] transition-colors hover:bg-[#e8e8e8]"
+              onClick={() => void createNewSession()}
+              disabled={isLoading || isCreatingSession}
+              className="flex items-center justify-center rounded-md bg-[#f0f0f0] p-1.5 text-[#525252] transition-colors hover:bg-[#e8e8e8] disabled:cursor-not-allowed disabled:opacity-50"
+              title="New chat"
             >
-              {currentModel?.name || 'Select model'}
-              <ChevronDown size={11} />
+              {isCreatingSession ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
             </button>
-            {showModelPicker && (
-              <div className="absolute right-0 top-full z-10 mt-1 max-h-72 w-56 overflow-y-auto rounded-lg border border-[#e5e5e5] bg-white py-1 shadow-lg">
-                {AVAILABLE_MODELS.map((model) => (
-                  <button
-                    key={model.id}
-                    onClick={() => {
-                      void applyModelSelection(model.id)
-                    }}
-                    className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-[#f5f5f5] ${
-                      model.id === selectedModel ? 'font-medium text-[#0a0a0a]' : 'text-[#525252]'
-                    }`}
-                  >
-                    <span>{model.name}</span>
-                    <span className="ml-2 text-[#aaa]">{model.provider}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+
+            <div className="relative">
+              <button
+                onClick={() => setShowModelPicker((current) => !current)}
+                className="flex items-center gap-1.5 rounded-md bg-[#f0f0f0] px-2.5 py-1 text-xs text-[#525252] transition-colors hover:bg-[#e8e8e8]"
+              >
+                {currentModel?.name || 'Select model'}
+                <ChevronDown size={11} />
+              </button>
+              {showModelPicker && (
+                <div className="absolute right-0 top-full z-10 mt-1 max-h-72 w-56 overflow-y-auto rounded-lg border border-[#e5e5e5] bg-white py-1 shadow-lg">
+                  {AVAILABLE_MODELS.map((model) => (
+                    <button
+                      key={model.id}
+                      onClick={() => {
+                        void applyModelSelection(model.id)
+                      }}
+                      className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-[#f5f5f5] ${
+                        model.id === selectedModel ? 'font-medium text-[#0a0a0a]' : 'text-[#525252]'
+                      }`}
+                    >
+                      <span>{model.name}</span>
+                      <span className="ml-2 text-[#aaa]">{model.provider}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -593,155 +831,163 @@ export default function ComputerDetailClient({
         ))}
 
       {computer.status === 'ready' && (
-        <div className="flex min-h-0 flex-1 flex-col bg-[#fbfbfb]">
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
-              {messages.length === 0 && !isLoading && (
-                <div className="rounded-2xl border border-dashed border-[#ddd] bg-white px-5 py-6 text-center">
-                  <p className="text-sm text-[#444]">Your computer is ready.</p>
-                  <p className="mt-1 text-xs text-[#888]">
-                    Ask OpenClaw to inspect the machine, run setup steps, or help with tasks on the VPS.
-                  </p>
-                </div>
-              )}
-
-              {messages.map((message) => {
-                const text = getMessageText(message)
-                const isAssistantStreaming = isLoading && message.id === lastMessage?.id && message.role === 'assistant'
-
-                return (
-                  <div
-                    key={message.id}
-                    className={`flex message-appear ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    {message.role === 'user' ? (
-                      <div className="max-w-[75%] space-y-2">
-                        {text && (
-                          <div className="rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm text-[#fafafa]">
-                            <span className="whitespace-pre-wrap">{text}</span>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="w-full space-y-2">
-                        {text && (
-                          <div className="w-full px-1 py-1 text-sm leading-relaxed text-[#0a0a0a]">
-                            <MarkdownMessage text={text} isStreaming={isAssistantStreaming} />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-
-              {showLoadingIndicator && (
-                <div className="px-1 py-2">
-                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#e0e0e0] border-t-[#525252]" />
-                </div>
-              )}
-
-              {errorMessage && (
-                <div className="flex justify-start">
-                  <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
-                    <AlertCircle size={12} />
-                    {errorMessage}
-                  </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-          </div>
-
-          <div className="px-4 pb-4">
-            <div className="mx-auto w-full max-w-4xl">
-              <div className="relative">
-                {showSlashCommands && (
-                  <div
-                    ref={slashMenuRef}
-                    className="absolute bottom-full left-0 right-0 mb-2 max-h-[22rem] overflow-y-auto overscroll-contain rounded-2xl border border-[#e5e5e5] bg-white p-2 shadow-lg"
-                  >
-                    <div className="sticky top-0 z-10 mb-2 flex items-center gap-2 border-b border-[#f0f0f0] bg-white px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-[#8a8a8a]">
-                      <Terminal size={12} />
-                      OpenClaw Slash Commands
-                    </div>
-                    {slashCommands.map((entry, index) => (
-                      <button
-                        key={entry.command}
-                        type="button"
-                        data-command-index={index}
-                        onClick={() => insertSlashCommand(entry.command)}
-                        className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-3 rounded-xl px-3 py-2 text-left transition-colors ${
-                          index === activeSlashIndex ? 'bg-[#f5f5f5]' : 'hover:bg-[#fafafa]'
-                        }`}
-                      >
-                        <span className="min-w-0 text-[11px] text-[#8a8a8a]">{entry.description}</span>
-                        <span className="whitespace-nowrap text-xs font-medium text-[#0a0a0a]">{entry.command}</span>
-                      </button>
-                    ))}
+        isWorkspaceFileView ? (
+          <ComputerWorkspaceFileView
+            key={requestedFileName}
+            computerId={computerId}
+            fileName={requestedFileName}
+          />
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col bg-[#fbfbfb]">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
+                {messages.length === 0 && !isLoading && (
+                  <div className="rounded-2xl border border-dashed border-[#ddd] bg-white px-5 py-6 text-center">
+                    <p className="text-sm text-[#444]">Your computer is ready.</p>
+                    <p className="mt-1 text-xs text-[#888]">
+                      Ask OpenClaw to inspect the machine, run setup steps, or help with tasks on the VPS.
+                    </p>
                   </div>
                 )}
 
-                <div className="flex items-end gap-2 rounded-2xl bg-[#f0f0f0] px-4 py-3">
-                  <textarea
-                    value={input}
-                    onChange={(event) => {
-                      setInput(event.target.value)
-                      setActiveSlashIndex(0)
-                    }}
-                    placeholder="Ask the computer to do something or type / for OpenClaw commands..."
-                    rows={1}
-                    onKeyDown={(event) => {
-                      if (showSlashCommands && event.key === 'ArrowDown') {
-                        event.preventDefault()
-                        setActiveSlashIndex((current) => (current + 1) % slashCommands.length)
-                        return
-                      }
+                {messages.map((message) => {
+                  const text = getMessageText(message)
+                  const isAssistantStreaming = isLoading && message.id === lastMessage?.id && message.role === 'assistant'
 
-                      if (showSlashCommands && event.key === 'ArrowUp') {
-                        event.preventDefault()
-                        setActiveSlashIndex((current) => (current - 1 + slashCommands.length) % slashCommands.length)
-                        return
-                      }
-
-                      if (showSlashCommands && event.key === 'Tab') {
-                        event.preventDefault()
-                        const activeCommand = slashCommands[activeSlashIndex]
-                        if (activeCommand) {
-                          insertSlashCommand(activeCommand.command)
-                        }
-                        return
-                      }
-
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault()
-                        void submitMessage()
-                      }
-                    }}
-                    className="max-h-32 flex-1 resize-none bg-transparent text-sm text-[#0a0a0a] outline-none placeholder:text-[#aaa]"
-                  />
-                  {isLoading ? (
-                    <button
-                      onClick={() => stop()}
-                      className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333]"
-                      title="Stop generating"
+                  return (
+                    <div
+                      key={message.id}
+                      className={`flex message-appear ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
-                      <div className="h-3.5 w-3.5 rounded-sm bg-[#fafafa]" />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => void submitMessage()}
-                      disabled={!input.trim()}
-                      className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333] disabled:opacity-40"
+                      {message.role === 'user' ? (
+                        <div className="max-w-[75%] space-y-2">
+                          {text && (
+                            <div className="rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm text-[#fafafa]">
+                              <span className="whitespace-pre-wrap">{text}</span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="w-full space-y-2">
+                          {text && (
+                            <div className="w-full px-1 py-1 text-sm leading-relaxed text-[#0a0a0a]">
+                              <MarkdownMessage text={text} isStreaming={isAssistantStreaming} />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+
+                {showLoadingIndicator && (
+                  <div className="px-1 py-2">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#e0e0e0] border-t-[#525252]" />
+                  </div>
+                )}
+
+                {errorMessage && (
+                  <div className="flex justify-start">
+                    <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                      <AlertCircle size={12} />
+                      {errorMessage}
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            <div className="px-4 pb-4">
+              <div className="mx-auto w-full max-w-4xl">
+                <div className="relative">
+                  {showSlashCommands && (
+                    <div
+                      ref={slashMenuRef}
+                      className="absolute bottom-full left-0 right-0 mb-2 max-h-[22rem] overflow-y-auto overscroll-contain rounded-2xl border border-[#e5e5e5] bg-white p-2 shadow-lg"
                     >
-                      <Send size={14} />
-                    </button>
+                      <div className="sticky top-0 z-10 mb-2 flex items-center gap-2 border-b border-[#f0f0f0] bg-white px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-[#8a8a8a]">
+                        <Terminal size={12} />
+                        OpenClaw Slash Commands
+                      </div>
+                      {slashCommands.map((entry, index) => (
+                        <button
+                          key={entry.command}
+                          type="button"
+                          data-command-index={index}
+                          onClick={() => insertSlashCommand(entry.command)}
+                          className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-3 rounded-xl px-3 py-2 text-left transition-colors ${
+                            index === activeSlashIndex ? 'bg-[#f5f5f5]' : 'hover:bg-[#fafafa]'
+                          }`}
+                        >
+                          <span className="min-w-0 text-[11px] text-[#8a8a8a]">{entry.description}</span>
+                          <span className="whitespace-nowrap text-xs font-medium text-[#0a0a0a]">{entry.command}</span>
+                        </button>
+                      ))}
+                    </div>
                   )}
+
+                  <div className="flex items-end gap-2 rounded-2xl bg-[#f0f0f0] px-4 py-3">
+                    <textarea
+                      value={input}
+                      onChange={(event) => {
+                        setInput(event.target.value)
+                        setActiveSlashIndex(0)
+                      }}
+                      placeholder="Ask the computer to do something or type / for OpenClaw commands..."
+                      rows={1}
+                      onKeyDown={(event) => {
+                        if (showSlashCommands && event.key === 'ArrowDown') {
+                          event.preventDefault()
+                          setActiveSlashIndex((current) => (current + 1) % slashCommands.length)
+                          return
+                        }
+
+                        if (showSlashCommands && event.key === 'ArrowUp') {
+                          event.preventDefault()
+                          setActiveSlashIndex((current) => (current - 1 + slashCommands.length) % slashCommands.length)
+                          return
+                        }
+
+                        if (showSlashCommands && event.key === 'Tab') {
+                          event.preventDefault()
+                          const activeCommand = slashCommands[activeSlashIndex]
+                          if (activeCommand) {
+                            insertSlashCommand(activeCommand.command)
+                          }
+                          return
+                        }
+
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault()
+                          void submitMessage()
+                        }
+                      }}
+                      className="max-h-32 flex-1 resize-none bg-transparent text-sm text-[#0a0a0a] outline-none placeholder:text-[#aaa]"
+                    />
+                    {isLoading ? (
+                      <button
+                        onClick={() => stop()}
+                        className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333]"
+                        title="Stop generating"
+                      >
+                        <div className="h-3.5 w-3.5 rounded-sm bg-[#fafafa]" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => void submitMessage()}
+                        disabled={!input.trim() || !activeSessionKey}
+                        className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333] disabled:opacity-40"
+                      >
+                        <Send size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+        )
       )}
 
       {computer.status === 'past_due' && (

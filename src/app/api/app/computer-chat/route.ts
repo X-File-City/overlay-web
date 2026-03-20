@@ -99,15 +99,17 @@ interface AuthenticatedComputerContext {
   computerId: string
   connection: ComputerConnectionInfo
   persistedRequestedModelId?: string
+  persistedSessionKey?: string
   userId: string
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages, computerId, modelId }: {
+    const { messages, computerId, modelId, sessionKey: requestedSessionKey }: {
       messages: UIMessage[]
       computerId?: string
       modelId?: string
+      sessionKey?: string
     } = await request.json()
 
     if (!computerId) {
@@ -119,10 +121,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Message cannot be empty' }, { status: 400 })
     }
 
-    const { accessToken, connection, persistedRequestedModelId, userId } =
+    const { accessToken, connection, persistedRequestedModelId, persistedSessionKey, userId } =
       await getAuthenticatedComputerContext(computerId)
 
-    const sessionKey = getComputerSessionKey(userId, computerId)
+    const sessionKey =
+      requestedSessionKey?.trim() ||
+      persistedSessionKey?.trim() ||
+      getComputerSessionKey(userId, computerId)
     const selectedModelId =
       persistedRequestedModelId?.trim() || modelId?.trim() || DEFAULT_MODEL_ID
     const requestedModelRef =
@@ -314,7 +319,15 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const { computerId, modelId }: { computerId?: string; modelId?: string } = await request.json()
+    const {
+      computerId,
+      modelId,
+      sessionKey: requestedSessionKey,
+    }: {
+      computerId?: string
+      modelId?: string
+      sessionKey?: string
+    } = await request.json()
 
     if (!computerId) {
       return NextResponse.json({ error: 'Computer ID is required' }, { status: 400 })
@@ -328,8 +341,12 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Unknown model selection' }, { status: 400 })
     }
 
-    const { accessToken, connection, userId } = await getAuthenticatedComputerContext(computerId)
-    const sessionKey = getComputerSessionKey(userId, computerId)
+    const { accessToken, connection, persistedSessionKey, userId } =
+      await getAuthenticatedComputerContext(computerId)
+    const sessionKey =
+      requestedSessionKey?.trim() ||
+      persistedSessionKey?.trim() ||
+      getComputerSessionKey(userId, computerId)
     const sessionModelBefore = await readGatewaySessionModel({
       ip: connection.hetznerServerIp,
       gatewayToken: connection.gatewayToken,
@@ -393,7 +410,7 @@ export async function PATCH(request: NextRequest) {
       ok: true,
       requestedModelId: selectedModelId,
       requestedModelRef,
-      sessionKey,
+      sessionKey: latestSessionModel?.sessionKey ?? sessionKey,
       effectiveProvider: latestSessionModel?.provider ?? null,
       effectiveModel: latestSessionModel?.model ?? null,
     })
@@ -430,6 +447,7 @@ async function getAuthenticatedComputerContext(
 
   const computer = await convex.query<{
     chatRequestedModelId?: string
+    chatSessionKey?: string
   } | null>(
     'computers:get',
     {
@@ -445,6 +463,7 @@ async function getAuthenticatedComputerContext(
     computerId,
     connection,
     persistedRequestedModelId: computer?.chatRequestedModelId,
+    persistedSessionKey: computer?.chatSessionKey,
     userId,
   }
 }
