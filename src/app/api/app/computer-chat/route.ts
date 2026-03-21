@@ -21,18 +21,16 @@ interface ComputerConnectionInfo {
   hetznerServerIp: string
 }
 
-interface SessionTokenSnapshot {
-  inputTokens: number
-  outputTokens: number
-  totalTokens: number
-  cacheRead: number
-}
-
 interface GatewaySessionModelState {
   sessionKey: string
   provider?: string
   model?: string
-  tokenSnapshot?: SessionTokenSnapshot
+  tokenSnapshot?: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    cacheRead: number
+  }
 }
 
 interface GatewaySessionsPatchPayload {
@@ -86,6 +84,11 @@ interface GatewayChatEventPayload {
   seq?: number
   message?: OpenClawTranscriptMessage
   errorMessage?: string
+}
+
+interface StreamResult {
+  text: string
+  usage: OpenClawTranscriptUsage | null
 }
 
 interface GatewayEventFrame {
@@ -258,12 +261,6 @@ export async function POST(request: NextRequest) {
       sessionHasConversationHistory: baselineHasConversationHistory,
     })
 
-    const preTurnTokens = await fetchSessionTokenSnapshot({
-      ip: connection.hetznerServerIp,
-      gatewayToken: connection.gatewayToken,
-      sessionKey,
-    }).catch(() => null)
-
     console.log('[Computer Chat API][Debug] POST baseline', {
       computerId,
       sessionKey,
@@ -283,7 +280,7 @@ export async function POST(request: NextRequest) {
         try {
           writer.write({ type: 'text-start', id: textId })
 
-          assistantText = await streamAssistantReplyFromGateway({
+          const streamResult = await streamAssistantReplyFromGateway({
             ip: connection.hetznerServerIp,
             gatewayToken: connection.gatewayToken,
             sessionKey,
@@ -293,6 +290,7 @@ export async function POST(request: NextRequest) {
               writer.write({ type: 'text-delta', id: textId, delta })
             },
           })
+          assistantText = streamResult.text
 
           writer.write({ type: 'text-end', id: textId })
 
@@ -348,58 +346,49 @@ export async function POST(request: NextRequest) {
           })
 
           // ── Usage recording ────────────────────────────────────────────────────
-          const postTurnTokens = latestSessionModel?.tokenSnapshot ?? null
-          const assistantUsage = latestAssistantMessage
+          // Priority: 1) stream usage (from final event), 2) transcript message usage, 3) char estimate
+          const streamUsage = streamResult.usage
+          const transcriptUsage = latestAssistantMessage
             ? extractTranscriptMessageUsage(latestAssistantMessage)
             : null
-          const hasAssistantUsage = Boolean(
-            assistantUsage && (
-              assistantUsage.inputTokens !== undefined ||
-              assistantUsage.outputTokens !== undefined ||
-              assistantUsage.cacheReadTokens !== undefined
-            )
-          )
-          const snapshotsAvailable = !!(postTurnTokens && preTurnTokens)
 
-          const outputDelta = snapshotsAvailable
-            ? Math.max(0, postTurnTokens!.outputTokens - preTurnTokens!.outputTokens)
-            : null
-          const totalDelta = snapshotsAvailable
-            ? Math.max(0, postTurnTokens!.totalTokens - preTurnTokens!.totalTokens)
-            : null
-          const cacheReadDelta = snapshotsAvailable
-            ? Math.max(0, postTurnTokens!.cacheRead - preTurnTokens!.cacheRead)
-            : null
-          const compactionDetected =
-            totalDelta !== null && outputDelta !== null && totalDelta < outputDelta
-          const freshInputDelta = compactionDetected
-            ? (preTurnTokens?.totalTokens ?? null)
-            : (totalDelta !== null && outputDelta !== null)
-              ? Math.max(0, totalDelta - outputDelta)
-              : null
-
-          const outputText = latestAssistantMessage
-            ? extractTranscriptMessageText(latestAssistantMessage)
-            : finalText
+          // Resolve input tokens: prefer stream > transcript > char estimate
+          const resolvedInputFromStream = streamUsage?.inputTokens ?? streamUsage?.input
+          const resolvedInputFromTranscript = transcriptUsage?.inputTokens
           const inputChars = baselineHistory.messages.reduce(
             (sum, msg) => sum + extractTranscriptMessageText(msg).length,
             0
           ) + latestUserText.length
-          const finalInputTokens = assistantUsage?.inputTokens ?? freshInputDelta ?? Math.ceil(inputChars / 4)
-          const finalOutputTokens = assistantUsage?.outputTokens ?? outputDelta ?? Math.ceil(outputText.length / 4)
-          const finalCacheRead = assistantUsage?.cacheReadTokens ?? cacheReadDelta ?? 0
+          const finalInputTokens = resolvedInputFromStream ?? resolvedInputFromTranscript ?? Math.ceil(inputChars / 4)
+
+          // Resolve output tokens: prefer stream > transcript > char estimate
+          const resolvedOutputFromStream = streamUsage?.outputTokens ?? streamUsage?.output
+          const resolvedOutputFromTranscript = transcriptUsage?.outputTokens
+          const outputText = latestAssistantMessage
+            ? extractTranscriptMessageText(latestAssistantMessage)
+            : finalText
+          const finalOutputTokens = resolvedOutputFromStream ?? resolvedOutputFromTranscript ?? Math.ceil(outputText.length / 4)
+
+          // Resolve cache read tokens
+          const finalCacheRead = streamUsage?.cacheRead ?? transcriptUsage?.cacheReadTokens ?? 0
           const costDollars = calculateTokenCost(selectedModelId, finalInputTokens, finalCacheRead, finalOutputTokens)
           const costCents = Math.ceil(costDollars * 100)
-          const tokenSource = hasAssistantUsage ? 'message-usage' : snapshotsAvailable ? 'derived' : 'estimated'
+          const tokenSource = (resolvedInputFromStream != null || resolvedOutputFromStream != null)
+            ? 'stream-usage'
+            : (resolvedInputFromTranscript != null || resolvedOutputFromTranscript != null)
+              ? 'transcript-usage'
+              : 'estimated'
           console.log(
             `[Computer Chat] 💰 Cost (${tokenSource}): model=${selectedModelId} | ` +
             `in=${finalInputTokens} out=${finalOutputTokens} cacheRead=${finalCacheRead} | ` +
             `$${costDollars.toFixed(4)} = ${costCents}¢`
           )
-          if (!hasAssistantUsage && !snapshotsAvailable) {
-            console.log('[Computer Chat] ⚠️  Token snapshots unavailable, fell back to char estimate:', {
-              preTurnTokens,
-              postTurnTokens,
+          if (tokenSource === 'estimated') {
+            console.log('[Computer Chat] ⚠️  No usage data from stream or transcript, fell back to char estimate', {
+              inputChars,
+              outputChars: outputText.length,
+              streamUsage,
+              transcriptUsage,
             })
           }
           if (costCents > 0) {
@@ -691,14 +680,14 @@ async function streamAssistantReplyFromGateway(params: {
   sessionKey: string
   message: string
   onText: (delta: string) => void
-}): Promise<string> {
+}): Promise<StreamResult> {
   const ws = await openGatewaySocket(params.ip)
   let assistantText = ''
 
   try {
     await connectGatewaySocket(ws, params.gatewayToken)
 
-    assistantText = await runGatewayChatStream(ws, {
+    const result = await runGatewayChatStream(ws, {
       message: params.message,
       sessionKey: params.sessionKey,
       onText: (delta) => {
@@ -707,11 +696,11 @@ async function streamAssistantReplyFromGateway(params: {
         params.onText(delta)
       },
     })
+
+    return result
   } finally {
     ws.close()
   }
-
-  return assistantText
 }
 
 function normalizeTranscriptMessages(payload: SessionHistoryResponse): OpenClawTranscriptMessage[] {
@@ -1020,12 +1009,13 @@ async function runGatewayChatStream(
     sessionKey: string
     onText: (delta: string) => void
   }
-): Promise<string> {
+): Promise<StreamResult> {
   const requestId = crypto.randomUUID()
   const idempotencyKey = crypto.randomUUID()
   let assistantText = ''
+  let capturedUsage: OpenClawTranscriptUsage | null = null
 
-  return await new Promise<string>((resolve, reject) => {
+  return await new Promise<StreamResult>((resolve, reject) => {
     const timeoutId = setTimeout(() => {
       cleanup()
       reject(new Error('OpenClaw request timed out after 4 minutes.'))
@@ -1040,14 +1030,25 @@ async function runGatewayChatStream(
       ws.removeEventListener('close', handleClose)
     }
 
-    const finish = (value: string) => {
+    const finish = (text: string) => {
       cleanup()
-      resolve(value)
+      resolve({ text, usage: capturedUsage })
     }
 
     const fail = (error: Error) => {
       cleanup()
       reject(error)
+    }
+
+    const captureUsageFromMessage = (message?: OpenClawTranscriptMessage) => {
+      if (!message?.usage) return
+      const u = message.usage
+      if (
+        typeof u.input === 'number' || typeof u.inputTokens === 'number' ||
+        typeof u.output === 'number' || typeof u.outputTokens === 'number'
+      ) {
+        capturedUsage = u
+      }
     }
 
     const handleError = () => {
@@ -1085,6 +1086,7 @@ async function runGatewayChatStream(
         }
 
         if (payload.state === 'final' || payload.state === 'aborted') {
+          captureUsageFromMessage(payload.message)
           const finalText = extractTranscriptMessageText(payload.message ?? {})
           if (finalText && !assistantText) {
             assistantText = finalText
@@ -1135,6 +1137,7 @@ async function runGatewayChatStream(
         return
       }
 
+      captureUsageFromMessage(payload?.message)
       const finalText =
         extractTranscriptMessageText(payload?.message ?? {}) || extractGatewayResultText(payload?.result)
       if (finalText && !assistantText) {
@@ -1300,41 +1303,6 @@ function buildGatewayResponseError(frame: GatewayResponseFrame, fallbackMessage:
       : null
 
   return new Error(payload?.summary || frame.error?.message || fallbackMessage)
-}
-
-async function fetchSessionTokenSnapshot(params: {
-  ip: string
-  gatewayToken: string
-  sessionKey: string
-}): Promise<SessionTokenSnapshot> {
-  const ws = await openGatewaySocket(params.ip)
-  try {
-    await connectGatewaySocket(ws, params.gatewayToken)
-    const response = await waitForGatewayResponse(ws, {
-      requestId: crypto.randomUUID(),
-      method: 'sessions.list',
-      params: {},
-    })
-    const payload =
-      response.payload && typeof response.payload === 'object'
-        ? (response.payload as GatewaySessionsListPayload)
-        : null
-    const sessionRow =
-      payload?.sessions?.find((s) => s.key === params.sessionKey) ??
-      payload?.sessions?.find((s) => {
-        const key = s.key?.trim().toLowerCase()
-        return key?.endsWith(`:${params.sessionKey.toLowerCase()}`) ?? false
-      }) ??
-      null
-    return {
-      inputTokens: sessionRow?.inputTokens ?? 0,
-      outputTokens: sessionRow?.outputTokens ?? 0,
-      totalTokens: sessionRow?.totalTokens ?? 0,
-      cacheRead: sessionRow?.cacheRead ?? 0,
-    }
-  } finally {
-    ws.close()
-  }
 }
 
 async function readGatewaySessionModel(params: {
