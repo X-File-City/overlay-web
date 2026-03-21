@@ -71,22 +71,21 @@ function UsageBar({ entitlements }: { entitlements: Entitlements | null }) {
 
   const creditsTotalCents = creditsTotal * 100
   if (creditsTotalCents <= 0) return <p className="text-[11px] text-[#aaa]">No credit limit set</p>
-  const pct = Math.min(100, Math.round((creditsUsed / creditsTotalCents) * 100))
-  const remaining = Math.max(0, creditsTotalCents - creditsUsed)
-  const remainingDollars = (remaining / 100).toFixed(2)
-  const exhausted = remaining <= 0
-  const warning = pct >= 80
+  const usedPct = Math.min(100, (creditsUsed / creditsTotalCents) * 100)
+  const remainingPct = Math.max(0, Math.round(100 - usedPct))
+  const exhausted = remainingPct <= 0
+  const warning = usedPct >= 80
 
   return (
     <div className={`flex flex-col gap-1 text-xs ${exhausted ? 'text-red-500' : warning ? 'text-amber-500' : 'text-[#aaa]'}`}>
       <div className="flex items-center justify-between">
-        <span>${remainingDollars} remaining</span>
+        <span>{remainingPct}% remaining</span>
         {exhausted && <AlertCircle size={11} />}
       </div>
       <div className="h-1 rounded-full bg-[#e5e5e5] overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${exhausted ? 'bg-red-400' : warning ? 'bg-amber-400' : 'bg-[#0a0a0a]'}`}
-          style={{ width: `${pct}%` }}
+          style={{ width: `${remainingPct}%` }}
         />
       </div>
     </div>
@@ -120,10 +119,12 @@ export default function AppSidebar({ user, accessToken }: { user: AuthUser; acce
 
   useEffect(() => {
     if (!accountMenuOpen) return
-    const timeoutId = window.setTimeout(() => {
-      void loadEntitlements()
-    }, 0)
-    return () => window.clearTimeout(timeoutId)
+    const initialId = window.setTimeout(() => { void loadEntitlements() }, 0)
+    const intervalId = window.setInterval(() => { void loadEntitlements() }, 30_000)
+    return () => {
+      window.clearTimeout(initialId)
+      window.clearInterval(intervalId)
+    }
   }, [accountMenuOpen, loadEntitlements])
 
   // Close menu on outside click

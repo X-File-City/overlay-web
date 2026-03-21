@@ -33,8 +33,8 @@ export const IMAGE_GENERATION_PRICING: Record<string, ImageGenerationPricing> = 
   'bfl/flux-2-max': { perImage: 0.12 },
   // xAI Grok Imagine Image Pro — $0.07/image
   'xai/grok-imagine-image-pro': { perImage: 0.07 },
-  // xAI Grok Imagine Image — $0.05/image
-  'xai/grok-imagine-image': { perImage: 0.05 },
+  // xAI Grok Imagine Image — $0.02/image
+  'xai/grok-imagine-image': { perImage: 0.02 },
   // Prodia FLUX Schnell — ultra-fast, $0.003/image
   'prodia/flux-fast-schnell': { perImage: 0.003 },
 }
@@ -44,12 +44,12 @@ export const VIDEO_GENERATION_PRICING: Record<string, VideoGenerationPricing> = 
   'google/veo-3.1-generate-001': { billingUnit: 'per_video', rate: 0.1681 },
   // Google Veo 3.1 Fast — ~$0.084/video (estimated ~50% of 3.1)
   'google/veo-3.1-fast-generate-001': { billingUnit: 'per_video', rate: 0.084 },
-  // ByteDance Seedance v1.5 Pro — $0.0247/second
-  'bytedance/seedance-v1.5-pro': { billingUnit: 'per_second', rate: 0.0247 },
-  // xAI Grok Imagine Video — $0.0639/video (per-video billing)
-  'xai/grok-imagine-video': { billingUnit: 'per_video', rate: 0.0639 },
-  // Alibaba Wan v2.6 — $0.0708/second
-  'alibaba/wan-v2.6-t2v': { billingUnit: 'per_second', rate: 0.0708 },
+  // ByteDance Seedance v1.5 Pro — $0.0259/second (720p, no audio)
+  'bytedance/seedance-v1.5-pro': { billingUnit: 'per_second', rate: 0.0259 },
+  // xAI Grok Imagine Video — $0.07/second (720p)
+  'xai/grok-imagine-video': { billingUnit: 'per_second', rate: 0.07 },
+  // Alibaba Wan v2.6 — $0.10/second (720p)
+  'alibaba/wan-v2.6-t2v': { billingUnit: 'per_second', rate: 0.10 },
 }
 
 /**

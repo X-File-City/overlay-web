@@ -44,13 +44,16 @@ export async function POST(request: NextRequest) {
 
     if (entitlements) {
       const { tier, creditsUsed, creditsTotal } = entitlements
+      const creditsTotalCents = creditsTotal * 100
+      const remainingCents = creditsTotalCents - creditsUsed
+      const usedPct = creditsTotalCents > 0 ? ((creditsUsed / creditsTotalCents) * 100).toFixed(2) : '0.00'
+      console.log(`[GenerateImage] 📊 Entitlements: tier=${tier} | used=${creditsUsed}¢ / ${creditsTotalCents}¢ (${usedPct}% used, $${(remainingCents / 100).toFixed(4)} remaining) | userId=${userId}`)
       if (tier === 'free') {
         return NextResponse.json(
           { error: 'generation_not_allowed', message: 'Image generation requires a Pro subscription.' },
           { status: 403 }
         )
       }
-      const remainingCents = creditsTotal * 100 - creditsUsed
       if (remainingCents <= 0) {
         return NextResponse.json(
           { error: 'insufficient_credits', message: 'No credits remaining. Please top up your account.' },
@@ -166,8 +169,9 @@ export async function POST(request: NextRequest) {
     // ── Usage tracking ────────────────────────────────────────────────────────
     const costDollars = calculateImageCost(usedModelId)
     const costCents = Math.round(costDollars * 100)
+    console.log(`[GenerateImage] 💰 Cost: model=${usedModelId} | $${costDollars.toFixed(4)} = ${costCents}¢`)
     if (costCents > 0) {
-      convex.mutation('usage:recordBatch', {
+      const recordResult = await convex.mutation('usage:recordBatch', {
         accessToken: session.accessToken,
         userId,
         events: [{
@@ -179,7 +183,19 @@ export async function POST(request: NextRequest) {
           cost: costCents,
           timestamp: Date.now(),
         }],
-      }).catch((err) => console.error('[GenerateImage] Failed to record usage:', err))
+      })
+      if (recordResult) {
+        const updated = await convex.query<Entitlements>('usage:getEntitlements', { accessToken: session.accessToken, userId })
+        if (updated) {
+          const totalCents = updated.creditsTotal * 100
+          const usedPct = totalCents > 0 ? ((updated.creditsUsed / totalCents) * 100).toFixed(2) : '0.00'
+          console.log(`[GenerateImage] ✅ Usage recorded | new state: ${updated.creditsUsed}¢ / ${totalCents}¢ (${usedPct}% used, $${((totalCents - updated.creditsUsed) / 100).toFixed(4)} remaining)`)
+        }
+      } else {
+        console.error(`[GenerateImage] ❌ recordBatch returned null — check server logs for Convex error`)
+      }
+    } else {
+      console.log(`[GenerateImage] ⚠️  Cost is 0¢ for model=${usedModelId} — usage not recorded`)
     }
 
     return NextResponse.json({ outputId, url: dataUrl, modelUsed: usedModelId })

@@ -52,12 +52,15 @@ export async function POST(request: NextRequest) {
 
         if (entitlements) {
           const { tier, creditsUsed, creditsTotal } = entitlements
+          const creditsTotalCents = creditsTotal * 100
+          const remainingCents = creditsTotalCents - creditsUsed
+          const usedPct = creditsTotalCents > 0 ? ((creditsUsed / creditsTotalCents) * 100).toFixed(2) : '0.00'
+          console.log(`[GenerateVideo] 📊 Entitlements: tier=${tier} | used=${creditsUsed}¢ / ${creditsTotalCents}¢ (${usedPct}% used, $${(remainingCents / 100).toFixed(4)} remaining) | userId=${userId}`)
           if (tier === 'free') {
             controller.enqueue(encode(sseChunk({ type: 'error', error: 'generation_not_allowed', message: 'Video generation requires a Pro subscription.' })))
             controller.close()
             return
           }
-          const remainingCents = creditsTotal * 100 - creditsUsed
           if (remainingCents <= 0) {
             controller.enqueue(encode(sseChunk({ type: 'error', error: 'insufficient_credits', message: 'No credits remaining. Please top up your account.' })))
             controller.close()
@@ -161,11 +164,12 @@ export async function POST(request: NextRequest) {
           console.error('[GenerateVideo] Failed to update output:', err)
         }
 
-        // ── Usage tracking ────────────────────────────────────────────────────
+        // ── Usage tracking ────────────────────────────────────────────────────────
         const costDollars = calculateVideoCost(usedModelId, effectiveDuration)
         const costCents = Math.round(costDollars * 100)
+        console.log(`[GenerateVideo] 💰 Cost: model=${usedModelId} | duration=${effectiveDuration}s | $${costDollars.toFixed(4)} = ${costCents}¢`)
         if (costCents > 0) {
-          convex.mutation('usage:recordBatch', {
+          const recordResult = await convex.mutation('usage:recordBatch', {
             accessToken: session.accessToken,
             userId,
             events: [{
@@ -177,7 +181,19 @@ export async function POST(request: NextRequest) {
               cost: costCents,
               timestamp: Date.now(),
             }],
-          }).catch((err) => console.error('[GenerateVideo] Failed to record usage:', err))
+          })
+          if (recordResult) {
+            const updated = await convex.query<Entitlements>('usage:getEntitlements', { accessToken: session.accessToken, userId })
+            if (updated) {
+              const totalCents = updated.creditsTotal * 100
+              const usedPct = totalCents > 0 ? ((updated.creditsUsed / totalCents) * 100).toFixed(2) : '0.00'
+              console.log(`[GenerateVideo] ✅ Usage recorded | new state: ${updated.creditsUsed}¢ / ${totalCents}¢ (${usedPct}% used, $${((totalCents - updated.creditsUsed) / 100).toFixed(4)} remaining)`)
+            }
+          } else {
+            console.error(`[GenerateVideo] ❌ recordBatch returned null — check server logs for Convex error`)
+          }
+        } else {
+          console.log(`[GenerateVideo] ⚠️  Cost is 0¢ for model=${usedModelId} — usage not recorded`)
         }
 
         controller.enqueue(encode(sseChunk({ type: 'completed', outputId, url: dataUrl, modelUsed: usedModelId })))

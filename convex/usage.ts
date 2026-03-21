@@ -146,7 +146,8 @@ export const recordBatch = mutation({
           v.literal('write'),
           v.literal('agent'),
           v.literal('embedding'),
-          v.literal('transcription')
+          v.literal('transcription'),
+          v.literal('generation')
         ),
         modelId: v.optional(v.string()),
         inputTokens: v.optional(v.number()),
@@ -287,7 +288,8 @@ export const recordUsage = mutation({
       v.literal('write'),
       v.literal('agent'),
       v.literal('embedding'),
-      v.literal('transcription')
+      v.literal('transcription'),
+      v.literal('generation')
     ),
     modelId: v.optional(v.string()),
     inputTokens: v.optional(v.number()),
