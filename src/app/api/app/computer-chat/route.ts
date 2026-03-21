@@ -21,10 +21,18 @@ interface ComputerConnectionInfo {
   hetznerServerIp: string
 }
 
+interface SessionTokenSnapshot {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cacheRead: number
+}
+
 interface GatewaySessionModelState {
   sessionKey: string
   provider?: string
   model?: string
+  tokenSnapshot?: SessionTokenSnapshot
 }
 
 interface GatewaySessionsPatchPayload {
@@ -41,6 +49,10 @@ interface GatewaySessionsListPayload {
     key?: string
     modelProvider?: string | null
     model?: string | null
+    inputTokens?: number
+    outputTokens?: number
+    totalTokens?: number
+    cacheRead?: number
   }>
 }
 
@@ -82,14 +94,29 @@ interface GatewayEventFrame {
   payload?: GatewayChatEventPayload
 }
 
+interface OpenClawTranscriptUsage {
+  input?: number
+  output?: number
+  totalTokens?: number
+  inputTokens?: number
+  outputTokens?: number
+  cacheRead?: number
+  cacheWrite?: number
+}
+
 interface OpenClawTranscriptMessage {
   role?: string
   provider?: string
   model?: string
-  content?: Array<{
+  text?: string
+  content?: string | Array<{
     type?: string
     text?: string
   }>
+  usage?: OpenClawTranscriptUsage
+  cost?: {
+    total?: number
+  }
   __openclaw?: {
     seq?: number
     id?: string
@@ -231,6 +258,12 @@ export async function POST(request: NextRequest) {
       sessionHasConversationHistory: baselineHasConversationHistory,
     })
 
+    const preTurnTokens = await fetchSessionTokenSnapshot({
+      ip: connection.hetznerServerIp,
+      gatewayToken: connection.gatewayToken,
+      sessionKey,
+    }).catch(() => null)
+
     console.log('[Computer Chat API][Debug] POST baseline', {
       computerId,
       sessionKey,
@@ -286,7 +319,7 @@ export async function POST(request: NextRequest) {
             sessionKey,
           }).catch(() => null)
           const latestAssistantMessage = latestHistory
-            ? findAssistantMessageAfterSeq(latestHistory.messages, baselineSeq)
+            ? findAssistantMessageAfterSeq(latestHistory, baselineSeq)
             : null
           const latestSessionModel = await readGatewaySessionModel({
             ip: connection.hetznerServerIp,
@@ -306,6 +339,7 @@ export async function POST(request: NextRequest) {
                   provider: latestAssistantMessage.provider,
                   model: latestAssistantMessage.model,
                   text: extractTranscriptMessageText(latestAssistantMessage).slice(0, 200),
+                  usage: extractTranscriptMessageUsage(latestAssistantMessage),
                   seq: latestAssistantMessage.__openclaw?.seq ?? null,
                 }
               : null,
@@ -313,16 +347,61 @@ export async function POST(request: NextRequest) {
             latestHistoryTail: latestHistory ? summarizeTranscriptTail(latestHistory.messages) : [],
           })
 
-          // ── Usage recording (estimated tokens from text length) ───────────────
-          const estimatedInputTokens = Math.ceil(latestUserText.length / 4)
-          const estimatedOutputTokens = Math.ceil(finalText.length / 4)
-          const costDollars = calculateTokenCost(selectedModelId, estimatedInputTokens, 0, estimatedOutputTokens)
-          const costCents = Math.round(costDollars * 100)
+          // ── Usage recording ────────────────────────────────────────────────────
+          const postTurnTokens = latestSessionModel?.tokenSnapshot ?? null
+          const assistantUsage = latestAssistantMessage
+            ? extractTranscriptMessageUsage(latestAssistantMessage)
+            : null
+          const hasAssistantUsage = Boolean(
+            assistantUsage && (
+              assistantUsage.inputTokens !== undefined ||
+              assistantUsage.outputTokens !== undefined ||
+              assistantUsage.cacheReadTokens !== undefined
+            )
+          )
+          const snapshotsAvailable = !!(postTurnTokens && preTurnTokens)
+
+          const outputDelta = snapshotsAvailable
+            ? Math.max(0, postTurnTokens!.outputTokens - preTurnTokens!.outputTokens)
+            : null
+          const totalDelta = snapshotsAvailable
+            ? Math.max(0, postTurnTokens!.totalTokens - preTurnTokens!.totalTokens)
+            : null
+          const cacheReadDelta = snapshotsAvailable
+            ? Math.max(0, postTurnTokens!.cacheRead - preTurnTokens!.cacheRead)
+            : null
+          const compactionDetected =
+            totalDelta !== null && outputDelta !== null && totalDelta < outputDelta
+          const freshInputDelta = compactionDetected
+            ? (preTurnTokens?.totalTokens ?? null)
+            : (totalDelta !== null && outputDelta !== null)
+              ? Math.max(0, totalDelta - outputDelta)
+              : null
+
+          const outputText = latestAssistantMessage
+            ? extractTranscriptMessageText(latestAssistantMessage)
+            : finalText
+          const inputChars = baselineHistory.messages.reduce(
+            (sum, msg) => sum + extractTranscriptMessageText(msg).length,
+            0
+          ) + latestUserText.length
+          const finalInputTokens = assistantUsage?.inputTokens ?? freshInputDelta ?? Math.ceil(inputChars / 4)
+          const finalOutputTokens = assistantUsage?.outputTokens ?? outputDelta ?? Math.ceil(outputText.length / 4)
+          const finalCacheRead = assistantUsage?.cacheReadTokens ?? cacheReadDelta ?? 0
+          const costDollars = calculateTokenCost(selectedModelId, finalInputTokens, finalCacheRead, finalOutputTokens)
+          const costCents = Math.ceil(costDollars * 100)
+          const tokenSource = hasAssistantUsage ? 'message-usage' : snapshotsAvailable ? 'derived' : 'estimated'
           console.log(
-            `[Computer Chat] 💰 Cost (estimated): model=${selectedModelId} | ` +
-            `in≈${estimatedInputTokens} out≈${estimatedOutputTokens} (from char length) | ` +
+            `[Computer Chat] 💰 Cost (${tokenSource}): model=${selectedModelId} | ` +
+            `in=${finalInputTokens} out=${finalOutputTokens} cacheRead=${finalCacheRead} | ` +
             `$${costDollars.toFixed(4)} = ${costCents}¢`
           )
+          if (!hasAssistantUsage && !snapshotsAvailable) {
+            console.log('[Computer Chat] ⚠️  Token snapshots unavailable, fell back to char estimate:', {
+              preTurnTokens,
+              postTurnTokens,
+            })
+          }
           if (costCents > 0) {
             try {
               await convex.mutation('usage:recordBatch', {
@@ -331,9 +410,9 @@ export async function POST(request: NextRequest) {
                 events: [{
                   type: 'ask',
                   modelId: selectedModelId,
-                  inputTokens: estimatedInputTokens,
-                  outputTokens: estimatedOutputTokens,
-                  cachedTokens: 0,
+                  inputTokens: finalInputTokens,
+                  outputTokens: finalOutputTokens,
+                  cachedTokens: finalCacheRead,
                   cost: costCents,
                   timestamp: Date.now(),
                 }],
@@ -355,8 +434,8 @@ export async function POST(request: NextRequest) {
               sessionKey: latestSessionModel?.sessionKey ?? sessionKey,
               requestedModelId: selectedModelId,
               requestedModelRef: requestedModelRef ?? undefined,
-            effectiveProvider: latestSessionModel?.provider ?? latestAssistantMessage?.provider,
-            effectiveModel: latestSessionModel?.model ?? latestAssistantMessage?.model,
+              effectiveProvider: latestSessionModel?.provider ?? latestAssistantMessage?.provider,
+              effectiveModel: latestSessionModel?.model ?? latestAssistantMessage?.model,
             },
             { throwOnError: true, timeoutMs: 30_000 }
           )
@@ -641,14 +720,64 @@ function normalizeTranscriptMessages(payload: SessionHistoryResponse): OpenClawT
 }
 
 function extractTranscriptMessageText(message: OpenClawTranscriptMessage): string {
+  if (typeof message.text === 'string') {
+    return message.text.trim()
+  }
+
+  if (typeof message.content === 'string') {
+    return message.content.trim()
+  }
+
   return (
     message.content
-      ?.filter((part) => part.type === 'text' && typeof part.text === 'string')
-      .map((part) => part.text?.trim() || '')
-      .filter(Boolean)
-      .join('\n')
-      .trim() || ''
+      && Array.isArray(message.content)
+      ? message.content
+        ?.filter((part) => part.type === 'text' && typeof part.text === 'string')
+        .map((part) => part.text?.trim() || '')
+        .filter(Boolean)
+        .join('\n')
+        .trim()
+      : ''
   )
+}
+
+function extractTranscriptMessageUsage(message: OpenClawTranscriptMessage): {
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+} | null {
+  const usage = message.usage
+  if (!usage) {
+    return null
+  }
+
+  const inputTokens =
+    typeof usage.input === 'number'
+      ? usage.input
+      : typeof usage.inputTokens === 'number'
+        ? usage.inputTokens
+        : undefined
+  const outputTokens =
+    typeof usage.output === 'number'
+      ? usage.output
+      : typeof usage.outputTokens === 'number'
+        ? usage.outputTokens
+        : undefined
+  const cacheReadTokens = typeof usage.cacheRead === 'number' ? usage.cacheRead : undefined
+
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    cacheReadTokens === undefined
+  ) {
+    return null
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+  }
 }
 
 function summarizeTranscriptTail(messages: OpenClawTranscriptMessage[], limit = 4) {
@@ -685,7 +814,9 @@ function findAssistantMessageAfterSeq(
 ): OpenClawTranscriptMessage | null {
   const candidates: OpenClawTranscriptMessage[] = []
 
-  if (payload && typeof payload === 'object') {
+  if (Array.isArray(payload)) {
+    candidates.push(...payload)
+  } else if (payload && typeof payload === 'object') {
     const maybePayload = payload as {
       message?: OpenClawTranscriptMessage
       messages?: OpenClawTranscriptMessage[]
@@ -1171,6 +1302,41 @@ function buildGatewayResponseError(frame: GatewayResponseFrame, fallbackMessage:
   return new Error(payload?.summary || frame.error?.message || fallbackMessage)
 }
 
+async function fetchSessionTokenSnapshot(params: {
+  ip: string
+  gatewayToken: string
+  sessionKey: string
+}): Promise<SessionTokenSnapshot> {
+  const ws = await openGatewaySocket(params.ip)
+  try {
+    await connectGatewaySocket(ws, params.gatewayToken)
+    const response = await waitForGatewayResponse(ws, {
+      requestId: crypto.randomUUID(),
+      method: 'sessions.list',
+      params: {},
+    })
+    const payload =
+      response.payload && typeof response.payload === 'object'
+        ? (response.payload as GatewaySessionsListPayload)
+        : null
+    const sessionRow =
+      payload?.sessions?.find((s) => s.key === params.sessionKey) ??
+      payload?.sessions?.find((s) => {
+        const key = s.key?.trim().toLowerCase()
+        return key?.endsWith(`:${params.sessionKey.toLowerCase()}`) ?? false
+      }) ??
+      null
+    return {
+      inputTokens: sessionRow?.inputTokens ?? 0,
+      outputTokens: sessionRow?.outputTokens ?? 0,
+      totalTokens: sessionRow?.totalTokens ?? 0,
+      cacheRead: sessionRow?.cacheRead ?? 0,
+    }
+  } finally {
+    ws.close()
+  }
+}
+
 async function readGatewaySessionModel(params: {
   ip: string
   gatewayToken: string
@@ -1205,6 +1371,12 @@ async function readGatewaySessionModel(params: {
       sessionKey: sessionRow.key?.trim() || params.sessionKey,
       provider: sessionRow.modelProvider?.trim() || undefined,
       model: sessionRow.model?.trim() || undefined,
+      tokenSnapshot: {
+        inputTokens: sessionRow.inputTokens ?? 0,
+        outputTokens: sessionRow.outputTokens ?? 0,
+        totalTokens: sessionRow.totalTokens ?? 0,
+        cacheRead: sessionRow.cacheRead ?? 0,
+      },
     }
   } finally {
     ws.close()
