@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Send, Plus, Trash2, ChevronDown, Loader2, ImageIcon, FileText, X, AlertCircle, Check, FolderOpen, Video, Download } from 'lucide-react'
+import { Send, Plus, Trash2, ChevronDown, ImageIcon, FileText, X, AlertCircle, Check, FolderOpen, Video, Download } from 'lucide-react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { useSearchParams } from 'next/navigation'
@@ -74,8 +74,6 @@ async function generateTitle(text: string): Promise<string | null> {
 }
 
 // ─── ExchangeBlock (memoized) ────────────────────────────────────────────────
-// Model tab buttons live in the sticky header, NOT here.
-// This component only renders: user message + assistant response + error.
 
 interface ExchangeBlockProps {
   userMsgId: string
@@ -87,11 +85,16 @@ interface ExchangeBlockProps {
   isStreaming: boolean
   showThinking: boolean
   errorMessage: string | null
+  exchModelList: string[]
+  selectedTab: number
+  onTabSelect: (tabIdx: number) => void
+  isLoadingTabs: boolean
 }
 
 const ExchangeBlock = React.memo(
   function ExchangeBlock({
     userText, userImages, exchIdx, slotIdx, responseText, isStreaming, showThinking, errorMessage,
+    exchModelList, selectedTab, onTabSelect, isLoadingTabs,
   }: ExchangeBlockProps) {
     return (
       <div className="flex flex-col gap-2 message-appear" data-exchange-idx={exchIdx}>
@@ -113,6 +116,30 @@ const ExchangeBlock = React.memo(
             )}
           </div>
         </div>
+
+        {/* Inline model tabs — only shown when multiple models are active for this exchange */}
+        {exchModelList.length > 1 && (
+          <div className="flex items-center gap-1.5 flex-wrap mt-1">
+            {exchModelList.map((mId, tabIdx) => {
+              const mName = AVAILABLE_MODELS.find((m) => m.id === mId)?.name ?? mId
+              const isActive = tabIdx === selectedTab
+              return (
+                <button
+                  key={mId}
+                  onClick={() => !isLoadingTabs && onTabSelect(tabIdx)}
+                  disabled={isLoadingTabs}
+                  className={`px-2.5 py-0.5 rounded-full text-xs transition-colors ${
+                    isLoadingTabs ? 'cursor-not-allowed opacity-60' : ''
+                  } ${
+                    isActive ? 'bg-[#0a0a0a] text-[#fafafa]' : 'bg-[#f0f0f0] text-[#525252] hover:bg-[#e8e8e8]'
+                  }`}
+                >
+                  {mName}
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         {/* Assistant response */}
         {responseText ? (
@@ -146,7 +173,9 @@ const ExchangeBlock = React.memo(
     prev.responseText === next.responseText &&
     prev.isStreaming === next.isStreaming &&
     prev.showThinking === next.showThinking &&
-    prev.errorMessage === next.errorMessage
+    prev.errorMessage === next.errorMessage &&
+    prev.selectedTab === next.selectedTab &&
+    prev.exchModelList.length === next.exchModelList.length
 )
 
 // ─── error label ─────────────────────────────────────────────────────────────
@@ -282,8 +311,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   const [exchangeModels, setExchangeModels] = useState<string[][]>([])
   const [selectedTabPerExchange, setSelectedTabPerExchange] = useState<number[]>([])
-  // Which exchange the user is currently scrolled to (drives the sticky header tabs)
-  const [visibleExchangeIdx, setVisibleExchangeIdx] = useState(0)
 
   // Tracks the title of the active chat independently of the sidebar `chats` list.
   // Needed for project chats which are excluded from the global chats:list query.
@@ -477,24 +504,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden'
   }, [input])
 
-  // ── scroll tracking — which exchange is currently in view ─────────────────
-
-  function handleMessagesScroll() {
-    const container = messagesScrollRef.current
-    if (!container) return
-    const containerRect = container.getBoundingClientRect()
-    // Use the 40% mark so the exchange is considered "visible" when its top half is in view
-    const threshold = containerRect.top + containerRect.height * 0.4
-    const exchEls = container.querySelectorAll<HTMLElement>('[data-exchange-idx]')
-    let newIdx = 0
-    for (const el of exchEls) {
-      if (el.getBoundingClientRect().top <= threshold) {
-        newIdx = parseInt(el.getAttribute('data-exchange-idx') || '0', 10)
-      }
-    }
-    setVisibleExchangeIdx(newIdx)
-  }
-
   // ── response lookup ────────────────────────────────────────────────────────
 
   function getResponseForExchange(slotIdx: number, exchIdx: number) {
@@ -530,7 +539,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   function resetChatState() {
     setExchangeModels([])
     setSelectedTabPerExchange([])
-    setVisibleExchangeIdx(0)
     setGenerationResults(new Map())
     setExchangeGenTypes([])
     lastGeneratedImageUrlRef.current = null
@@ -1014,11 +1022,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     ? (AVAILABLE_MODELS.find((m) => m.id === selectedModels[0])?.name ?? 'Select model')
     : `${selectedModels.length} models`
 
-  // Tabs shown in the header for the exchange currently in view
-  const headerTabModels = exchangeModels[visibleExchangeIdx] ?? []
-  const showHeaderTabs = headerTabModels.length > 1
-  const headerSelectedTab = selectedTabPerExchange[visibleExchangeIdx] ?? 0
-
   const primaryMessages = chat0.messages
   const hasMessages = primaryMessages.some((m) => m.role === 'user')
   const hasHistory = hasMessages || generationResults.size > 0
@@ -1121,39 +1124,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             )}
           </div>
 
-          {/* Model tabs for the visible exchange — center of header */}
-          {showHeaderTabs && (
-            <div className="flex items-center gap-1.5 flex-1 justify-center px-4">
-              {headerTabModels.map((mId, tabIdx) => {
-                const mSlot = modelSlotMap.get(mId) ?? 0
-                const mInst = chatInstances[mSlot]
-                const isLatestVisible = visibleExchangeIdx === latestExchIdx
-                const mLoading = isLatestVisible &&
-                  (mInst.status === 'streaming' || mInst.status === 'submitted') &&
-                  !getResponseForExchange(mSlot, visibleExchangeIdx)
-                const isActive = tabIdx === headerSelectedTab
-                const mName = AVAILABLE_MODELS.find((m) => m.id === mId)?.name ?? mId
-                return (
-                  <button
-                    key={mId}
-                    onClick={() => !isAnyLoading && handleTabSelect(visibleExchangeIdx, tabIdx)}
-                    disabled={isAnyLoading}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-colors ${
-                      isAnyLoading ? 'cursor-not-allowed opacity-60' : ''
-                    } ${
-                      isActive
-                        ? 'bg-[#0a0a0a] text-[#fafafa]'
-                        : 'bg-[#f0f0f0] text-[#525252] hover:bg-[#e8e8e8]'
-                    }`}
-                  >
-                    {mLoading && <Loader2 size={9} className="animate-spin" />}
-                    {mName}
-                  </button>
-                )
-              })}
-            </div>
-          )}
-
           {/* Model picker + Generation mode toggle */}
           <div className="flex items-center gap-2">
             <div ref={modelPickerRef} className="relative">
@@ -1240,7 +1210,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         <div
           ref={messagesScrollRef}
           className="flex-1 overflow-y-auto px-4 py-4"
-          onScroll={handleMessagesScroll}
         >
           <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-6">
             {!hasHistory && (
@@ -1277,70 +1246,75 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
                 if (genType === 'image' || genType === 'video') {
                   const exchModelList = exchangeModels[curExchIdx] ?? []
-                  const selectedTab = selectedTabPerExchange[curExchIdx] ?? 0
-                  const selectedResult = genResults?.[selectedTab] ?? genResults?.[0]
+                  const allResults: GenerationResult[] = genResults ?? exchModelList.map(() => ({ type: genType, status: 'generating' as const }))
+                  const isMulti = exchModelList.length > 1
 
                   blocks.push(
-                    <div key={msg.id} className="flex flex-col gap-2 message-appear" data-exchange-idx={curExchIdx}>
+                    <div key={msg.id} className="flex flex-col gap-3 message-appear" data-exchange-idx={curExchIdx}>
                       <div className="flex justify-end">
                         <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm leading-relaxed text-[#fafafa]">
                           <span className="whitespace-pre-wrap">{getMessageText(msg)}</span>
                         </div>
                       </div>
-                      {selectedResult?.status === 'generating' && (
-                        <div className="px-1 py-3 flex items-center gap-2 text-xs text-[#888]">
-                          <div className="w-4 h-4 rounded-full border-2 border-[#e0e0e0] border-t-[#525252] animate-spin" />
-                          {genType === 'image' ? 'Generating image…' : 'Generating video (this may take a few minutes)…'}
-                        </div>
-                      )}
-                      {selectedResult && (selectedResult.status === 'completed' || selectedResult.status === 'failed') && (
-                        <div className="flex flex-col gap-2 px-1">
-                          {exchModelList.length > 1 && (
-                            <div className="flex flex-wrap gap-2">
-                              {exchModelList.map((modelId, tabIdx) => {
-                                const isActive = tabIdx === selectedTab
-                                const modelName =
-                                  IMAGE_MODELS.find((m) => m.id === modelId)?.name ||
-                                  VIDEO_MODELS.find((m) => m.id === modelId)?.name ||
-                                  modelId
-                                return (
-                                  <button
-                                    key={`${modelId}-${tabIdx}`}
-                                    onClick={() => handleTabSelect(curExchIdx, tabIdx)}
-                                    className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                                      isActive ? 'bg-[#0a0a0a] text-[#fafafa]' : 'bg-[#f0f0f0] text-[#525252] hover:bg-[#e8e8e8]'
-                                    }`}
+                      <div className={`px-1 ${isMulti ? 'grid grid-cols-2 gap-3' : 'flex flex-col gap-1'}`}>
+                        {exchModelList.map((modelId, mIdx) => {
+                          const result = allResults[mIdx]
+                          const modelName =
+                            IMAGE_MODELS.find((m) => m.id === modelId)?.name ||
+                            VIDEO_MODELS.find((m) => m.id === modelId)?.name ||
+                            modelId
+                          return (
+                            <div key={`${modelId}-${mIdx}`} className="flex flex-col gap-1.5">
+                              {!result || result.status === 'generating' ? (
+                                <div className={`rounded-xl bg-[#f0f0f0] flex items-center justify-center ${
+                                  genType === 'image'
+                                    ? (isMulti ? 'w-full aspect-square' : 'w-52 h-52')
+                                    : (isMulti ? 'w-full aspect-video' : 'w-72 h-40')
+                                }`}>
+                                  <div className="flex flex-col items-center gap-2">
+                                    <div className="w-5 h-5 rounded-full border-2 border-[#e0e0e0] border-t-[#888] animate-spin" />
+                                    <span className="text-[10px] text-[#aaa]">Generating…</span>
+                                  </div>
+                                </div>
+                              ) : result.status === 'completed' && result.url ? (
+                                <div className="relative group w-fit">
+                                  {genType === 'image' ? (
+                                    <img
+                                      src={result.url}
+                                      alt={`Generated by ${modelName}`}
+                                      className={`rounded-xl object-contain border border-[#e5e5e5] ${
+                                        isMulti ? 'max-w-full max-h-56 w-full' : 'max-w-xs max-h-80'
+                                      }`}
+                                    />
+                                  ) : (
+                                    <video
+                                      src={result.url}
+                                      controls
+                                      className={`rounded-xl border border-[#e5e5e5] ${
+                                        isMulti ? 'max-w-full w-full' : 'max-w-sm'
+                                      }`}
+                                    />
+                                  )}
+                                  <a
+                                    href={result.url}
+                                    download={genType === 'image' ? 'generated.png' : 'generated.mp4'}
+                                    className="absolute top-2 right-2 p-1.5 bg-white/90 hover:bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                                    title="Download"
                                   >
-                                    {modelName}
-                                  </button>
-                                )
-                              })}
+                                    <Download size={13} className="text-[#0a0a0a]" />
+                                  </a>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
+                                  <AlertCircle size={12} />
+                                  {result?.error ?? 'Failed'}
+                                </div>
+                              )}
+                              <p className="text-[11px] text-[#aaa]">{modelName}</p>
                             </div>
-                          )}
-                          <div className="flex flex-col gap-1">
-                            {selectedResult.status === 'completed' && selectedResult.url && (
-                              <div className="relative group w-fit">
-                                {genType === 'image' ? (
-                                  <img src={selectedResult.url} alt="Generated image" className="rounded-xl max-w-xs max-h-80 object-contain border border-[#e5e5e5]" />
-                                ) : (
-                                  <video src={selectedResult.url} controls className="rounded-xl max-w-sm border border-[#e5e5e5]" />
-                                )}
-                                <a href={selectedResult.url} download={genType === 'image' ? 'generated.png' : 'generated.mp4'}
-                                  className="absolute top-2 right-2 p-1.5 bg-white/90 hover:bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity" title="Download">
-                                  <Download size={13} className="text-[#0a0a0a]" />
-                                </a>
-                              </div>
-                            )}
-                            {selectedResult.status === 'failed' && (
-                              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
-                                <AlertCircle size={12} />
-                                {selectedResult.error ?? 'Failed'}
-                              </div>
-                            )}
-                            {selectedResult.modelUsed && <p className="text-xs text-[#aaa]">Generated with {selectedResult.modelUsed}</p>}
-                          </div>
-                        </div>
-                      )}
+                          )
+                        })}
+                      </div>
                     </div>
                   )
                   continue
@@ -1374,6 +1348,10 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                     isStreaming={isStreaming}
                     showThinking={showThinking}
                     errorMessage={errorLabel(instError)}
+                    exchModelList={exchModelList}
+                    selectedTab={selectedTab}
+                    onTabSelect={(tabIdx) => handleTabSelect(curExchIdx, tabIdx)}
+                    isLoadingTabs={isAnyLoading}
                   />
                 )
               }
