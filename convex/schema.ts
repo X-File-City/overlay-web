@@ -101,6 +101,12 @@ export default defineSchema({
     userId: v.string(),
     role: v.union(v.literal('user'), v.literal('assistant')),
     content: v.string(),
+    parts: v.optional(v.array(v.object({
+      type: v.string(),
+      text: v.optional(v.string()),
+      url: v.optional(v.string()),
+      mediaType: v.optional(v.string()),
+    }))),
     model: v.optional(v.string()),
     tokens: v.optional(v.object({ input: v.number(), output: v.number() })),
     createdAt: v.number(),

@@ -27,13 +27,21 @@ export async function GET(request: NextRequest) {
         _id: string
         role: 'user' | 'assistant'
         content: string
+        parts?: Array<{ type: string; text?: string; url?: string; mediaType?: string }>
         model?: string
       }>>('chats:getMessages', { chatId })
 
       const fallbackMessages = listMessages(chatId).map((message) => ({
         id: message._id,
         role: message.role,
-        parts: [{ type: 'text' as const, text: message.content }],
+        parts: message.parts?.length
+          ? message.parts.map((part) => ({
+              type: part.type as 'text' | 'file',
+              text: part.text,
+              url: part.url,
+              mediaType: part.mediaType,
+            }))
+          : [{ type: 'text' as const, text: message.content }],
         model: message.model,
       }))
 
@@ -41,7 +49,14 @@ export async function GET(request: NextRequest) {
         messages: (messages || []).map((message) => ({
           id: message._id,
           role: message.role,
-          parts: [{ type: 'text' as const, text: message.content }],
+          parts: message.parts?.length
+            ? message.parts.map((part) => ({
+                type: part.type as 'text' | 'file',
+                text: part.text,
+                url: part.url,
+                mediaType: part.mediaType,
+              }))
+            : [{ type: 'text' as const, text: message.content }],
           model: message.model,
         })) || fallbackMessages,
       })

@@ -55,6 +55,7 @@ export interface StoredMessage {
   userId: string
   role: ChatRole
   content: string
+  parts?: Array<{ type: string; text?: string; url?: string; mediaType?: string }>
   model?: string
   tokens?: { input: number; output: number }
   createdAt: number
@@ -163,6 +164,7 @@ export function addMessage(args: {
   userId: string
   role: ChatRole
   content: string
+  parts?: Array<{ type: string; text?: string; url?: string; mediaType?: string }>
   model?: string
   tokens?: { input: number; output: number }
 }): string {

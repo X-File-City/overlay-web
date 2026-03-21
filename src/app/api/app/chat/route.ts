@@ -103,17 +103,31 @@ export async function POST(request: NextRequest) {
       .map((part: any) => part.text || '')
       .join('')
       .trim()
+    const latestUserParts = latestUserMessage?.parts
+      ?.filter((part) => part.type === 'text' || part.type === 'file')
+      .map((part) => {
+        if (part.type === 'text') {
+          return { type: 'text', text: 'text' in part ? part.text || '' : '' }
+        }
+        return {
+          type: 'file',
+          url: 'url' in part ? part.url : undefined,
+          mediaType: 'mediaType' in part ? part.mediaType : undefined,
+        }
+      })
+    const latestUserContent = latestUserText || (latestUserParts?.some((part) => part.type === 'file') ? '[Image attachment]' : '')
 
-    if (chatId && latestUserText && !skipUserMessage) {
+    if (chatId && latestUserContent && !skipUserMessage) {
       const savedUserMessage = await convex.mutation('chats:addMessage', {
         chatId,
         userId,
         role: 'user',
-        content: latestUserText,
+        content: latestUserContent,
+        parts: latestUserParts,
         model: effectiveModelId,
       })
       if (!savedUserMessage) {
-        addMessage({ chatId, userId, role: 'user', content: latestUserText, model: effectiveModelId })
+        addMessage({ chatId, userId, role: 'user', content: latestUserContent, parts: latestUserParts, model: effectiveModelId })
       }
     }
 
@@ -158,6 +172,7 @@ export async function POST(request: NextRequest) {
               userId,
               role: 'assistant',
               content: text,
+              parts: [{ type: 'text', text }],
               model: effectiveModelId,
               tokens: usage ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 } : undefined,
             })
@@ -167,6 +182,7 @@ export async function POST(request: NextRequest) {
                 userId,
                 role: 'assistant',
                 content: text,
+                parts: [{ type: 'text', text }],
                 model: effectiveModelId,
                 tokens: usage ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 } : undefined,
               })

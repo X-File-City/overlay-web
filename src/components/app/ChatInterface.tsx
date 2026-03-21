@@ -138,6 +138,8 @@ const ExchangeBlock = React.memo(
   (prev, next) =>
     prev.userMsgId === next.userMsgId &&
     prev.userText === next.userText &&
+    prev.userImages.length === next.userImages.length &&
+    prev.userImages.every((image, index) => image === next.userImages[index]) &&
     prev.exchIdx === next.exchIdx &&
     prev.slotIdx === next.slotIdx &&
     prev.responseText === next.responseText &&
@@ -153,6 +155,9 @@ function errorLabel(err: Error | null | undefined): string | null {
   if (err.message?.includes('weekly_limit')) return 'Weekly limit reached — upgrade to Pro for unlimited messages.'
   if (err.message?.includes('premium_model')) return 'This model requires a Pro subscription.'
   if (err.message?.includes('insufficient_credits')) return 'No credits remaining.'
+  if (err.message?.includes('supported image formats') || err.message?.includes('does not represent a valid image')) {
+    return 'Unsupported image format. Use JPEG, PNG, GIF, or WebP.'
+  }
   return 'Something went wrong. Please try again.'
 }
 
@@ -168,6 +173,7 @@ const CHAT_SUGGESTIONS = [
 const DEFAULT_CHAT_TITLE = 'New Chat'
 const CHAT_MODEL_KEY = 'overlay_chat_model'
 const CHAT_GEN_MODE_KEY = 'overlay_chat_generation_mode'
+const SUPPORTED_INPUT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
 
 interface GenerationResult {
   type: 'image' | 'video'
@@ -295,6 +301,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   const [input, setInput] = useState('')
   const [isFirstMessage, setIsFirstMessage] = useState(true)
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -577,7 +584,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       const res = await fetch(`/api/app/chats?chatId=${chatId}&messages=true`)
       if (!res.ok) return
       const data = await res.json()
-      type RawMsg = { id: string; role: 'user' | 'assistant'; parts: Array<{ type: string; text?: string }>; model?: string }
+      type RawMsg = { id: string; role: 'user' | 'assistant'; parts: Array<{ type: string; text?: string; url?: string; mediaType?: string }>; model?: string }
       let rawMessages: RawMsg[] = data.messages || []
 
       const outRes = await fetch(`/api/app/outputs?chatId=${chatId}`)
@@ -641,8 +648,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
       let nextOutputGroupIdx = 0
       for (let idx = 0; idx < exchanges.length; idx++) {
-        if (exchanges[idx].responses.length > 0) continue
-
         const userPrompt = getMessageText(exchanges[idx].userMsg).trim()
         const matchIdx = outputGroups.findIndex((group, groupIdx) => (
           groupIdx >= nextOutputGroupIdx && group.prompt.trim() === userPrompt
@@ -677,9 +682,14 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   function addImages(files: FileList | File[]) {
     Array.from(files).forEach((file) => {
       if (!file.type.startsWith('image/')) return
+      if (!SUPPORTED_INPUT_IMAGE_TYPES.has(file.type)) {
+        setAttachmentError(`Unsupported image format: ${file.name}. Use JPEG, PNG, GIF, or WebP.`)
+        return
+      }
       const reader = new FileReader()
       reader.onload = (ev) => {
         const dataUrl = ev.target?.result as string
+        setAttachmentError(null)
         setAttachedImages((prev) => [...prev, { dataUrl, mimeType: file.type, name: file.name }])
       }
       reader.readAsDataURL(file)
@@ -701,7 +711,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   async function handleSend() {
     const text = input.trim()
-    if (!text || isAnyLoading) return
+    if ((!text && attachedImages.length === 0) || isAnyLoading) return
 
     // ── Image / Video generation path ──────────────────────────────────────
     if (effectiveGenType === 'image' || effectiveGenType === 'video') {
@@ -738,6 +748,16 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           mediaUserMessage as any,
         ])
+      })
+      void fetch('/api/app/chats/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatId,
+          role: 'user',
+          content: text,
+          parts: [{ type: 'text', text }],
+        }),
       })
 
       if (wasFirst && text) startFirstMessageRename(chatId, text)
@@ -781,6 +801,16 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               assistantMessage as any,
             ])
+          })
+          void fetch('/api/app/chats/message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chatId,
+              role: 'assistant',
+              content: summary,
+              parts: [{ type: 'text', text: summary }],
+            }),
           })
         })
       } else {
@@ -842,6 +872,16 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
               assistantMessage as any,
             ])
           })
+          void fetch('/api/app/chats/message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chatId,
+              role: 'assistant',
+              content: summary,
+              parts: [{ type: 'text', text: summary }],
+            }),
+          })
         })
       }
       return
@@ -858,6 +898,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
     setInput('')
     setAttachedImages([])
+    setAttachmentError(null)
     setIsFirstMessage(false)
     shouldScrollRef.current = true
     setExchangeModels((prev) => [...prev, [...selectedModels]])
@@ -869,6 +910,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     for (const img of attachedImages) {
       parts.push({ type: 'file', url: img.dataUrl, mediaType: img.mimeType })
     }
+    const persistedContent = text || (parts.some((part) => part.type === 'file') ? '[Image attachment]' : '')
 
     // Title generation: show truncated text immediately, replace with GPT OSS 20B-generated title once it arrives.
     // pendingTitleRef guards against loadChats() overwriting the title mid-flight.
@@ -880,11 +922,32 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     startSession(chatId, 'chat', activeChatTitle ?? '', msgCountBeforeSend)
     activeChatIdRef.current = chatId
 
+    let persistedUserMessage = false
+    try {
+      const persistRes = await fetch('/api/app/chats/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatId,
+          role: 'user',
+          content: persistedContent,
+          parts,
+          model: selectedModels[0],
+        }),
+      })
+      persistedUserMessage = persistRes.ok
+      if (!persistRes.ok) {
+        console.error('[ChatInterface] Failed to persist user message', await persistRes.text())
+      }
+    } catch (err) {
+      console.error('[ChatInterface] Failed to persist user message', err)
+    }
+
     void Promise.all(
       selectedModels.map((modelId, idx) =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         chatInstances[idx].sendMessage({ role: 'user', parts: parts as any }, {
-          body: { modelId, chatId, skipUserMessage: idx !== 0 },
+          body: { modelId, chatId, skipUserMessage: persistedUserMessage || idx !== 0 },
         })
       )
     ).then(() => {
@@ -1319,6 +1382,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             </div>
           )}
           <div className="mx-auto w-full max-w-4xl">
+            {attachmentError && (
+              <div className="mb-2 flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">
+                <AlertCircle size={13} className="shrink-0" />
+                {attachmentError}
+              </div>
+            )}
             {isSendBlocked && !isAnyLoading ? (
               <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-[#fafafa] border border-[#e5e5e5] text-xs text-[#888]">
                 <AlertCircle size={13} className="text-amber-500 shrink-0" />

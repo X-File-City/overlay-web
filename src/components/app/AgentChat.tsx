@@ -56,6 +56,7 @@ const AGENT_MODELS = AVAILABLE_MODELS
 const DEFAULT_AGENT_MODEL = 'claude-sonnet-4-6'
 const AGENT_MODEL_KEY = 'overlay_agent_model'
 const AGENT_GEN_MODE_KEY = 'overlay_agent_generation_mode'
+const SUPPORTED_INPUT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
 
 interface AgentGenerationResult {
   type: 'image' | 'video'
@@ -132,6 +133,7 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
   const [input, setInput] = useState('')
   const [isFirstMessage, setIsFirstMessage] = useState(true)
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -331,9 +333,14 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
   function addImages(files: FileList | File[]) {
     Array.from(files).forEach((file) => {
       if (!file.type.startsWith('image/')) return
+      if (!SUPPORTED_INPUT_IMAGE_TYPES.has(file.type)) {
+        setAttachmentError(`Unsupported image format: ${file.name}. Use JPEG, PNG, GIF, or WebP.`)
+        return
+      }
       const reader = new FileReader()
       reader.onload = (e) => {
         const dataUrl = e.target?.result as string
+        setAttachmentError(null)
         setAttachedImages((prev) => [...prev, { dataUrl, mimeType: file.type, name: file.name }])
       }
       reader.readAsDataURL(file)
@@ -440,6 +447,7 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
 
     setInput('')
     setAttachedImages([])
+    setAttachmentError(null)
     setIsFirstMessage(false)
 
     const parts: Array<{ type: string; text?: string; url?: string; mediaType?: string }> = []
@@ -806,6 +814,12 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
           )}
 
           <div className="mx-auto w-full max-w-4xl">
+            {attachmentError && (
+              <div className="mb-2 flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">
+                <AlertCircle size={13} className="shrink-0" />
+                {attachmentError}
+              </div>
+            )}
             {isSendBlocked && !isLoading ? (
               <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-[#fafafa] border border-[#e5e5e5] text-xs text-[#888]">
                 <AlertCircle size={13} className="text-amber-500 shrink-0" />
