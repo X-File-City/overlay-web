@@ -121,7 +121,7 @@ export default function OutputsView() {
 
         {/* Pinterest-style masonry grid */}
         {filtered.length > 0 && (
-          <div className="columns-2 sm:columns-3 lg:columns-4 xl:columns-5 gap-3 space-y-3">
+          <div className="mx-auto w-full max-w-[1440px] columns-1 gap-4 space-y-4 sm:columns-2 xl:columns-3 2xl:columns-4">
             {filtered.map((output) => (
               <OutputCard
                 key={output._id}
@@ -148,7 +148,6 @@ export default function OutputsView() {
               <img src={lightbox.url} alt={lightbox.prompt} className="max-h-[80vh] object-contain" />
             )}
             {lightbox.type === 'video' && lightbox.url && (
-              // eslint-disable-next-line jsx-a11y/media-has-caption
               <video src={lightbox.url} controls className="max-h-[80vh] max-w-full" />
             )}
             <div className="p-4 space-y-1">
@@ -180,17 +179,16 @@ function OutputCard({ output, onExpand }: { output: Output; onExpand: () => void
   const isPending = output.status === 'pending'
 
   return (
-    <div className="break-inside-avoid mb-3 rounded-xl overflow-hidden border border-[#e5e5e5] bg-white group cursor-pointer hover:shadow-md transition-shadow"
+    <div className="mb-4 inline-block w-full break-inside-avoid rounded-xl overflow-hidden border border-[#e5e5e5] bg-white group cursor-pointer hover:shadow-md transition-shadow"
       onClick={isCompleted ? onExpand : undefined}>
       {/* Media area */}
       <div className="relative bg-[#f5f5f5]">
         {isCompleted && output.url && output.type === 'image' && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={output.url} alt={output.prompt} className="w-full object-cover" />
+          <img src={output.url} alt={output.prompt} className="block w-full h-auto max-h-[26rem] object-cover" />
         )}
         {isCompleted && output.url && output.type === 'video' && (
-          // eslint-disable-next-line jsx-a11y/media-has-caption
-          <video src={output.url} className="w-full object-cover" />
+          <video src={output.url} className="block w-full h-auto max-h-[26rem] object-cover" muted playsInline preload="metadata" />
         )}
         {isPending && (
           <div className="flex items-center justify-center h-32">

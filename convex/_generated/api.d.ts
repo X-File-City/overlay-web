@@ -17,6 +17,7 @@ import type * as keys from "../keys.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as memories from "../memories.js";
 import type * as notes from "../notes.js";
+import type * as outputs from "../outputs.js";
 import type * as projects from "../projects.js";
 import type * as sessionTransfer from "../sessionTransfer.js";
 import type * as skills from "../skills.js";
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   memories: typeof memories;
   notes: typeof notes;
+  outputs: typeof outputs;
   projects: typeof projects;
   sessionTransfer: typeof sessionTransfer;
   skills: typeof skills;

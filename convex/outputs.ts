@@ -1,5 +1,13 @@
 import { v } from 'convex/values'
 import { mutation, query } from './_generated/server'
+import { Id } from './_generated/dataModel'
+
+export const generateUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.storage.generateUploadUrl()
+  },
+})
 
 export const create = mutation({
   args: {
@@ -8,6 +16,7 @@ export const create = mutation({
     status: v.union(v.literal('pending'), v.literal('completed'), v.literal('failed')),
     prompt: v.string(),
     modelId: v.string(),
+    storageId: v.optional(v.id('_storage')),
     url: v.optional(v.string()),
     chatId: v.optional(v.string()),
     agentId: v.optional(v.string()),
@@ -26,13 +35,15 @@ export const update = mutation({
   args: {
     outputId: v.id('outputs'),
     status: v.optional(v.union(v.literal('pending'), v.literal('completed'), v.literal('failed'))),
+    storageId: v.optional(v.id('_storage')),
     url: v.optional(v.string()),
     modelId: v.optional(v.string()),
     errorMessage: v.optional(v.string()),
   },
-  handler: async (ctx, { outputId, status, url, modelId, errorMessage }) => {
+  handler: async (ctx, { outputId, status, storageId, url, modelId, errorMessage }) => {
     const updates: Record<string, unknown> = {}
     if (status !== undefined) updates.status = status
+    if (storageId !== undefined) updates.storageId = storageId
     if (url !== undefined) updates.url = url
     if (modelId !== undefined) updates.modelId = modelId
     if (errorMessage !== undefined) updates.errorMessage = errorMessage
@@ -40,6 +51,14 @@ export const update = mutation({
     await ctx.db.patch(outputId, updates)
   },
 })
+
+async function resolveUrl(ctx: { storage: { getUrl: (id: Id<'_storage'>) => Promise<string | null> } }, output: { storageId?: Id<'_storage'>; url?: string }): Promise<string | undefined> {
+  if (output.storageId) {
+    const served = await ctx.storage.getUrl(output.storageId)
+    return served ?? undefined
+  }
+  return output.url
+}
 
 export const get = query({
   args: { outputId: v.id('outputs') },
@@ -61,18 +80,37 @@ export const list = query({
       .order('desc')
       .take(limit ?? 100)
 
-    if (type) return all.filter((o) => o.type === type)
-    return all
+    const filtered = type ? all.filter((o) => o.type === type) : all
+    return await Promise.all(
+      filtered.map(async (o) => ({ ...o, url: await resolveUrl(ctx, o) }))
+    )
   },
 })
 
 export const listByChatId = query({
   args: { chatId: v.string() },
   handler: async (ctx, { chatId }) => {
-    return await ctx.db
+    const all = await ctx.db
       .query('outputs')
       .withIndex('by_chatId', (q) => q.eq('chatId', chatId))
       .order('desc')
       .collect()
+    return await Promise.all(
+      all.map(async (o) => ({ ...o, url: await resolveUrl(ctx, o) }))
+    )
+  },
+})
+
+export const listByAgentId = query({
+  args: { agentId: v.string() },
+  handler: async (ctx, { agentId }) => {
+    const all = await ctx.db
+      .query('outputs')
+      .withIndex('by_agentId', (q) => q.eq('agentId', agentId))
+      .order('desc')
+      .collect()
+    return await Promise.all(
+      all.map(async (o) => ({ ...o, url: await resolveUrl(ctx, o) }))
+    )
   },
 })

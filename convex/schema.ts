@@ -232,6 +232,7 @@ export default defineSchema({
     status: v.union(v.literal('pending'), v.literal('completed'), v.literal('failed')),
     prompt: v.string(),
     modelId: v.string(),
+    storageId: v.optional(v.id('_storage')),
     url: v.optional(v.string()),
     chatId: v.optional(v.string()),
     agentId: v.optional(v.string()),

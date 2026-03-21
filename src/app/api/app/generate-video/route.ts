@@ -129,13 +129,33 @@ export async function POST(request: NextRequest) {
 
         const dataUrl = `data:video/mp4;base64,${videoBase64}`
 
-        // ── Update Convex record to completed ────────────────────────────────
+        // ── Upload to Convex file storage ─────────────────────────────────────
+        let storageId: string | null = null
+        try {
+          const uploadUrl = await convex.mutation<string>('outputs:generateUploadUrl', {})
+          if (uploadUrl) {
+            const videoBuffer = Buffer.from(videoBase64!, 'base64')
+            const uploadRes = await fetch(uploadUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'video/mp4' },
+              body: videoBuffer,
+            })
+            if (uploadRes.ok) {
+              const { storageId: sid } = await uploadRes.json() as { storageId: string }
+              storageId = sid
+            }
+          }
+        } catch (err) {
+          console.error('[GenerateVideo] Failed to upload to storage:', err)
+        }
+
+        // ── Update Convex record to completed ─────────────────────────────────────
         try {
           await convex.mutation('outputs:update', {
             outputId,
             status: 'completed',
-            url: dataUrl,
             modelId: usedModelId,
+            ...(storageId ? { storageId } : {}),
           })
         } catch (err) {
           console.error('[GenerateVideo] Failed to update output:', err)

@@ -10,7 +10,7 @@ interface GenerationModeToggleProps {
   className?: string
 }
 
-const MODES: { value: GenerationMode; label: string; Icon: React.ComponentType<{ size?: number }> }[] = [
+const MODES: { value: GenerationMode; label: string; Icon: React.ComponentType<{ size?: number; className?: string }> }[] = [
   { value: 'text', label: 'Text', Icon: MessageSquare },
   { value: 'image', label: 'Image', Icon: ImageIcon },
   { value: 'video', label: 'Video', Icon: Video },

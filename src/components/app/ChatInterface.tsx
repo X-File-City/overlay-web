@@ -24,6 +24,16 @@ interface AttachedImage {
   name: string
 }
 
+interface ChatOutput {
+  _id: string
+  type: 'image' | 'video'
+  status: 'pending' | 'completed' | 'failed'
+  prompt: string
+  modelId: string
+  url?: string
+  createdAt: number
+}
+
 interface Entitlements {
   tier: 'free' | 'pro' | 'max'
   creditsUsed: number
@@ -213,10 +223,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   const [generationMode, setGenerationMode] = useState<GenerationMode>('text')
   const [generationChip, setGenerationChip] = useState<'image' | 'video' | null>(null)
-  const [generationResults, setGenerationResults] = useState<Map<number, GenerationResult>>(new Map())
+  const [generationResults, setGenerationResults] = useState<Map<number, GenerationResult[]>>(new Map())
   const [exchangeGenTypes, setExchangeGenTypes] = useState<('text' | 'image' | 'video')[]>([])
-  const [selectedImageModel, setSelectedImageModel] = useState(DEFAULT_IMAGE_MODEL_ID)
-  const [selectedVideoModel, setSelectedVideoModel] = useState(DEFAULT_VIDEO_MODEL_ID)
+  const [selectedImageModels, setSelectedImageModels] = useState<string[]>([DEFAULT_IMAGE_MODEL_ID])
+  const [selectedVideoModels, setSelectedVideoModels] = useState<string[]>([DEFAULT_VIDEO_MODEL_ID])
+  const lastGeneratedImageUrlRef = useRef<string | null>(null)
+  const [loadedChatOutputs, setLoadedChatOutputs] = useState<ChatOutput[]>([])
 
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showAttachMenu, setShowAttachMenu] = useState(false)
@@ -452,6 +464,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     setExchangeModels([])
     setSelectedTabPerExchange([])
     setVisibleExchangeIdx(0)
+    setGenerationResults(new Map())
+    setExchangeGenTypes([])
+    setLoadedChatOutputs([])
+    lastGeneratedImageUrlRef.current = null
+    setSelectedImageModels([DEFAULT_IMAGE_MODEL_ID])
+    setSelectedVideoModels([DEFAULT_VIDEO_MODEL_ID])
     chatInstances.forEach((c) => c.setMessages([]))
   }
 
@@ -528,27 +546,35 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       if (uniqueModels.length === 0) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         chat0.setMessages(rawMessages as any)
-        return
+      } else {
+        const slotModels = uniqueModels.slice(0, 4)
+        setSelectedModels(slotModels)
+        localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify(slotModels))
+
+        slotModels.forEach((modelId, slotIdx) => {
+          const msgs: RawMsg[] = []
+          for (const ex of exchanges) {
+            msgs.push(ex.userMsg)
+            const r = ex.responses.find((r) => r.model === modelId)
+            if (r) msgs.push(r.msg)
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          chatInstances[slotIdx].setMessages(msgs as any)
+        })
+
+        setExchangeModels(exchanges.map((ex) => ex.responses.map((r) => r.model)))
+        setSelectedTabPerExchange(exchanges.map(() => 0))
       }
-
-      const slotModels = uniqueModels.slice(0, 4)
-      setSelectedModels(slotModels)
-      localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify(slotModels))
-
-      slotModels.forEach((modelId, slotIdx) => {
-        const msgs: RawMsg[] = []
-        for (const ex of exchanges) {
-          msgs.push(ex.userMsg)
-          const r = ex.responses.find((r) => r.model === modelId)
-          if (r) msgs.push(r.msg)
-        }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        chatInstances[slotIdx].setMessages(msgs as any)
-      })
-
-      setExchangeModels(exchanges.map((ex) => ex.responses.map((r) => r.model)))
-      setSelectedTabPerExchange(exchanges.map(() => 0))
     } catch { /* already cleared */ }
+
+    // Load outputs saved for this chat (image/video generation history)
+    try {
+      const outRes = await fetch(`/api/app/outputs?chatId=${chatId}`)
+      if (outRes.ok) {
+        const outputs: ChatOutput[] = await outRes.json()
+        setLoadedChatOutputs(outputs.slice().reverse()) // oldest first
+      }
+    } catch { /* ignore */ }
   }
 
   async function deleteChat(chatId: string, e: React.MouseEvent) {
@@ -608,9 +634,10 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       setExchangeModels((prev) => [...prev, []])
       setSelectedTabPerExchange((prev) => [...prev, 0])
       setExchangeGenTypes((prev) => [...prev, effectiveGenType])
+      const activeModels = effectiveGenType === 'image' ? selectedImageModels : selectedVideoModels
       setGenerationResults((prev) => {
         const next = new Map(prev)
-        next.set(exchIdx, { type: effectiveGenType, status: 'generating' })
+        next.set(exchIdx, activeModels.map(() => ({ type: effectiveGenType as 'image' | 'video', status: 'generating' as const })))
         return next
       })
 
@@ -623,62 +650,66 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       if (wasFirst && text) startFirstMessageRename(chatId, text)
 
       if (effectiveGenType === 'image') {
-        const modelId = selectedImageModel
-        fetch('/api/app/generate-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: text, modelId, chatId }),
-        })
-          .then(async (res) => {
-            if (!res.ok) {
-              const err = await res.json().catch(() => ({ message: 'Generation failed' }))
-              setGenerationResults((prev) => { const n = new Map(prev); n.set(exchIdx, { type: 'image', status: 'failed', error: (err as { message?: string }).message }); return n })
-              return
-            }
-            const data = await res.json() as { url?: string; modelUsed?: string; outputId?: string }
-            setGenerationResults((prev) => { const n = new Map(prev); n.set(exchIdx, { type: 'image', status: 'completed', url: data.url, modelUsed: data.modelUsed, outputId: data.outputId }); return n })
+        const imageUrl = lastGeneratedImageUrlRef.current
+        activeModels.forEach((modelId, mIdx) => {
+          fetch('/api/app/generate-image', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: text, modelId, chatId, imageUrl }),
           })
-          .catch((err) => {
-            setGenerationResults((prev) => { const n = new Map(prev); n.set(exchIdx, { type: 'image', status: 'failed', error: String(err) }); return n })
-          })
-      } else {
-        const modelId = selectedVideoModel
-        fetch('/api/app/generate-video', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: text, modelId, chatId }),
-        })
-          .then(async (res) => {
-            if (!res.ok) {
-              setGenerationResults((prev) => { const n = new Map(prev); n.set(exchIdx, { type: 'video', status: 'failed', error: 'Request failed' }); return n })
-              return
-            }
-            const reader = res.body?.getReader()
-            if (!reader) return
-            const decoder = new TextDecoder()
-            let buf = ''
-            while (true) {
-              const { done, value } = await reader.read()
-              if (done) break
-              buf += decoder.decode(value, { stream: true })
-              const lines = buf.split('\n\n')
-              buf = lines.pop() ?? ''
-              for (const line of lines) {
-                if (!line.startsWith('data: ')) continue
-                try {
-                  const evt = JSON.parse(line.slice(6)) as { type: string; url?: string; modelUsed?: string; outputId?: string; error?: string }
-                  if (evt.type === 'completed') {
-                    setGenerationResults((prev) => { const n = new Map(prev); n.set(exchIdx, { type: 'video', status: 'completed', url: evt.url, modelUsed: evt.modelUsed, outputId: evt.outputId }); return n })
-                  } else if (evt.type === 'failed') {
-                    setGenerationResults((prev) => { const n = new Map(prev); n.set(exchIdx, { type: 'video', status: 'failed', error: evt.error }); return n })
-                  }
-                } catch { /* ignore */ }
+            .then(async (res) => {
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({ message: 'Generation failed' }))
+                setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'image' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'image', status: 'failed', error: (err as { message?: string }).message }; n.set(exchIdx, arr); return n })
+                return
               }
-            }
+              const data = await res.json() as { url?: string; modelUsed?: string; outputId?: string }
+              if (data.url && mIdx === 0) lastGeneratedImageUrlRef.current = data.url
+              setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'image' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'image', status: 'completed', url: data.url, modelUsed: data.modelUsed, outputId: data.outputId }; n.set(exchIdx, arr); return n })
+            })
+            .catch((err) => {
+              setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'image' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'image', status: 'failed', error: String(err) }; n.set(exchIdx, arr); return n })
+            })
+        })
+      } else {
+        activeModels.forEach((modelId, mIdx) => {
+          fetch('/api/app/generate-video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: text, modelId, chatId }),
           })
-          .catch((err) => {
-            setGenerationResults((prev) => { const n = new Map(prev); n.set(exchIdx, { type: 'video', status: 'failed', error: String(err) }); return n })
-          })
+            .then(async (res) => {
+              if (!res.ok) {
+                setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'video', status: 'failed', error: 'Request failed' }; n.set(exchIdx, arr); return n })
+                return
+              }
+              const reader = res.body?.getReader()
+              if (!reader) return
+              const decoder = new TextDecoder()
+              let buf = ''
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                buf += decoder.decode(value, { stream: true })
+                const lines = buf.split('\n\n')
+                buf = lines.pop() ?? ''
+                for (const line of lines) {
+                  if (!line.startsWith('data: ')) continue
+                  try {
+                    const evt = JSON.parse(line.slice(6)) as { type: string; url?: string; modelUsed?: string; outputId?: string; error?: string }
+                    if (evt.type === 'completed') {
+                      setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'video', status: 'completed', url: evt.url, modelUsed: evt.modelUsed, outputId: evt.outputId }; n.set(exchIdx, arr); return n })
+                    } else if (evt.type === 'failed') {
+                      setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'video', status: 'failed', error: evt.error }; n.set(exchIdx, arr); return n })
+                    }
+                  } catch { /* ignore */ }
+                }
+              }
+            })
+            .catch((err) => {
+              setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'video', status: 'failed', error: String(err) }; n.set(exchIdx, arr); return n })
+            })
+        })
       }
       return
     }
@@ -761,9 +792,9 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   const activeChat = chats.find((c) => c._id === activeChatId)
   const modelPickerLabel = generationMode === 'image'
-    ? (IMAGE_MODELS.find((m) => m.id === selectedImageModel)?.name ?? 'Select model')
+    ? (selectedImageModels.length === 1 ? (IMAGE_MODELS.find((m) => m.id === selectedImageModels[0])?.name ?? 'Select model') : `${selectedImageModels.length} models`)
     : generationMode === 'video'
-    ? (VIDEO_MODELS.find((m) => m.id === selectedVideoModel)?.name ?? 'Select model')
+    ? (selectedVideoModels.length === 1 ? (VIDEO_MODELS.find((m) => m.id === selectedVideoModels[0])?.name ?? 'Select model') : `${selectedVideoModels.length} models`)
     : selectedModels.length === 1
     ? (AVAILABLE_MODELS.find((m) => m.id === selectedModels[0])?.name ?? 'Select model')
     : `${selectedModels.length} models`
@@ -775,6 +806,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   const primaryMessages = chat0.messages
   const hasMessages = primaryMessages.some((m) => m.role === 'user')
+  const hasHistory = hasMessages || loadedChatOutputs.length > 0
   const latestExchIdx = exchangeModels.length - 1
 
   // ── render ────────────────────────────────────────────────────────────────
@@ -904,9 +936,8 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             </div>
           )}
 
-          {/* Generation mode toggle + Model picker */}
+          {/* Model picker + Generation mode toggle */}
           <div className="flex items-center gap-2">
-            <GenerationModeToggle mode={generationMode} onChange={handleModeChange} disabled={isAnyLoading} />
             <div ref={modelPickerRef} className="relative">
               <button
                 onClick={() => !isAnyLoading && setShowModelPicker((v) => !v)}
@@ -921,31 +952,43 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
               {showModelPicker && (
                 <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-[#e5e5e5] rounded-lg shadow-lg z-10 py-1 max-h-72 overflow-y-auto">
                   {generationMode === 'image' ? (
-                    IMAGE_MODELS.map((m) => (
-                      <button key={m.id} onClick={() => { setSelectedImageModel(m.id); setShowModelPicker(false) }}
-                        className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-[#f5f5f5] ${
-                          m.id === selectedImageModel ? 'text-[#0a0a0a] font-medium' : 'text-[#525252]'
-                        }`}>
-                        <span className="flex items-center gap-2">
-                          {m.id === selectedImageModel ? <Check size={10} /> : <span className="w-[10px] inline-block" />}
-                          {m.name}
-                        </span>
-                        <span className="text-[#aaa] ml-2">{m.provider}</span>
-                      </button>
-                    ))
+                    IMAGE_MODELS.map((m) => {
+                        const isSel = selectedImageModels.includes(m.id)
+                        const isDisabled = !isSel && selectedImageModels.length >= 4
+                        return (
+                          <button key={m.id}
+                            disabled={isDisabled}
+                            onClick={() => setSelectedImageModels((prev) => prev.includes(m.id) ? (prev.length > 1 ? prev.filter((x) => x !== m.id) : prev) : [...prev, m.id].slice(0, 4))}
+                            className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between ${
+                              isDisabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[#f5f5f5]'
+                            } ${isSel ? 'text-[#0a0a0a] font-medium' : 'text-[#525252]'}`}>
+                            <span className="flex items-center gap-2">
+                              {isSel ? <Check size={10} /> : <span className="w-[10px] inline-block" />}
+                              {m.name}
+                            </span>
+                            <span className="text-[#aaa] ml-2">{m.provider}</span>
+                          </button>
+                        )
+                      })
                   ) : generationMode === 'video' ? (
-                    VIDEO_MODELS.map((m) => (
-                      <button key={m.id} onClick={() => { setSelectedVideoModel(m.id); setShowModelPicker(false) }}
-                        className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-[#f5f5f5] ${
-                          m.id === selectedVideoModel ? 'text-[#0a0a0a] font-medium' : 'text-[#525252]'
-                        }`}>
-                        <span className="flex items-center gap-2">
-                          {m.id === selectedVideoModel ? <Check size={10} /> : <span className="w-[10px] inline-block" />}
-                          {m.name}
-                        </span>
-                        <span className="text-[#aaa] ml-2">{m.provider}</span>
-                      </button>
-                    ))
+                    VIDEO_MODELS.map((m) => {
+                        const isSel = selectedVideoModels.includes(m.id)
+                        const isDisabled = !isSel && selectedVideoModels.length >= 4
+                        return (
+                          <button key={m.id}
+                            disabled={isDisabled}
+                            onClick={() => setSelectedVideoModels((prev) => prev.includes(m.id) ? (prev.length > 1 ? prev.filter((x) => x !== m.id) : prev) : [...prev, m.id].slice(0, 4))}
+                            className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between ${
+                              isDisabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[#f5f5f5]'
+                            } ${isSel ? 'text-[#0a0a0a] font-medium' : 'text-[#525252]'}`}>
+                            <span className="flex items-center gap-2">
+                              {isSel ? <Check size={10} /> : <span className="w-[10px] inline-block" />}
+                              {m.name}
+                            </span>
+                            <span className="text-[#aaa] ml-2">{m.provider}</span>
+                          </button>
+                        )
+                      })
                   ) : (
                     AVAILABLE_MODELS.map((m) => {
                       const isSelected = selectedModels.includes(m.id)
@@ -971,6 +1014,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                 </div>
               )}
             </div>
+            <GenerationModeToggle mode={generationMode} onChange={handleModeChange} disabled={isAnyLoading} />
           </div>
         </div>
 
@@ -981,7 +1025,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           onScroll={handleMessagesScroll}
         >
           <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-6">
-            {!hasMessages && (
+            {!hasHistory && (
               <div className="flex flex-1 items-center justify-center">
                 <div className="text-center max-w-xl">
                   <p className="text-3xl mb-3" style={{ fontFamily: 'var(--font-instrument-serif)' }}>
@@ -1010,7 +1054,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
               for (const msg of primaryMessages) {
                 if (msg.role !== 'user') continue
                 const curExchIdx = exchIdx++
-                const genResult = generationResults.get(curExchIdx)
+                const genResults = generationResults.get(curExchIdx)
                 const genType = exchangeGenTypes[curExchIdx]
 
                 if (genType === 'image' || genType === 'video') {
@@ -1021,33 +1065,43 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                           <span className="whitespace-pre-wrap">{getMessageText(msg)}</span>
                         </div>
                       </div>
-                      {genResult?.status === 'generating' && (
+                      {genResults && genResults.some((r) => r.status === 'generating') && !genResults.some((r) => r.status === 'completed') && (
                         <div className="px-1 py-3 flex items-center gap-2 text-xs text-[#888]">
                           <div className="w-4 h-4 rounded-full border-2 border-[#e0e0e0] border-t-[#525252] animate-spin" />
                           {genType === 'image' ? 'Generating image…' : 'Generating video (this may take a few minutes)…'}
                         </div>
                       )}
-                      {genResult?.status === 'completed' && genResult.url && (
-                        <div className="flex flex-col gap-2 px-1">
-                          {genType === 'image' ? (
-                            <img src={genResult.url} alt="Generated image" className="rounded-xl max-w-md border border-[#e5e5e5]" />
-                          ) : (
-                            // eslint-disable-next-line jsx-a11y/media-has-caption
-                            <video src={genResult.url} controls className="rounded-xl max-w-lg border border-[#e5e5e5]" />
-                          )}
-                          <div className="flex items-center gap-3 text-xs text-[#888]">
-                            <span>Generated with {genResult.modelUsed}</span>
-                            <a href={genResult.url} download={genType === 'image' ? 'generated.png' : 'generated.mp4'}
-                              className="flex items-center gap-1 hover:text-[#525252] transition-colors">
-                              <Download size={11} /> Download
-                            </a>
-                          </div>
-                        </div>
-                      )}
-                      {genResult?.status === 'failed' && (
-                        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
-                          <AlertCircle size={12} />
-                          {genResult.error ?? 'Generation failed. Please try again.'}
+                      {genResults && genResults.some((r) => r.status === 'completed' || r.status === 'failed') && (
+                        <div className="flex flex-wrap gap-3 px-1">
+                          {genResults.map((r, ri) => (
+                            <div key={ri} className="flex flex-col gap-1">
+                              {r.status === 'generating' && (
+                                <div className="w-[320px] h-[240px] rounded-xl border border-[#e5e5e5] bg-[#f8f8f8] flex items-center justify-center">
+                                  <div className="w-5 h-5 rounded-full border-2 border-[#e0e0e0] border-t-[#525252] animate-spin" />
+                                </div>
+                              )}
+                              {r.status === 'completed' && r.url && (
+                                <div className="relative group w-fit">
+                                  {genType === 'image' ? (
+                                    <img src={r.url} alt="Generated image" className="rounded-xl max-w-xs max-h-80 object-contain border border-[#e5e5e5]" />
+                                  ) : (
+                                    <video src={r.url} controls className="rounded-xl max-w-sm border border-[#e5e5e5]" />
+                                  )}
+                                  <a href={r.url} download={genType === 'image' ? 'generated.png' : 'generated.mp4'}
+                                    className="absolute top-2 right-2 p-1.5 bg-white/90 hover:bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity" title="Download">
+                                    <Download size={13} className="text-[#0a0a0a]" />
+                                  </a>
+                                </div>
+                              )}
+                              {r.status === 'failed' && (
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
+                                  <AlertCircle size={12} />
+                                  {r.error ?? 'Failed'}
+                                </div>
+                              )}
+                              {r.modelUsed && <p className="text-xs text-[#aaa]">Generated with {r.modelUsed}</p>}
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -1089,6 +1143,47 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
               return blocks
             })()}
+
+            {/* Loaded outputs from previous sessions */}
+            {loadedChatOutputs.length > 0 && (
+              <div className="flex flex-col gap-6">
+                {loadedChatOutputs.map((output) => (
+                  <div key={output._id} className="flex flex-col gap-2">
+                    <div className="flex justify-end">
+                      <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm leading-relaxed text-[#fafafa]">
+                        <span className="whitespace-pre-wrap">{output.prompt}</span>
+                      </div>
+                    </div>
+                    {output.status === 'completed' && output.url && (
+                      <div className="flex flex-col gap-1.5 px-1">
+                        <div className="relative group w-fit">
+                          {output.type === 'image' ? (
+                            <img src={output.url} alt={output.prompt} className="rounded-xl max-w-md max-h-96 object-contain border border-[#e5e5e5]" />
+                          ) : (
+                            <video src={output.url} controls className="rounded-xl max-w-lg border border-[#e5e5e5]" />
+                          )}
+                          <a
+                            href={output.url}
+                            download={output.type === 'image' ? 'generated.png' : 'generated.mp4'}
+                            className="absolute top-2 right-2 p-1.5 bg-white/90 hover:bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Download"
+                          >
+                            <Download size={13} className="text-[#0a0a0a]" />
+                          </a>
+                        </div>
+                        <p className="text-xs text-[#aaa] px-0.5">Generated with {output.modelId}</p>
+                      </div>
+                    )}
+                    {output.status === 'failed' && (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
+                        <AlertCircle size={12} />
+                        Generation failed
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div ref={messagesEndRef} />
           </div>

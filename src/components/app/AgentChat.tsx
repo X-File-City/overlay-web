@@ -67,6 +67,16 @@ interface AgentGenerationResult {
   prompt: string
 }
 
+interface AgentOutput {
+  _id: string
+  type: 'image' | 'video'
+  status: 'pending' | 'completed' | 'failed'
+  prompt: string
+  modelId: string
+  url?: string
+  createdAt: number
+}
+
 async function generateTitle(text: string): Promise<string | null> {
   try {
     const res = await fetch('/api/app/generate-title', {
@@ -112,6 +122,8 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
   const [selectedImageModel, setSelectedImageModel] = useState(DEFAULT_IMAGE_MODEL_ID)
   const [selectedVideoModel, setSelectedVideoModel] = useState(DEFAULT_VIDEO_MODEL_ID)
   const [generationItems, setGenerationItems] = useState<AgentGenerationResult[]>([])
+  const [loadedAgentOutputs, setLoadedAgentOutputs] = useState<AgentOutput[]>([])
+  const lastGeneratedImageUrlRef = useRef<string | null>(null)
 
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showAttachMenu, setShowAttachMenu] = useState(false)
@@ -263,6 +275,9 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
       setActiveViewer('agent', data.id)
       setActiveAgentId(data.id)
       setIsFirstMessage(true)
+      setLoadedAgentOutputs([])
+      setGenerationItems([])
+      lastGeneratedImageUrlRef.current = null
       setMessages([])
       return data.id
     }
@@ -275,6 +290,9 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
     setActiveViewer('agent', agentId)
     setActiveAgentId(agentId)
     setIsFirstMessage(false)
+    setGenerationItems([])
+    setLoadedAgentOutputs([])
+    lastGeneratedImageUrlRef.current = null
     try {
       const res = await fetch(`/api/app/agents?agentId=${agentId}&messages=true`)
       if (res.ok) {
@@ -284,6 +302,16 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
     } catch {
       setMessages([])
     }
+
+    try {
+      const outRes = await fetch(`/api/app/outputs?agentId=${agentId}`)
+      if (outRes.ok) {
+        const outputs: AgentOutput[] = await outRes.json()
+        setLoadedAgentOutputs(outputs.slice().reverse())
+      }
+    } catch {
+      setLoadedAgentOutputs([])
+    }
   }
 
   async function deleteAgent(agentId: string, e: React.MouseEvent) {
@@ -292,6 +320,9 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
     if (activeAgentId === agentId) {
       setActiveAgentId(null)
       pendingTitleRef.current = null
+      setGenerationItems([])
+      setLoadedAgentOutputs([])
+      lastGeneratedImageUrlRef.current = null
       setMessages([])
     }
     await loadAgents()
@@ -349,10 +380,11 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
       if (wasFirst) startFirstMessageRename(agentId, text)
 
       if (effectiveGenType === 'image') {
+        const imageUrl = lastGeneratedImageUrlRef.current
         fetch('/api/app/generate-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: text, modelId: selectedImageModel, agentId }),
+          body: JSON.stringify({ prompt: text, modelId: selectedImageModel, agentId, imageUrl }),
         })
           .then(async (res) => {
             if (!res.ok) {
@@ -361,6 +393,7 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
               return
             }
             const data = await res.json() as { url?: string; modelUsed?: string; outputId?: string }
+            if (data.url) lastGeneratedImageUrlRef.current = data.url
             setGenerationItems((prev) => prev.map((it, i) => i === itemIdx ? { ...it, status: 'completed', url: data.url, modelUsed: data.modelUsed, outputId: data.outputId } : it))
           })
           .catch((err) => setGenerationItems((prev) => prev.map((it, i) => i === itemIdx ? { ...it, status: 'failed', error: String(err) } : it)))
@@ -434,6 +467,7 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
 
   const activeAgent = agents.find((a) => a._id === activeAgentId)
   const currentModel = AGENT_MODELS.find((m) => m.id === selectedModel)
+  const hasHistory = messages.length > 0 || generationItems.length > 0 || loadedAgentOutputs.length > 0
 
   const errorMessage = error
     ? (error.message?.includes('weekly_limit') ? 'Weekly limit reached — upgrade to Pro for unlimited messages.'
@@ -535,7 +569,6 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
             )}
           </div>
           <div className="flex items-center gap-2">
-            <GenerationModeToggle mode={generationMode} onChange={handleModeChange} disabled={isLoading} />
             <div className="relative">
               <button
                 onClick={() => setShowModelPicker(!showModelPicker)}
@@ -575,12 +608,13 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
                 </div>
               )}
             </div>
+            <GenerationModeToggle mode={generationMode} onChange={handleModeChange} disabled={isLoading} />
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-4">
           <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-4">
-            {messages.length === 0 && (
+            {!hasHistory && (
               <div className="flex flex-1 items-center justify-center">
                 <div className="text-center max-w-xl">
                   <p className="text-3xl mb-3" style={{ fontFamily: 'var(--font-instrument-serif)' }}>
@@ -670,25 +704,63 @@ export default function AgentChat({ hideSidebar, projectName }: { hideSidebar?: 
                   </div>
                 )}
                 {item.status === 'completed' && item.url && (
-                  <div className="flex flex-col gap-2 px-1">
-                    {item.type === 'image'
-                      ? <img src={item.url} alt="Generated" className="rounded-xl max-w-md border border-[#e5e5e5]" />
-                      // eslint-disable-next-line jsx-a11y/media-has-caption
-                      : <video src={item.url} controls className="rounded-xl max-w-lg border border-[#e5e5e5]" />
-                    }
-                    <div className="flex items-center gap-3 text-xs text-[#888]">
-                      <span>Generated with {item.modelUsed}</span>
-                      <a href={item.url} download={item.type === 'image' ? 'generated.png' : 'generated.mp4'}
-                        className="flex items-center gap-1 hover:text-[#525252] transition-colors">
-                        <Download size={11} /> Download
+                  <div className="flex flex-col gap-1.5 px-1">
+                    <div className="relative group w-fit">
+                      {item.type === 'image'
+                        ? <img src={item.url} alt="Generated" className="rounded-xl max-w-md max-h-96 object-contain border border-[#e5e5e5]" />
+                        : <video src={item.url} controls className="rounded-xl max-w-lg border border-[#e5e5e5]" />
+                      }
+                      <a
+                        href={item.url}
+                        download={item.type === 'image' ? 'generated.png' : 'generated.mp4'}
+                        className="absolute top-2 right-2 p-1.5 bg-white/90 hover:bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Download"
+                      >
+                        <Download size={13} className="text-[#0a0a0a]" />
                       </a>
                     </div>
+                    <p className="text-xs text-[#aaa] px-0.5">Generated with {item.modelUsed}</p>
                   </div>
                 )}
                 {item.status === 'failed' && (
                   <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
                     <AlertCircle size={12} />
                     {item.error ?? 'Generation failed. Please try again.'}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {loadedAgentOutputs.map((output) => (
+              <div key={output._id} className="flex flex-col gap-2 message-appear">
+                <div className="flex justify-end">
+                  <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm leading-relaxed text-[#fafafa]">
+                    <span className="whitespace-pre-wrap">{output.prompt}</span>
+                  </div>
+                </div>
+                {output.status === 'completed' && output.url && (
+                  <div className="flex flex-col gap-1.5 px-1">
+                    <div className="relative group w-fit">
+                      {output.type === 'image'
+                        ? <img src={output.url} alt={output.prompt} className="rounded-xl max-w-md max-h-96 object-contain border border-[#e5e5e5]" />
+                        : <video src={output.url} controls className="rounded-xl max-w-lg border border-[#e5e5e5]" />
+                      }
+                      <a
+                        href={output.url}
+                        download={output.type === 'image' ? 'generated.png' : 'generated.mp4'}
+                        className="absolute top-2 right-2 p-1.5 bg-white/90 hover:bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Download"
+                      >
+                        <Download size={13} className="text-[#0a0a0a]" />
+                      </a>
+                    </div>
+                    <p className="text-xs text-[#aaa] px-0.5">Generated with {output.modelId}</p>
+                  </div>
+                )}
+                {output.status === 'failed' && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
+                    <AlertCircle size={12} />
+                    Generation failed
                   </div>
                 )}
               </div>

@@ -21,12 +21,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { prompt, modelId, aspectRatio, chatId, agentId }: {
+    const { prompt, modelId, aspectRatio, chatId, agentId, imageUrl }: {
       prompt: string
       modelId?: string
       aspectRatio?: string
       chatId?: string
       agentId?: string
+      imageUrl?: string
     } = await request.json()
 
     if (!prompt?.trim()) {
@@ -58,9 +59,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── Model fallback chain ──────────────────────────────────────────────────
+    // ── Build provider-specific options (image editing support) ─────────────
+    // Extract base64 from data URL if provided
+    const referenceBase64 = imageUrl?.startsWith('data:')
+      ? imageUrl.split(',')[1]
+      : undefined
+    const referenceUrl = imageUrl && !imageUrl.startsWith('data:') ? imageUrl : undefined
+
+    // ── Model selection: when user picks a model, use only that model ─────────
+    // Fall back through all models only when no model is specified
     const priorityList = modelId
-      ? [modelId, ...IMAGE_MODELS.map((m) => m.id).filter((id) => id !== modelId)]
+      ? [modelId]
       : IMAGE_MODELS.map((m) => m.id)
 
     let lastError: Error | null = null
@@ -70,10 +79,30 @@ export async function POST(request: NextRequest) {
     for (const tryModelId of priorityList) {
       try {
         const imageModel = await getGatewayImageModel(tryModelId, session.accessToken)
+
+        // Build providerOptions for image editing when a reference image is supplied
+        // Each provider has a different key — we try the most common patterns
+        const providerKey = tryModelId.split('/')[0] // e.g. 'openai', 'google', 'bfl'
+        const providerOptions = (referenceBase64 || referenceUrl)
+          ? {
+              [providerKey]: {
+                // OpenAI gpt-image: pass as input image for editing
+                ...(referenceBase64 ? { image: referenceBase64 } : {}),
+                ...(referenceUrl ? { imageUrl: referenceUrl } : {}),
+              },
+            }
+          : undefined
+
+        // Build a contextual prompt for follow-up requests
+        const finalPrompt = imageUrl
+          ? `Based on the previous image, ${prompt.trim()}`
+          : prompt.trim()
+
         const result = await generateImage({
           model: imageModel,
-          prompt: prompt.trim(),
+          prompt: finalPrompt,
           aspectRatio: (aspectRatio as `${number}:${number}` | undefined) ?? '1:1',
+          providerOptions,
         })
         imageBase64 = result.image.base64
         usedModelId = tryModelId
@@ -86,25 +115,47 @@ export async function POST(request: NextRequest) {
     }
 
     if (!imageBase64 || !usedModelId) {
-      console.error('[GenerateImage] All models failed. Last error:', lastError?.message)
+      const errMsg = lastError?.message ?? 'Unknown error'
+      console.error('[GenerateImage] Generation failed. Last error:', errMsg)
       return NextResponse.json(
-        { error: 'generation_failed', message: 'Image generation failed. Please try again.' },
+        { error: 'generation_failed', message: `Image generation failed: ${errMsg}` },
         { status: 500 }
       )
     }
 
     const dataUrl = `data:image/png;base64,${imageBase64}`
 
-    // ── Save to Convex outputs ────────────────────────────────────────────────
+    // ── Upload to Convex file storage & save output record ────────────────────
+    // Base64 data URLs can be 1-5MB, exceeding Convex's 1MB document limit.
+    // We upload the binary to Convex storage and store only the storageId.
     let outputId: string | null = null
     try {
-      outputId = await convex.mutation('outputs:create', {
+      // 1. Get a signed upload URL from Convex
+      const uploadUrl = await convex.mutation<string>('outputs:generateUploadUrl', {})
+      let storageId: string | null = null
+
+      if (uploadUrl) {
+        // 2. Upload the image binary
+        const imageBuffer = Buffer.from(imageBase64!, 'base64')
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'image/png' },
+          body: imageBuffer,
+        })
+        if (uploadRes.ok) {
+          const { storageId: sid } = await uploadRes.json() as { storageId: string }
+          storageId = sid
+        }
+      }
+
+      // 3. Create the output record (with storageId, no large data URL)
+      outputId = await convex.mutation<string>('outputs:create', {
         userId,
         type: 'image',
         status: 'completed',
         prompt: prompt.trim(),
         modelId: usedModelId,
-        url: dataUrl,
+        ...(storageId ? { storageId } : {}),
         chatId,
         agentId,
       })

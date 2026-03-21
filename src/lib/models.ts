@@ -73,15 +73,14 @@ export function getProviderModels(provider: ChatModel['provider']): ChatModel[] 
 // ─── Image Models (priority order — top = highest priority fallback) ──────────
 
 export const IMAGE_MODELS: ImageModel[] = [
-  { id: 'google/gemini-3.1-flash-image-preview', name: 'Gemini Flash Image', provider: 'google', description: 'Fast multimodal image gen', defaultAspectRatio: '1:1' },
   { id: 'openai/gpt-image-1.5', name: 'GPT Image 1.5', provider: 'openai', description: 'High quality, detailed', defaultAspectRatio: '1:1' },
-  { id: 'bfl/flux-2-max', name: 'FLUX 2 Max', provider: 'bfl', description: 'Premium quality', defaultAspectRatio: '1:1' },
   { id: 'xai/grok-imagine-image-pro', name: 'Grok Image Pro', provider: 'xai', description: 'Photorealistic', defaultAspectRatio: '1:1' },
   { id: 'xai/grok-imagine-image', name: 'Grok Image', provider: 'xai', description: 'Fast & creative', defaultAspectRatio: '1:1' },
+  { id: 'bfl/flux-2-max', name: 'FLUX 2 Max', provider: 'bfl', description: 'Premium quality', defaultAspectRatio: '1:1' },
   { id: 'prodia/flux-fast-schnell', name: 'FLUX Schnell', provider: 'prodia', description: 'Ultra-fast, low cost', defaultAspectRatio: '1:1' },
 ]
 
-export const DEFAULT_IMAGE_MODEL_ID = 'google/gemini-3.1-flash-image-preview'
+export const DEFAULT_IMAGE_MODEL_ID = 'openai/gpt-image-1.5'
 
 export function getImageModel(id: string): ImageModel | undefined {
   return IMAGE_MODELS.find((m) => m.id === id)
