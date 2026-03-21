@@ -18,6 +18,18 @@ function extractLinkText(node: ReactNode): string {
   return ''
 }
 
+function normalizeGeneratedMarkdown(text: string): string {
+  return text
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>\s*<p>/gi, '\n\n')
+    .replace(/<p>/gi, '')
+    .replace(/<\/p>/gi, '')
+    .replace(/<li>/gi, '\n- ')
+    .replace(/<\/li>/gi, '')
+    .replace(/<\/?(ul|ol)>/gi, '')
+    .replace(/&nbsp;/gi, ' ')
+}
+
 const CONNECT_SERVICE_DESCRIPTIONS: Record<string, string> = {
   'gmail': 'Compose, send, and search emails',
   'google calendar': 'Read and create calendar events',
@@ -136,6 +148,14 @@ const mdComponents = {
       </div>
     )
   },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  td({ children }: any) {
+    return <td className="align-top [&_p:last-child]:mb-0 [&_ul:last-child]:mb-0 [&_ol:last-child]:mb-0">{children}</td>
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  th({ children }: any) {
+    return <th className="align-top">{children}</th>
+  },
 }
 
 const markdownRemarkPlugins = [remarkGfm, remarkMath]
@@ -192,6 +212,7 @@ interface Props {
 }
 
 export function MarkdownMessage({ text, isStreaming }: Props) {
+  const normalizedText = normalizeGeneratedMarkdown(text)
   const [blocks, setBlocks] = useState<Block[]>([])
   const nextIdRef = useRef(0)
   // Tracks how many characters of `text` have been committed into blocks
@@ -199,27 +220,27 @@ export function MarkdownMessage({ text, isStreaming }: Props) {
 
   // Reset state when text is cleared (new conversation / new message starts)
   useEffect(() => {
-    if (!text) {
+    if (!normalizedText) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setBlocks([])
       releasedRef.current = 0
       nextIdRef.current = 0
     }
-  }, [text])
+  }, [normalizedText])
 
   useEffect(() => {
     if (!isStreaming) {
       // Stream finished — flush anything remaining
-      const remaining = text.slice(releasedRef.current).trim()
+      const remaining = normalizedText.slice(releasedRef.current).trim()
       if (remaining) {
         setBlocks((prev) => [...prev, { id: nextIdRef.current++, text: remaining }])
-        releasedRef.current = text.length
+        releasedRef.current = normalizedText.length
       }
       return
     }
 
     // Find a paragraph boundary in the unprocessed text
-    const unprocessed = text.slice(releasedRef.current)
+    const unprocessed = normalizedText.slice(releasedRef.current)
     const boundary = findParagraphBoundary(unprocessed)
 
     if (boundary !== null && boundary > 0) {
@@ -229,7 +250,7 @@ export function MarkdownMessage({ text, isStreaming }: Props) {
       }
       releasedRef.current += boundary + 1 // skip past the blank line
     }
-  }, [text, isStreaming])
+  }, [normalizedText, isStreaming])
 
   const hasBlocks = blocks.length > 0
 
@@ -257,14 +278,14 @@ export function MarkdownMessage({ text, isStreaming }: Props) {
       )}
 
       {/* Once streaming ends, flush any remaining text that never hit a paragraph boundary */}
-      {!isStreaming && blocks.length === 0 && text.trim() && (
+      {!isStreaming && blocks.length === 0 && normalizedText.trim() && (
         <div className="md-block-appear">
           <ReactMarkdown
             remarkPlugins={markdownRemarkPlugins}
             rehypePlugins={markdownRehypePlugins}
             components={mdComponents}
           >
-            {text}
+            {normalizedText}
           </ReactMarkdown>
         </div>
       )}

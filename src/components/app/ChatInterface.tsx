@@ -178,6 +178,58 @@ interface GenerationResult {
   error?: string
 }
 
+interface RestoredOutputGroup {
+  type: 'image' | 'video'
+  prompt: string
+  modelIds: string[]
+  results: GenerationResult[]
+  createdAt: number
+}
+
+function groupOutputsIntoExchanges(outputs: ChatOutput[]): RestoredOutputGroup[] {
+  const sorted = outputs.slice().sort((a, b) => a.createdAt - b.createdAt)
+  const groups: RestoredOutputGroup[] = []
+
+  for (const output of sorted) {
+    const prev = groups[groups.length - 1]
+    const shouldMerge =
+      prev &&
+      prev.prompt === output.prompt &&
+      prev.type === output.type &&
+      Math.abs(output.createdAt - prev.createdAt) < 60_000
+
+    const result: GenerationResult = {
+      type: output.type,
+      status:
+        output.status === 'pending'
+          ? 'generating'
+          : output.status === 'completed'
+          ? 'completed'
+          : 'failed',
+      url: output.url,
+      modelUsed: output.modelId,
+      outputId: output._id,
+      error: output.status === 'failed' ? 'Generation failed' : undefined,
+    }
+
+    if (shouldMerge) {
+      prev.modelIds.push(output.modelId)
+      prev.results.push(result)
+      continue
+    }
+
+    groups.push({
+      type: output.type,
+      prompt: output.prompt,
+      modelIds: [output.modelId],
+      results: [result],
+      createdAt: output.createdAt,
+    })
+  }
+
+  return groups
+}
+
 // ─── main component ───────────────────────────────────────────────────────────
 
 export default function ChatInterface({ userId: _userId, hideSidebar, projectName }: { userId: string; hideSidebar?: boolean; projectName?: string }) {
@@ -228,7 +280,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   const [selectedImageModels, setSelectedImageModels] = useState<string[]>([DEFAULT_IMAGE_MODEL_ID])
   const [selectedVideoModels, setSelectedVideoModels] = useState<string[]>([DEFAULT_VIDEO_MODEL_ID])
   const lastGeneratedImageUrlRef = useRef<string | null>(null)
-  const [loadedChatOutputs, setLoadedChatOutputs] = useState<ChatOutput[]>([])
 
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showAttachMenu, setShowAttachMenu] = useState(false)
@@ -466,7 +517,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     setVisibleExchangeIdx(0)
     setGenerationResults(new Map())
     setExchangeGenTypes([])
-    setLoadedChatOutputs([])
     lastGeneratedImageUrlRef.current = null
     setSelectedImageModels([DEFAULT_IMAGE_MODEL_ID])
     setSelectedVideoModels([DEFAULT_VIDEO_MODEL_ID])
@@ -521,7 +571,20 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       if (!res.ok) return
       const data = await res.json()
       type RawMsg = { id: string; role: 'user' | 'assistant'; parts: Array<{ type: string; text?: string }>; model?: string }
-      const rawMessages: RawMsg[] = data.messages || []
+      let rawMessages: RawMsg[] = data.messages || []
+
+      const outRes = await fetch(`/api/app/outputs?chatId=${chatId}`)
+      const outputs: ChatOutput[] = outRes.ok ? await outRes.json() : []
+      const outputGroups = groupOutputsIntoExchanges(outputs)
+
+      if (rawMessages.length === 0 && outputGroups.length > 0) {
+        rawMessages = outputGroups.map((group, idx) => ({
+          id: `restored-output-${idx}`,
+          role: 'user',
+          parts: [{ type: 'text', text: group.prompt }],
+        }))
+      }
+
       setIsFirstMessage(!rawMessages.some((msg) => msg.role === 'user'))
 
       const exchanges: Array<{ userMsg: RawMsg; responses: Array<{ model: string; msg: RawMsg }> }> = []
@@ -563,18 +626,34 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         })
 
         setExchangeModels(exchanges.map((ex) => ex.responses.map((r) => r.model)))
-        setSelectedTabPerExchange(exchanges.map(() => 0))
       }
-    } catch { /* already cleared */ }
 
-    // Load outputs saved for this chat (image/video generation history)
-    try {
-      const outRes = await fetch(`/api/app/outputs?chatId=${chatId}`)
-      if (outRes.ok) {
-        const outputs: ChatOutput[] = await outRes.json()
-        setLoadedChatOutputs(outputs.slice().reverse()) // oldest first
+      const restoredGenTypes: ('text' | 'image' | 'video')[] = exchanges.map(() => 'text')
+      const restoredResults = new Map<number, GenerationResult[]>()
+      const restoredExchangeModels = exchanges.map((ex) => ex.responses.map((r) => r.model))
+
+      let nextOutputGroupIdx = 0
+      for (let idx = 0; idx < exchanges.length; idx++) {
+        if (exchanges[idx].responses.length > 0) continue
+
+        const userPrompt = getMessageText(exchanges[idx].userMsg).trim()
+        const matchIdx = outputGroups.findIndex((group, groupIdx) => (
+          groupIdx >= nextOutputGroupIdx && group.prompt.trim() === userPrompt
+        ))
+        if (matchIdx === -1) continue
+
+        const group = outputGroups[matchIdx]
+        nextOutputGroupIdx = matchIdx + 1
+        restoredGenTypes[idx] = group.type
+        restoredResults.set(idx, group.results)
+        restoredExchangeModels[idx] = group.modelIds
       }
-    } catch { /* ignore */ }
+
+      setExchangeModels(restoredExchangeModels)
+      setSelectedTabPerExchange(exchanges.map(() => 0))
+      setExchangeGenTypes(restoredGenTypes)
+      setGenerationResults(restoredResults)
+    } catch { /* already cleared */ }
   }
 
   async function deleteChat(chatId: string, e: React.MouseEvent) {
@@ -631,10 +710,10 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
       // Inject a placeholder user message into the primary chat slot so the exchange renders
       const exchIdx = exchangeModels.length
-      setExchangeModels((prev) => [...prev, []])
+      const activeModels = effectiveGenType === 'image' ? selectedImageModels : selectedVideoModels
+      setExchangeModels((prev) => [...prev, [...activeModels]])
       setSelectedTabPerExchange((prev) => [...prev, 0])
       setExchangeGenTypes((prev) => [...prev, effectiveGenType])
-      const activeModels = effectiveGenType === 'image' ? selectedImageModels : selectedVideoModels
       setGenerationResults((prev) => {
         const next = new Map(prev)
         next.set(exchIdx, activeModels.map(() => ({ type: effectiveGenType as 'image' | 'video', status: 'generating' as const })))
@@ -806,7 +885,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   const primaryMessages = chat0.messages
   const hasMessages = primaryMessages.some((m) => m.role === 'user')
-  const hasHistory = hasMessages || loadedChatOutputs.length > 0
+  const hasHistory = hasMessages || generationResults.size > 0
   const latestExchIdx = exchangeModels.length - 1
 
   // ── render ────────────────────────────────────────────────────────────────
@@ -1058,6 +1137,10 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                 const genType = exchangeGenTypes[curExchIdx]
 
                 if (genType === 'image' || genType === 'video') {
+                  const exchModelList = exchangeModels[curExchIdx] ?? []
+                  const selectedTab = selectedTabPerExchange[curExchIdx] ?? 0
+                  const selectedResult = genResults?.[selectedTab] ?? genResults?.[0]
+
                   blocks.push(
                     <div key={msg.id} className="flex flex-col gap-2 message-appear" data-exchange-idx={curExchIdx}>
                       <div className="flex justify-end">
@@ -1065,43 +1148,58 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                           <span className="whitespace-pre-wrap">{getMessageText(msg)}</span>
                         </div>
                       </div>
-                      {genResults && genResults.some((r) => r.status === 'generating') && !genResults.some((r) => r.status === 'completed') && (
+                      {selectedResult?.status === 'generating' && (
                         <div className="px-1 py-3 flex items-center gap-2 text-xs text-[#888]">
                           <div className="w-4 h-4 rounded-full border-2 border-[#e0e0e0] border-t-[#525252] animate-spin" />
                           {genType === 'image' ? 'Generating image…' : 'Generating video (this may take a few minutes)…'}
                         </div>
                       )}
-                      {genResults && genResults.some((r) => r.status === 'completed' || r.status === 'failed') && (
-                        <div className="flex flex-wrap gap-3 px-1">
-                          {genResults.map((r, ri) => (
-                            <div key={ri} className="flex flex-col gap-1">
-                              {r.status === 'generating' && (
-                                <div className="w-[320px] h-[240px] rounded-xl border border-[#e5e5e5] bg-[#f8f8f8] flex items-center justify-center">
-                                  <div className="w-5 h-5 rounded-full border-2 border-[#e0e0e0] border-t-[#525252] animate-spin" />
-                                </div>
-                              )}
-                              {r.status === 'completed' && r.url && (
-                                <div className="relative group w-fit">
-                                  {genType === 'image' ? (
-                                    <img src={r.url} alt="Generated image" className="rounded-xl max-w-xs max-h-80 object-contain border border-[#e5e5e5]" />
-                                  ) : (
-                                    <video src={r.url} controls className="rounded-xl max-w-sm border border-[#e5e5e5]" />
-                                  )}
-                                  <a href={r.url} download={genType === 'image' ? 'generated.png' : 'generated.mp4'}
-                                    className="absolute top-2 right-2 p-1.5 bg-white/90 hover:bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity" title="Download">
-                                    <Download size={13} className="text-[#0a0a0a]" />
-                                  </a>
-                                </div>
-                              )}
-                              {r.status === 'failed' && (
-                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
-                                  <AlertCircle size={12} />
-                                  {r.error ?? 'Failed'}
-                                </div>
-                              )}
-                              {r.modelUsed && <p className="text-xs text-[#aaa]">Generated with {r.modelUsed}</p>}
+                      {selectedResult && (selectedResult.status === 'completed' || selectedResult.status === 'failed') && (
+                        <div className="flex flex-col gap-2 px-1">
+                          {exchModelList.length > 1 && (
+                            <div className="flex flex-wrap gap-2">
+                              {exchModelList.map((modelId, tabIdx) => {
+                                const isActive = tabIdx === selectedTab
+                                const modelName =
+                                  IMAGE_MODELS.find((m) => m.id === modelId)?.name ||
+                                  VIDEO_MODELS.find((m) => m.id === modelId)?.name ||
+                                  modelId
+                                return (
+                                  <button
+                                    key={modelId}
+                                    onClick={() => handleTabSelect(curExchIdx, tabIdx)}
+                                    className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                                      isActive ? 'bg-[#0a0a0a] text-[#fafafa]' : 'bg-[#f0f0f0] text-[#525252] hover:bg-[#e8e8e8]'
+                                    }`}
+                                  >
+                                    {modelName}
+                                  </button>
+                                )
+                              })}
                             </div>
-                          ))}
+                          )}
+                          <div className="flex flex-col gap-1">
+                            {selectedResult.status === 'completed' && selectedResult.url && (
+                              <div className="relative group w-fit">
+                                {genType === 'image' ? (
+                                  <img src={selectedResult.url} alt="Generated image" className="rounded-xl max-w-xs max-h-80 object-contain border border-[#e5e5e5]" />
+                                ) : (
+                                  <video src={selectedResult.url} controls className="rounded-xl max-w-sm border border-[#e5e5e5]" />
+                                )}
+                                <a href={selectedResult.url} download={genType === 'image' ? 'generated.png' : 'generated.mp4'}
+                                  className="absolute top-2 right-2 p-1.5 bg-white/90 hover:bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity" title="Download">
+                                  <Download size={13} className="text-[#0a0a0a]" />
+                                </a>
+                              </div>
+                            )}
+                            {selectedResult.status === 'failed' && (
+                              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
+                                <AlertCircle size={12} />
+                                {selectedResult.error ?? 'Failed'}
+                              </div>
+                            )}
+                            {selectedResult.modelUsed && <p className="text-xs text-[#aaa]">Generated with {selectedResult.modelUsed}</p>}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1143,47 +1241,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
               return blocks
             })()}
-
-            {/* Loaded outputs from previous sessions */}
-            {loadedChatOutputs.length > 0 && (
-              <div className="flex flex-col gap-6">
-                {loadedChatOutputs.map((output) => (
-                  <div key={output._id} className="flex flex-col gap-2">
-                    <div className="flex justify-end">
-                      <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm leading-relaxed text-[#fafafa]">
-                        <span className="whitespace-pre-wrap">{output.prompt}</span>
-                      </div>
-                    </div>
-                    {output.status === 'completed' && output.url && (
-                      <div className="flex flex-col gap-1.5 px-1">
-                        <div className="relative group w-fit">
-                          {output.type === 'image' ? (
-                            <img src={output.url} alt={output.prompt} className="rounded-xl max-w-md max-h-96 object-contain border border-[#e5e5e5]" />
-                          ) : (
-                            <video src={output.url} controls className="rounded-xl max-w-lg border border-[#e5e5e5]" />
-                          )}
-                          <a
-                            href={output.url}
-                            download={output.type === 'image' ? 'generated.png' : 'generated.mp4'}
-                            className="absolute top-2 right-2 p-1.5 bg-white/90 hover:bg-white rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Download"
-                          >
-                            <Download size={13} className="text-[#0a0a0a]" />
-                          </a>
-                        </div>
-                        <p className="text-xs text-[#aaa] px-0.5">Generated with {output.modelId}</p>
-                      </div>
-                    )}
-                    {output.status === 'failed' && (
-                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-xs">
-                        <AlertCircle size={12} />
-                        Generation failed
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
 
             <div ref={messagesEndRef} />
           </div>

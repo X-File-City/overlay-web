@@ -121,7 +121,7 @@ export default function OutputsView() {
 
         {/* Pinterest-style masonry grid */}
         {filtered.length > 0 && (
-          <div className="mx-auto w-full max-w-[1440px] columns-1 gap-4 space-y-4 sm:columns-2 xl:columns-3 2xl:columns-4">
+          <div className="mx-auto w-full max-w-[1440px] columns-2 gap-4 space-y-4 md:columns-3 xl:columns-4">
             {filtered.map((output) => (
               <OutputCard
                 key={output._id}
@@ -185,10 +185,10 @@ function OutputCard({ output, onExpand }: { output: Output; onExpand: () => void
       <div className="relative bg-[#f5f5f5]">
         {isCompleted && output.url && output.type === 'image' && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={output.url} alt={output.prompt} className="block w-full h-auto max-h-[26rem] object-cover" />
+          <img src={output.url} alt={output.prompt} className="block w-full h-auto max-h-[22rem] rounded-t-xl object-cover" />
         )}
         {isCompleted && output.url && output.type === 'video' && (
-          <video src={output.url} className="block w-full h-auto max-h-[26rem] object-cover" muted playsInline preload="metadata" />
+          <video src={output.url} className="block w-full h-auto max-h-[22rem] rounded-t-xl object-cover" muted playsInline preload="metadata" />
         )}
         {isPending && (
           <div className="flex items-center justify-center h-32">
