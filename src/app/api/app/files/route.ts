@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/workos-auth'
 import { convex } from '@/lib/convex'
+import { partedFileName, splitTextForConvexDocuments } from '@/lib/convex-file-content'
 
 export async function GET(request: NextRequest) {
   try {
@@ -41,17 +42,35 @@ export async function POST(request: NextRequest) {
     if (projectId) args.projectId = projectId
 
     let id: unknown
+    const ids: string[] = []
+
     if (storageId) {
       // Binary file uploaded directly to Convex storage (type is always 'file')
       const { type: _type, ...storageArgs } = args
       void _type
       id = await convex.mutation('files:createWithStorage', { ...storageArgs, storageId })
+    } else if (type === 'file' && typeof content === 'string' && content.length > 0) {
+      const parts = splitTextForConvexDocuments(content)
+      const total = parts.length
+      for (let p = 0; p < parts.length; p++) {
+        const partName = partedFileName(name, p + 1, total)
+        const partId = await convex.mutation<string>('files:create', {
+          ...args,
+          name: partName,
+          content: parts[p],
+        })
+        if (!partId) {
+          return NextResponse.json({ error: 'Failed to create file part' }, { status: 500 })
+        }
+        ids.push(partId)
+      }
+      id = ids[0]
     } else {
       if (content) args.content = content
       id = await convex.mutation('files:create', args)
     }
 
-    return NextResponse.json({ id })
+    return NextResponse.json({ id, ids: ids.length ? ids : undefined, parts: ids.length || undefined })
   } catch {
     return NextResponse.json({ error: 'Failed to create file' }, { status: 500 })
   }

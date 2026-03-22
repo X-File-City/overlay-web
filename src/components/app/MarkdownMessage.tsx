@@ -3,8 +3,12 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
+import type { Pluggable } from 'unified'
+import { mergeGfmTableContinuationLines } from '@/lib/markdown-table-fix'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
@@ -18,8 +22,18 @@ function extractLinkText(node: ReactNode): string {
   return ''
 }
 
+const mdSanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'br'],
+  attributes: {
+    ...defaultSchema.attributes,
+    br: [],
+  },
+}
+
 function normalizeGeneratedMarkdown(text: string): string {
-  return text
+  return mergeGfmTableContinuationLines(
+    text
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p>\s*<p>/gi, '\n\n')
     .replace(/<p>/gi, '')
@@ -27,7 +41,8 @@ function normalizeGeneratedMarkdown(text: string): string {
     .replace(/<li>/gi, '\n- ')
     .replace(/<\/li>/gi, '')
     .replace(/<\/?(ul|ol)>/gi, '')
-    .replace(/&nbsp;/gi, ' ')
+    .replace(/&nbsp;/gi, ' '),
+  )
 }
 
 const CONNECT_SERVICE_DESCRIPTIONS: Record<string, string> = {
@@ -121,6 +136,15 @@ const mdComponents = {
       )
     }
 
+    // Models sometimes wrap long pasted text as a link to `/app/...`, which becomes a client 404.
+    if (
+      typeof href === 'string' &&
+      href.startsWith('/app/') &&
+      (href.length > 96 || href.includes('%7C') || href.includes('|'))
+    ) {
+      return <span className="text-[#0a0a0a] whitespace-pre-wrap break-words">{children}</span>
+    }
+
     return (
       <a href={href} target="_blank" rel="noopener noreferrer">
         {children}
@@ -159,7 +183,11 @@ const mdComponents = {
 }
 
 const markdownRemarkPlugins = [remarkGfm, remarkMath]
-const markdownRehypePlugins = [rehypeKatex]
+const markdownRehypePlugins: Pluggable[] = [
+  rehypeRaw,
+  [rehypeSanitize, mdSanitizeSchema] as Pluggable,
+  rehypeKatex,
+]
 
 // Find the char position of a safe paragraph boundary in `text`.
 // We only split at \n\n that is NOT inside a code fence, a table, or a math block.

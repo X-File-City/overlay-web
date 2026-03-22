@@ -7,7 +7,7 @@ import {
   BookOpen, FileText, Upload, FolderPlus, Loader2, Trash2, ArrowLeft,
 } from 'lucide-react'
 import { CHAT_TITLE_UPDATED_EVENT, type ChatTitleUpdatedDetail } from '@/lib/chat-title'
-import { readFileAsContent } from './FileViewer'
+import { getFileType } from './FileViewer'
 
 interface Project {
   _id: string
@@ -20,6 +20,102 @@ interface Project {
 interface ProjectChat { _id: string; title: string; lastModified: number }
 interface ProjectNote { _id: string; title: string; updatedAt: number }
 interface ProjectFile { _id: string; name: string; type: 'file' | 'folder'; parentId: string | null }
+
+// ─── Project file tree (nested folders) ───────────────────────────────────────
+
+function ProjectFileTreeNode({
+  file,
+  allFiles,
+  depth,
+  expandedIds,
+  onToggleFolder,
+  onOpenFile,
+  onDeleteFile,
+}: {
+  file: ProjectFile
+  allFiles: ProjectFile[]
+  depth: number
+  expandedIds: Set<string>
+  onToggleFolder: (id: string, e: React.MouseEvent) => void
+  onOpenFile: (id: string) => void
+  onDeleteFile: (id: string, e: React.MouseEvent) => void
+}) {
+  const children = allFiles.filter((f) => f.parentId === file._id).sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+    return a.name.localeCompare(b.name)
+  })
+  const isFolder = file.type === 'folder'
+  const open = expandedIds.has(file._id)
+
+  return (
+    <div>
+      <div
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            if (isFolder) onToggleFolder(file._id, e as unknown as React.MouseEvent)
+            else onOpenFile(file._id)
+          }
+        }}
+        className={`group flex items-center gap-1.5 py-1.5 rounded-md text-xs text-[#525252] transition-colors ${
+          file.type === 'file' ? 'cursor-pointer hover:bg-[#ebebeb] hover:text-[#0a0a0a]' : 'cursor-pointer hover:bg-[#ebebeb] hover:text-[#0a0a0a]'
+        }`}
+        style={{ paddingLeft: `${depth * 12 + 8}px`, paddingRight: '8px' }}
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest('button')) return
+          if (isFolder) onToggleFolder(file._id, e)
+          else onOpenFile(file._id)
+        }}
+      >
+        {isFolder ? (
+          <>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleFolder(file._id, e)
+              }}
+              className="shrink-0 p-0.5 rounded hover:bg-[#d8d8d8] transition-colors"
+            >
+              <ChevronRight size={10} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+            </button>
+            {open
+              ? <FolderOpen size={12} className="shrink-0 text-[#888]" />
+              : <Folder size={12} className="shrink-0 text-[#888]" />}
+          </>
+        ) : (
+          <>
+            <span className="w-[18px] shrink-0 inline-block" />
+            <FileText size={12} className="shrink-0 text-[#888]" />
+          </>
+        )}
+        <span className="flex-1 truncate">{file.name}</span>
+        <button
+          type="button"
+          onClick={(e) => onDeleteFile(file._id, e)}
+          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
+        >
+          <Trash2 size={10} />
+        </button>
+      </div>
+      {isFolder && open && children.map((ch) => (
+        <ProjectFileTreeNode
+          key={ch._id}
+          file={ch}
+          allFiles={allFiles}
+          depth={depth + 1}
+          expandedIds={expandedIds}
+          onToggleFolder={onToggleFolder}
+          onOpenFile={onOpenFile}
+          onDeleteFile={onDeleteFile}
+        />
+      ))}
+    </div>
+  )
+}
+
 // ─── Project tree node ────────────────────────────────────────────────────────
 
 function ProjectNode({
@@ -198,6 +294,8 @@ export default function ProjectsSidebar() {
   const [projectNotes, setProjectNotes] = useState<ProjectNote[]>([])
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([])
   const [itemsLoading, setItemsLoading] = useState(false)
+  const [expandedProjFolderIds, setExpandedProjFolderIds] = useState<Set<string>>(new Set())
+  const [projectUploadError, setProjectUploadError] = useState<string | null>(null)
 
   const loadProjects = useCallback(async () => {
     try {
@@ -235,6 +333,7 @@ export default function ProjectsSidebar() {
   }, [])
 
   useEffect(() => {
+    setExpandedProjFolderIds(new Set())
     if (selectedProject) loadProjectItems(selectedProject._id)
   }, [selectedProject, loadProjectItems])
 
@@ -365,16 +464,102 @@ export default function ProjectsSidebar() {
     }
   }
 
+  function toggleProjFolder(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    setExpandedProjFolderIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function postProjectFile(
+    file: File,
+    parentId: string | null,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!selectedProject) return { ok: false, error: 'No project' }
+    const pid = selectedProject._id
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+    const kind = getFileType(file.name)
+
+    try {
+      if (
+        ext === 'pdf' ||
+        ext === 'docx' ||
+        file.type === 'application/pdf' ||
+        file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      ) {
+        const form = new FormData()
+        form.append('file', file)
+        form.append('projectId', pid)
+        if (parentId) form.append('parentId', parentId)
+        const res = await fetch('/api/app/files/ingest-document', { method: 'POST', body: form })
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string }
+          return { ok: false, error: err.error ?? 'Could not index document' }
+        }
+        return { ok: true }
+      }
+
+      if (kind === 'image' || kind === 'video' || kind === 'audio') {
+        const urlRes = await fetch('/api/app/files/upload-url', { method: 'POST' })
+        if (!urlRes.ok) return { ok: false, error: 'Could not get upload URL' }
+        const { uploadUrl } = (await urlRes.json()) as { uploadUrl: string }
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file,
+        })
+        if (!uploadRes.ok) return { ok: false, error: 'Storage upload failed' }
+        const { storageId } = (await uploadRes.json()) as { storageId: string }
+        const res = await fetch('/api/app/files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: file.name,
+            type: 'file',
+            parentId,
+            storageId,
+            projectId: pid,
+          }),
+        })
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string }
+          return { ok: false, error: err.error ?? 'Failed to save file' }
+        }
+        return { ok: true }
+      }
+
+      const content = await file.text()
+      const res = await fetch('/api/app/files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: file.name,
+          type: 'file',
+          parentId,
+          content,
+          projectId: pid,
+        }),
+      })
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string }
+        return { ok: false, error: err.error ?? 'Failed to save file' }
+      }
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Upload failed' }
+    }
+  }
+
   async function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file || !selectedProject) return
     setAddMenuOpen(false)
-    const content = await readFileAsContent(file)
-    await fetch('/api/app/files', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: file.name, type: 'file', parentId: null, content, projectId: selectedProject._id }),
-    })
+    setProjectUploadError(null)
+    const r = await postProjectFile(file, null)
+    if (!r.ok) setProjectUploadError(r.error ?? 'Upload failed')
     await loadProjectItems(selectedProject._id)
     e.target.value = ''
   }
@@ -383,7 +568,10 @@ export default function ProjectsSidebar() {
     const files = e.target.files
     if (!files || !selectedProject) return
     setAddMenuOpen(false)
+    setProjectUploadError(null)
     const folders = new Map<string, string>()
+    let lastError: string | null = null
+
     for (const file of Array.from(files)) {
       const parts = file.webkitRelativePath.split('/')
       for (let i = 0; i < parts.length - 1; i++) {
@@ -394,27 +582,41 @@ export default function ProjectsSidebar() {
           const res = await fetch('/api/app/files', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: parts[i], type: 'folder', parentId, projectId: selectedProject._id }),
+            body: JSON.stringify({
+              name: parts[i],
+              type: 'folder',
+              parentId,
+              projectId: selectedProject._id,
+            }),
           })
-          if (res.ok) { const { id } = await res.json(); folders.set(folderPath, id) }
+          if (res.ok) {
+            const { id } = await res.json()
+            folders.set(folderPath, id)
+          } else {
+            const err = (await res.json().catch(() => ({}))) as { error?: string }
+            lastError = err.error ?? 'Could not create folder'
+          }
         }
       }
-      const content = await readFileAsContent(file)
       const parentFolderPath = parts.slice(0, -1).join('/')
       const parentId = folders.get(parentFolderPath) ?? null
-      await fetch('/api/app/files', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: parts[parts.length - 1], type: 'file', parentId, content, projectId: selectedProject._id }),
-      })
+      const r = await postProjectFile(file, parentId)
+      if (!r.ok) lastError = r.error ?? 'File upload failed'
     }
+
+    if (lastError) setProjectUploadError(lastError)
     await loadProjectItems(selectedProject._id)
     e.target.value = ''
   }
 
   const rootProjects = projects.filter((p) => p.parentId == null)
   const subprojects = selectedProject ? projects.filter((p) => p.parentId === selectedProject._id) : []
-  const rootProjectFiles = projectFiles.filter((f) => f.parentId == null)
+  const rootProjectFiles = projectFiles
+    .filter((f) => f.parentId == null)
+    .sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
 
   return (
     <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5] shrink-0">
@@ -512,6 +714,12 @@ export default function ProjectsSidebar() {
         </div>
       )}
 
+      {selectedProject && projectUploadError && (
+        <div className="shrink-0 px-2 py-2 text-[10px] text-red-600 bg-red-50 border-b border-red-100 leading-snug">
+          {projectUploadError}
+        </div>
+      )}
+
       {/* Content */}
       <div className="flex-1 overflow-y-auto py-1.5 px-1.5">
         {loading ? (
@@ -572,24 +780,18 @@ export default function ProjectsSidebar() {
                   </button>
                 </div>
               ))}
-              {/* Files */}
+              {/* Files (nested) */}
               {rootProjectFiles.map((file) => (
-                <div
+                <ProjectFileTreeNode
                   key={file._id}
-                  onClick={() => file.type === 'file' && projectNav('file', file._id)}
-                  className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] transition-colors ${file.type === 'file' ? 'cursor-pointer hover:bg-[#ebebeb] hover:text-[#0a0a0a]' : ''}`}
-                >
-                  {file.type === 'folder'
-                    ? <Folder size={12} className="shrink-0 text-[#888]" />
-                    : <FileText size={12} className="shrink-0 text-[#888]" />}
-                  <span className="flex-1 truncate">{file.name}</span>
-                  <button
-                    onClick={(e) => handleDeleteFile(file._id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
-                  >
-                    <Trash2 size={10} />
-                  </button>
-                </div>
+                  file={file}
+                  allFiles={projectFiles}
+                  depth={0}
+                  expandedIds={expandedProjFolderIds}
+                  onToggleFolder={toggleProjFolder}
+                  onOpenFile={(id) => projectNav('file', id)}
+                  onDeleteFile={handleDeleteFile}
+                />
               ))}
               {subprojects.length === 0 && projectChats.length === 0 && projectNotes.length === 0 && projectFiles.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-10 gap-2 text-[#aaa] text-center">

@@ -44,19 +44,49 @@ export async function readFileAsContent(file: File): Promise<string> {
 
 // ─── CSV renderer ─────────────────────────────────────────────────────────────
 
+/** RFC 4180-style: commas/newlines inside `"..."` stay in one cell. */
 function parseCSV(raw: string): string[][] {
-  return raw.trim().split('\n').map((row) => {
-    const cells: string[] = []
-    let cur = ''
-    let inQ = false
-    for (const ch of row) {
-      if (ch === '"') { inQ = !inQ }
-      else if (ch === ',' && !inQ) { cells.push(cur); cur = '' }
-      else { cur += ch }
+  const rows: string[][] = []
+  let row: string[] = []
+  let cur = ''
+  let inQ = false
+  const s = raw.replace(/^\uFEFF/, '')
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!
+    if (inQ) {
+      if (ch === '"') {
+        if (s[i + 1] === '"') {
+          cur += '"'
+          i++
+        } else {
+          inQ = false
+        }
+      } else {
+        cur += ch
+      }
+    } else if (ch === '"') {
+      inQ = true
+    } else if (ch === ',') {
+      row.push(cur)
+      cur = ''
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && s[i + 1] === '\n') i++
+      row.push(cur)
+      cur = ''
+      if (row.some((c) => c.length > 0) || row.length > 1) {
+        rows.push(row)
+      }
+      row = []
+    } else {
+      cur += ch
     }
-    cells.push(cur)
-    return cells
-  })
+  }
+  row.push(cur)
+  if (row.some((c) => c.length > 0) || row.length > 1) {
+    rows.push(row)
+  }
+  return rows
 }
 
 // ─── FileViewer ───────────────────────────────────────────────────────────────
@@ -105,7 +135,12 @@ export function FileViewer({ name, content }: { name: string; content: string })
             {body.map((row, i) => (
               <tr key={i} className={i % 2 === 0 ? '' : 'bg-[#fafafa]'}>
                 {row.map((cell, j) => (
-                  <td key={j} className="border border-[#e5e5e5] px-3 py-1.5 text-[#525252] max-w-[200px] truncate">{cell}</td>
+                  <td
+                    key={j}
+                    className="border border-[#e5e5e5] px-3 py-1.5 text-[#525252] max-w-md align-top whitespace-pre-wrap break-words"
+                  >
+                    {cell}
+                  </td>
                 ))}
               </tr>
             ))}
@@ -145,9 +180,25 @@ export function FileViewer({ name, content }: { name: string; content: string })
   }
 
   if (type === 'pdf') {
+    const c = content.trim()
+    const isIframeSrc =
+      c.startsWith('http://') ||
+      c.startsWith('https://') ||
+      c.startsWith('data:') ||
+      c.startsWith('blob:')
+    if (isIframeSrc && c.length < 20_000) {
+      return (
+        <div className="flex-1 overflow-hidden">
+          <iframe src={c} className="w-full h-full border-none" title={name} />
+        </div>
+      )
+    }
     return (
-      <div className="flex-1 overflow-hidden">
-        <iframe src={content} className="w-full h-full border-none" title={name} />
+      <div className="flex-1 overflow-y-auto px-8 py-6">
+        <p className="text-xs text-[#888] mb-4 max-w-2xl">
+          This PDF is stored as extracted text for search and the notebook (not the original layout).
+        </p>
+        <pre className="text-sm text-[#0a0a0a] leading-relaxed whitespace-pre-wrap max-w-3xl">{content}</pre>
       </div>
     )
   }

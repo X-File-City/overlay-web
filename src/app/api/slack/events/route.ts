@@ -71,9 +71,8 @@ async function processEvent({
   const threadTs = event.thread_ts || event.ts
 
   if (!userLink) {
-    const baseUrl = process.env.NEXTAUTH_URL || process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : 'https://getoverlay.io'
+    const baseUrl = process.env.NEXTAUTH_URL
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://getoverlay.io')
     await postSlackMessage({
       botToken: installation.botToken,
       channel: event.channel,

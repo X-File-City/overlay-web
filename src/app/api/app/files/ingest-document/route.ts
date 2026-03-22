@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import mammoth from 'mammoth'
 import { getSession } from '@/lib/workos-auth'
 import { convex } from '@/lib/convex'
+import { partedFileName, splitTextForConvexDocuments } from '@/lib/convex-file-content'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 
 export const runtime = 'nodejs'
@@ -92,6 +93,9 @@ export async function POST(request: NextRequest) {
     const projectIdRaw = form.get('projectId')
     const projectId =
       typeof projectIdRaw === 'string' && projectIdRaw.trim() ? projectIdRaw.trim() : undefined
+    const parentIdRaw = form.get('parentId')
+    const parentId =
+      typeof parentIdRaw === 'string' && parentIdRaw.trim() ? parentIdRaw.trim() : undefined
 
     if (!(raw instanceof File) || !raw.name?.trim()) {
       return NextResponse.json({ error: 'file required' }, { status: 400 })
@@ -130,15 +134,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No extractable text in file' }, { status: 400 })
     }
 
-    const id = await convex.mutation<Id<'files'>>('files:create', {
-      userId: session.user.id,
-      name: safeName,
-      type: 'file',
-      content: text,
-      projectId,
-    })
+    const parts = splitTextForConvexDocuments(text)
+    const ids: string[] = []
+    const total = parts.length
+    for (let p = 0; p < parts.length; p++) {
+      const partName = partedFileName(safeName, p + 1, total)
+      const fid = await convex.mutation<Id<'files'>>('files:create', {
+        userId: session.user.id,
+        name: partName,
+        type: 'file',
+        content: parts[p],
+        projectId,
+        parentId,
+      })
+      if (!fid) {
+        return NextResponse.json({ error: 'Failed to save document part' }, { status: 500 })
+      }
+      ids.push(fid)
+    }
 
-    return NextResponse.json({ id, name: safeName })
+    return NextResponse.json({ id: ids[0], ids, name: safeName, parts: total })
   } catch (error) {
     console.error('[ingest-document]', error)
     return NextResponse.json({ error: 'Failed to ingest document' }, { status: 500 })

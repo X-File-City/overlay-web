@@ -471,7 +471,22 @@ export const hybridSearch = action({
       .filter((row): row is NonNullable<typeof row> => !!row)
       .filter((row) => chunkMatchesProject(args.projectId, row.projectId))
 
-    const top = packChunksForContext(filtered, scores, m)
+    // Prefer chunks whose file was saved under this project when the user is in a project chat.
+    const PROJECT_CHUNK_BOOST = 1.85
+    const boostedScores = new Map(scores)
+    if (args.projectId) {
+      for (const row of filtered) {
+        if (row.projectId === args.projectId) {
+          const id = row._id
+          boostedScores.set(id, (boostedScores.get(id) ?? 0) * PROJECT_CHUNK_BOOST)
+        }
+      }
+    }
+    const resorted = [...filtered].sort(
+      (a, b) => (boostedScores.get(b._id) ?? 0) - (boostedScores.get(a._id) ?? 0),
+    )
+
+    const top = packChunksForContext(resorted, boostedScores, m)
 
     return { chunks: top }
   },
