@@ -312,6 +312,16 @@ export default function ComputerDetailClient({
 
   const { messages, sendMessage, setMessages, status, stop, error } = useChat<ComputerUiMessage>({ transport })
   const isLoading = status === 'streaming' || status === 'submitted'
+  const wasChatLoadingRef = useRef(false)
+
+  useEffect(() => {
+    const loading = status === 'streaming' || status === 'submitted'
+    if (wasChatLoadingRef.current && !loading) {
+      window.dispatchEvent(new CustomEvent('overlay:subscription-refresh'))
+    }
+    wasChatLoadingRef.current = loading
+  }, [status])
+
   const lastMessage = [...messages].reverse().find((message) => !isLocalCommandMessage(message))
   const showLoadingIndicator =
     isLoading &&

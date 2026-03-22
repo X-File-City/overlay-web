@@ -105,6 +105,14 @@ interface OpenClawTranscriptUsage {
   outputTokens?: number
   cacheRead?: number
   cacheWrite?: number
+  /** AI SDK / provider-style aliases (Vercel AI Gateway, OpenAI, etc.) */
+  promptTokens?: number
+  completionTokens?: number
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+  cache_creation_input_tokens?: number
+  cache_read_input_tokens?: number
 }
 
 interface OpenClawTranscriptMessage {
@@ -280,6 +288,12 @@ export async function POST(request: NextRequest) {
         try {
           writer.write({ type: 'text-start', id: textId })
 
+          const sessionTokensBeforeRun = await readGatewaySessionModel({
+            ip: connection.hetznerServerIp,
+            gatewayToken: connection.gatewayToken,
+            sessionKey,
+          }).catch(() => null)
+
           const streamResult = await streamAssistantReplyFromGateway({
             ip: connection.hetznerServerIp,
             gatewayToken: connection.gatewayToken,
@@ -346,51 +360,51 @@ export async function POST(request: NextRequest) {
           })
 
           // ── Usage recording ────────────────────────────────────────────────────
-          // Priority: 1) stream usage (from final event), 2) transcript message usage, 3) char estimate
           const streamUsage = streamResult.usage
           const transcriptUsage = latestAssistantMessage
-            ? extractTranscriptMessageUsage(latestAssistantMessage)
+            ? (latestAssistantMessage.usage ?? null)
             : null
-
-          // Resolve input tokens: prefer stream > transcript > char estimate
-          const resolvedInputFromStream = streamUsage?.inputTokens ?? streamUsage?.input
-          const resolvedInputFromTranscript = transcriptUsage?.inputTokens
-          const inputChars = baselineHistory.messages.reduce(
-            (sum, msg) => sum + extractTranscriptMessageText(msg).length,
-            0
-          ) + latestUserText.length
-          const finalInputTokens = resolvedInputFromStream ?? resolvedInputFromTranscript ?? Math.ceil(inputChars / 4)
-
-          // Resolve output tokens: prefer stream > transcript > char estimate
-          const resolvedOutputFromStream = streamUsage?.outputTokens ?? streamUsage?.output
-          const resolvedOutputFromTranscript = transcriptUsage?.outputTokens
           const outputText = latestAssistantMessage
             ? extractTranscriptMessageText(latestAssistantMessage)
             : finalText
-          const finalOutputTokens = resolvedOutputFromStream ?? resolvedOutputFromTranscript ?? Math.ceil(outputText.length / 4)
 
-          // Resolve cache read tokens
-          const finalCacheRead = streamUsage?.cacheRead ?? transcriptUsage?.cacheReadTokens ?? 0
+          const billing = resolveComputerChatBillingTokens({
+            streamUsage,
+            transcriptUsage,
+            baselineMessages: baselineHistory.messages,
+            latestUserText,
+            assistantTextForCharEst: outputText || finalText,
+            sessionBefore: sessionTokensBeforeRun?.tokenSnapshot,
+            sessionAfter: latestSessionModel?.tokenSnapshot,
+          })
+
+          const finalInputTokens = billing.inputTokens
+          const finalOutputTokens = billing.outputTokens
+          const finalCacheRead = billing.cacheRead
+
           const costDollars = calculateTokenCost(selectedModelId, finalInputTokens, finalCacheRead, finalOutputTokens)
           const costCents = Math.ceil(costDollars * 100)
-          const tokenSource = (resolvedInputFromStream != null || resolvedOutputFromStream != null)
-            ? 'stream-usage'
-            : (resolvedInputFromTranscript != null || resolvedOutputFromTranscript != null)
-              ? 'transcript-usage'
-              : 'estimated'
           console.log(
-            `[Computer Chat] 💰 Cost (${tokenSource}): model=${selectedModelId} | ` +
+            `[Computer Chat] 💰 Cost (${billing.source}): model=${selectedModelId} | ` +
             `in=${finalInputTokens} out=${finalOutputTokens} cacheRead=${finalCacheRead} | ` +
             `$${costDollars.toFixed(4)} = ${costCents}¢`
           )
-          if (tokenSource === 'estimated') {
-            console.log('[Computer Chat] ⚠️  No usage data from stream or transcript, fell back to char estimate', {
-              inputChars,
-              outputChars: outputText.length,
-              streamUsage,
-              transcriptUsage,
-            })
-          }
+          console.log('[Computer Chat] 💳 Usage detail', {
+            note:
+              'transcriptUsageNorm.input is the raw gateway/OpenClaw field (often hook-sized, not full prompt). ' +
+              'Billed input is inputBreakdown.billedInputTokens (max of transcript floor vs implied prompt from message total−output when sane).',
+            transcriptChars: billing.transcriptChars,
+            transcriptFloorOnly: billing.transcriptTokenFloor,
+            streamUsage: streamUsage ? normalizeOpenClawUsage(streamUsage) : null,
+            transcriptUsageNorm: transcriptUsage ? normalizeOpenClawUsage(transcriptUsage) : null,
+            inputBreakdown: billing.inputBreakdown,
+            sessionOutDelta:
+              sessionTokensBeforeRun?.tokenSnapshot?.outputTokens != null &&
+              latestSessionModel?.tokenSnapshot?.outputTokens != null
+                ? latestSessionModel.tokenSnapshot.outputTokens -
+                  sessionTokensBeforeRun.tokenSnapshot.outputTokens
+                : null,
+          })
           if (costCents > 0) {
             try {
               await convex.mutation('usage:recordBatch', {
@@ -407,6 +421,21 @@ export async function POST(request: NextRequest) {
                 }],
               })
               console.log(`[Computer Chat] ✅ Usage recorded: ${costCents}¢ for model=${selectedModelId}`)
+              const afterEntitlements = await convex.query<Entitlements>('usage:getEntitlements', {
+                accessToken,
+                userId,
+              })
+              if (afterEntitlements) {
+                const totalC = afterEntitlements.creditsTotal * 100
+                const usedPct =
+                  totalC > 0
+                    ? ((afterEntitlements.creditsUsed / totalC) * 100).toFixed(2)
+                    : '0.00'
+                console.log(
+                  `[Computer Chat] 📊 Credits after record: used=${afterEntitlements.creditsUsed}¢ / ${totalC}¢ ` +
+                  `(${usedPct}% used, $${((totalC - afterEntitlements.creditsUsed) / 100).toFixed(4)} remaining)`
+                )
+              }
             } catch (err) {
               console.error('[Computer Chat] Failed to record usage:', err)
             }
@@ -730,6 +759,218 @@ function extractTranscriptMessageText(message: OpenClawTranscriptMessage): strin
   )
 }
 
+/**
+ * OpenClaw injects system prompt, tools, skills metadata, and bootstrap files on every run.
+ * A char-count of transcript text alone under-counts vs real provider billing.
+ * @see https://docs.openclaw.ai/reference/token-use
+ */
+const OPENCLAW_SYSTEM_PROMPT_OVERHEAD_TOKENS = 2200
+
+function pickFirstFinite(...vals: Array<number | undefined | null>): number | undefined {
+  for (const v of vals) {
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+      return v
+    }
+  }
+  return undefined
+}
+
+/**
+ * Flatten Vercel AI Gateway / AI SDK usage shapes into one numeric view.
+ */
+function normalizeOpenClawUsage(
+  u: OpenClawTranscriptUsage | null | undefined
+): { input?: number; output?: number; total?: number; cacheRead?: number } {
+  if (!u) {
+    return {}
+  }
+  const cacheRead = pickFirstFinite(u.cacheRead, u.cache_read_input_tokens)
+  const input = pickFirstFinite(
+    u.input,
+    u.inputTokens,
+    u.promptTokens,
+    u.prompt_tokens
+  )
+  const output = pickFirstFinite(
+    u.output,
+    u.outputTokens,
+    u.completionTokens,
+    u.completion_tokens
+  )
+  const total = pickFirstFinite(u.totalTokens, u.total_tokens)
+  return { input, output, total, cacheRead }
+}
+
+function mergeUsagePreferStream(
+  stream: OpenClawTranscriptUsage | null,
+  transcript: OpenClawTranscriptUsage | null
+): OpenClawTranscriptUsage | null {
+  if (!stream && !transcript) {
+    return null
+  }
+  if (!stream) {
+    return transcript
+  }
+  if (!transcript) {
+    return stream
+  }
+  return { ...transcript, ...stream }
+}
+
+function impliedPromptTokensFromTotal(
+  total: number,
+  output: number,
+  cacheRead: number
+): number {
+  const v = total - output - Math.max(0, cacheRead)
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : 0
+}
+
+function estimateTranscriptPromptTokenFloor(
+  messages: OpenClawTranscriptMessage[],
+  latestUserText: string
+): { transcriptChars: number; tokenFloor: number } {
+  let chars = 0
+  for (const m of messages) {
+    chars += extractTranscriptMessageText(m).length
+  }
+  const trimmed = latestUserText.trim()
+  if (trimmed) {
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+    const lastTxt = lastUser ? extractTranscriptMessageText(lastUser).trim() : ''
+    if (lastTxt !== trimmed) {
+      chars += trimmed.length
+    }
+  }
+  const tokenFloor = Math.max(1, Math.ceil(chars / 4) + OPENCLAW_SYSTEM_PROMPT_OVERHEAD_TOKENS)
+  return { transcriptChars: chars, tokenFloor }
+}
+
+interface GatewayTokenSnapshotShape {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  cacheRead?: number
+}
+
+/**
+ * OpenClaw / gateway often report tiny `input`/`inputTokens` (e.g. hook-only) while
+ * `totalTokens` and session output deltas reflect real work. Combine transcript floor,
+ * normalized usage, and session output delta so subscription billing matches reality.
+ */
+function resolveComputerChatBillingTokens(params: {
+  streamUsage: OpenClawTranscriptUsage | null
+  transcriptUsage: OpenClawTranscriptUsage | null
+  baselineMessages: OpenClawTranscriptMessage[]
+  latestUserText: string
+  assistantTextForCharEst: string
+  sessionBefore: GatewayTokenSnapshotShape | null | undefined
+  sessionAfter: GatewayTokenSnapshotShape | null | undefined
+}): {
+  inputTokens: number
+  outputTokens: number
+  cacheRead: number
+  source: string
+  transcriptChars: number
+  transcriptTokenFloor: number
+  /** Why billed input can differ from `transcriptUsageNorm.input` in logs */
+  inputBreakdown: {
+    providerReportedInputTokens: number | undefined
+    messageTotalTokens: number | undefined
+    outputUsedForImpliedPrompt: number | undefined
+    impliedPromptTokens: number
+    transcriptTokenFloor: number
+    billedInputTokens: number
+  }
+} {
+  const merged = normalizeOpenClawUsage(
+    mergeUsagePreferStream(params.streamUsage, params.transcriptUsage) ?? undefined
+  )
+
+  const { transcriptChars, tokenFloor: transcriptTokenFloor } = estimateTranscriptPromptTokenFloor(
+    params.baselineMessages,
+    params.latestUserText
+  )
+
+  let outputFromSessionDelta: number | undefined
+  if (
+    params.sessionBefore &&
+    params.sessionAfter &&
+    typeof params.sessionBefore.outputTokens === 'number' &&
+    typeof params.sessionAfter.outputTokens === 'number' &&
+    params.sessionAfter.outputTokens >= params.sessionBefore.outputTokens
+  ) {
+    outputFromSessionDelta = params.sessionAfter.outputTokens - params.sessionBefore.outputTokens
+  }
+
+  const charOutputEst = Math.max(1, Math.ceil(params.assistantTextForCharEst.length / 4))
+  const reportedOut = merged.output
+  const finalOutput = pickFirstFinite(outputFromSessionDelta, reportedOut, charOutputEst) ?? charOutputEst
+
+  const reportedIn = merged.input
+  const total = merged.total
+  const cacheRead = merged.cacheRead ?? 0
+
+  let impliedIn = 0
+  const outForImplied = pickFirstFinite(reportedOut, finalOutput)
+  if (total !== undefined && outForImplied !== undefined && total > outForImplied) {
+    impliedIn = impliedPromptTokensFromTotal(total, outForImplied, cacheRead)
+  }
+  const inputBreakdown = {
+    providerReportedInputTokens: reportedIn,
+    messageTotalTokens: total,
+    outputUsedForImpliedPrompt: outForImplied,
+    impliedPromptTokens: impliedIn,
+    transcriptTokenFloor,
+    billedInputTokens: 0,
+  }
+
+  const reportedInputSuspicious =
+    reportedIn !== undefined && reportedIn < 48 && transcriptTokenFloor > 600
+
+  const impliedUpperBound = Math.floor(transcriptTokenFloor * 3) + 8000
+  const impliedConsistentWithTranscript =
+    impliedIn > 0 &&
+    impliedIn >= Math.floor(transcriptTokenFloor * 0.35) &&
+    impliedIn <= impliedUpperBound
+
+  const inputParts: number[] = [transcriptTokenFloor]
+  if (reportedIn !== undefined && reportedIn > 0 && !reportedInputSuspicious) {
+    inputParts.push(reportedIn)
+  }
+  if (impliedConsistentWithTranscript) {
+    inputParts.push(impliedIn)
+  }
+
+  const inputTokens = Math.max(...inputParts)
+  inputBreakdown.billedInputTokens = inputTokens
+
+  const parts: string[] = []
+  if (outputFromSessionDelta !== undefined && outputFromSessionDelta > 0) {
+    parts.push('session-output-delta')
+  }
+  if (merged.input !== undefined || merged.output !== undefined) {
+    parts.push('normalized-usage')
+  }
+  if (reportedInputSuspicious) {
+    parts.push('ignored-suspicious-input')
+  }
+  if (impliedConsistentWithTranscript) {
+    parts.push('implied-from-total')
+  }
+  parts.push('transcript-floor')
+
+  return {
+    inputTokens,
+    outputTokens: Math.max(1, finalOutput),
+    cacheRead,
+    source: parts.filter(Boolean).join('+'),
+    transcriptChars,
+    transcriptTokenFloor,
+    inputBreakdown,
+  }
+}
+
 function extractTranscriptMessageUsage(message: OpenClawTranscriptMessage): {
   inputTokens?: number
   outputTokens?: number
@@ -740,32 +981,15 @@ function extractTranscriptMessageUsage(message: OpenClawTranscriptMessage): {
     return null
   }
 
-  const inputTokens =
-    typeof usage.input === 'number'
-      ? usage.input
-      : typeof usage.inputTokens === 'number'
-        ? usage.inputTokens
-        : undefined
-  const outputTokens =
-    typeof usage.output === 'number'
-      ? usage.output
-      : typeof usage.outputTokens === 'number'
-        ? usage.outputTokens
-        : undefined
-  const cacheReadTokens = typeof usage.cacheRead === 'number' ? usage.cacheRead : undefined
-
-  if (
-    inputTokens === undefined &&
-    outputTokens === undefined &&
-    cacheReadTokens === undefined
-  ) {
+  const n = normalizeOpenClawUsage(usage)
+  if (n.input === undefined && n.output === undefined && n.cacheRead === undefined) {
     return null
   }
 
   return {
-    inputTokens,
-    outputTokens,
-    cacheReadTokens,
+    inputTokens: n.input,
+    outputTokens: n.output,
+    cacheReadTokens: n.cacheRead,
   }
 }
 
@@ -1042,12 +1266,9 @@ async function runGatewayChatStream(
 
     const captureUsageFromMessage = (message?: OpenClawTranscriptMessage) => {
       if (!message?.usage) return
-      const u = message.usage
-      if (
-        typeof u.input === 'number' || typeof u.inputTokens === 'number' ||
-        typeof u.output === 'number' || typeof u.outputTokens === 'number'
-      ) {
-        capturedUsage = u
+      const n = normalizeOpenClawUsage(message.usage)
+      if (n.input !== undefined || n.output !== undefined || n.total !== undefined) {
+        capturedUsage = message.usage
       }
     }
 

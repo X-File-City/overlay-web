@@ -71,21 +71,24 @@ function UsageBar({ entitlements }: { entitlements: Entitlements | null }) {
 
   const creditsTotalCents = creditsTotal * 100
   if (creditsTotalCents <= 0) return <p className="text-[11px] text-[#aaa]">No credit limit set</p>
-  const usedPct = Math.min(100, (creditsUsed / creditsTotalCents) * 100)
-  const remainingPct = Math.max(0, Math.round(100 - usedPct))
-  const exhausted = remainingPct <= 0
-  const warning = usedPct >= 80
+  const usedPctRaw = Math.min(100, (creditsUsed / creditsTotalCents) * 100)
+  const remainingPctRaw = Math.max(0, 100 - usedPctRaw)
+  const exhausted = remainingPctRaw <= 0
+  const warning = usedPctRaw >= 80
 
   return (
     <div className={`flex flex-col gap-1 text-xs ${exhausted ? 'text-red-500' : warning ? 'text-amber-500' : 'text-[#aaa]'}`}>
-      <div className="flex items-center justify-between">
-        <span>{remainingPct}% remaining</span>
+      <div className="flex items-center justify-between gap-2">
+        <span className="tabular-nums">
+          {remainingPctRaw.toFixed(1)}% remaining
+          <span className="text-[10px] opacity-70"> · {usedPctRaw.toFixed(1)}% used</span>
+        </span>
         {exhausted && <AlertCircle size={11} />}
       </div>
       <div className="h-1 rounded-full bg-[#e5e5e5] overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${exhausted ? 'bg-red-400' : warning ? 'bg-amber-400' : 'bg-[#0a0a0a]'}`}
-          style={{ width: `${remainingPct}%` }}
+          style={{ width: `${remainingPctRaw}%` }}
         />
       </div>
     </div>
@@ -126,6 +129,14 @@ export default function AppSidebar({ user, accessToken }: { user: AuthUser; acce
       window.clearInterval(intervalId)
     }
   }, [accountMenuOpen, loadEntitlements])
+
+  useEffect(() => {
+    function onSubscriptionRefresh() {
+      void loadEntitlements()
+    }
+    window.addEventListener('overlay:subscription-refresh', onSubscriptionRefresh)
+    return () => window.removeEventListener('overlay:subscription-refresh', onSubscriptionRefresh)
+  }, [loadEntitlements])
 
   // Close menu on outside click
   useEffect(() => {
