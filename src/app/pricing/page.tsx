@@ -40,7 +40,7 @@ const tiers: Tier[] = [
       { name: '5 Ask messages/day', included: true },
       { name: '5 Agent messages/day', included: true },
       { name: '5 Write messages/day', included: true },
-      { name: 'Trinity Large + Auto models only', included: true },
+      { name: 'OpenRouter Free Router (auto) only', included: true },
       { name: 'Premium AI models', included: false },
       { name: 'Cloud sync', included: false },
       { name: 'Priority support', included: false }
@@ -58,7 +58,7 @@ const tiers: Tier[] = [
     features: [
       { name: 'Everything in Free', included: true },
       { name: 'Unlimited transcription', included: true },
-      { name: 'Unlimited Trinity/Auto usage', included: true },
+      { name: 'Unlimited OpenRouter Free Router usage', included: true },
       { name: 'Premium AI models', included: true, detail: '$10 token budget/mo' },
       { name: 'Prompt caching (save up to 90%)', included: true },
       { name: 'Cloud jobs (coming soon)', included: true },
@@ -372,7 +372,7 @@ export default function PricingPage() {
                 },
                 {
                   q: 'Which models are included in Free?',
-                  a: 'Free users get unlimited access to Trinity Large and Auto. These are capable models for many tasks.'
+                  a: 'Free users get unlimited access to OpenRouter’s Free Router (auto), which picks a free upstream model for each request.'
                 },
                 {
                   q: 'Do I need to enter payment info for Free?',

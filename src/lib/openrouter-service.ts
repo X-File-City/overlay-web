@@ -75,7 +75,7 @@ export function userFacingOpenRouterError(error: unknown): string {
   ) {
     return (
       'OpenRouter’s free models are temporarily rate-limited. Wait a minute and retry, ' +
-      'or pick a specific free model (e.g. Trinity Large) instead of Free Router.'
+      'or add your own OpenRouter key for higher limits.'
     )
   }
   if (!raw.trim()) return 'Something went wrong. Please try again.'
@@ -89,7 +89,7 @@ export function toOpenRouterApiModelId(overlayModelId: string): string {
   }
   const rest = overlayModelId.slice('openrouter/'.length)
   // Vendor paths are `org/model` or `org/model:variant` — drop the registry prefix only for those.
-  // Single-segment ids (`free`, `hunter-alpha`, …) are OpenRouter routers; API requires `openrouter/...`.
+  // Single-segment ids (e.g. `free`) are OpenRouter routers; API requires `openrouter/...`.
   if (rest.includes('/')) {
     return rest
   }

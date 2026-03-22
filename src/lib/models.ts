@@ -53,11 +53,8 @@ export const AVAILABLE_MODELS: ChatModel[] = [
   { id: 'openai/gpt-oss-120b', name: 'GPT OSS 120B', provider: 'groq', openClawRef: 'vercel-ai-gateway/openai/gpt-oss-120b', description: 'OpenAI OSS', supportsVision: false, supportsReasoning: false, supportsSearch: false },
   { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', provider: 'groq', openClawRef: 'vercel-ai-gateway/openai/gpt-oss-20b', description: 'OpenAI OSS', supportsVision: false, supportsReasoning: false, supportsSearch: false },
 
-  // OpenRouter (free) — `openrouter/free` etc. stay full id for the API; vendor slugs like `openrouter/arcee-ai/...` strip to `arcee-ai/...`.
+  // OpenRouter (free) — only the auto router; API id stays `openrouter/free` (do not send bare `free`).
   { id: 'openrouter/free', name: 'Free Router', provider: 'openrouter', openClawRef: 'openrouter/free', description: 'Auto free model', supportsVision: false, supportsReasoning: false, supportsSearch: false },
-  { id: 'openrouter/hunter-alpha', name: 'Hunter Alpha', provider: 'openrouter', openClawRef: 'openrouter/hunter-alpha', description: 'Free alpha model', supportsVision: false, supportsReasoning: false, supportsSearch: false },
-  { id: 'openrouter/healer-alpha', name: 'Healer Alpha', provider: 'openrouter', openClawRef: 'openrouter/healer-alpha', description: 'Free alpha model', supportsVision: false, supportsReasoning: false, supportsSearch: false },
-  { id: 'openrouter/arcee-ai/trinity-large-preview:free', name: 'Trinity Large (Free)', provider: 'openrouter', openClawRef: 'openrouter/arcee-ai/trinity-large-preview:free', description: 'Free via OpenRouter', supportsVision: false, supportsReasoning: false, supportsSearch: false },
 ]
 
 export const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
