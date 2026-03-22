@@ -22,6 +22,10 @@ import {
   createKnowledgeToolExecutor,
 } from '@/lib/knowledge-openrouter'
 import { calculateTokenCost, isPremiumModel } from '@/lib/model-pricing'
+import {
+  MEMORY_SAVE_PROTOCOL,
+  indexedFilesSystemNote,
+} from '@/lib/knowledge-agent-instructions'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 
 const MATH_FORMAT_INSTRUCTION = [
@@ -55,6 +59,7 @@ export async function POST(request: NextRequest) {
       variantIndex,
       systemPrompt,
       skipUserMessage,
+      indexedFileNames,
     }: {
       messages: UIMessage[]
       modelId?: string
@@ -63,6 +68,8 @@ export async function POST(request: NextRequest) {
       variantIndex?: number
       systemPrompt?: string
       skipUserMessage?: boolean
+      /** Notebook files just indexed from chat attachments (this turn). */
+      indexedFileNames?: string[]
     } = await request.json()
     const userId = session.user.id
     const effectiveModelId = modelId || 'claude-sonnet-4-6'
@@ -161,17 +168,25 @@ export async function POST(request: NextRequest) {
       // optional
     }
 
+    const indexedNote = indexedFilesSystemNote(
+      Array.isArray(indexedFileNames)
+        ? indexedFileNames.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+        : [],
+    )
+
     const baseSystemMessage = [
       systemPrompt || 'You are a helpful AI assistant.',
       MATH_FORMAT_INSTRUCTION,
       memoryContext,
       autoRetrieval,
+      indexedNote,
     ].filter(Boolean).join('\n\n')
 
     const knowledgeToolNote =
       '\n\nYou can call tools: search_knowledge (search notebook files and memories), save_memory, update_memory, delete_memory. ' +
       'Use search_knowledge for extra retrieval beyond AUTO_RETRIEVED_KNOWLEDGE. ' +
-      'When your answer uses AUTO_RETRIEVED_KNOWLEDGE or tool search results, end with **Sources:** as instructed there.'
+      'When your answer uses AUTO_RETRIEVED_KNOWLEDGE or tool search results, end with **Sources:** as instructed there.\n\n' +
+      MEMORY_SAVE_PROTOCOL
 
     if (cid && tid && latestUserContent && !skipUserMessage) {
       await convex.mutation('conversations:addMessage', {
@@ -255,7 +270,7 @@ export async function POST(request: NextRequest) {
           tools: [...OPENROUTER_KNOWLEDGE_TOOLS],
           executeTool,
           accessToken: session.accessToken,
-          maxToolRounds: 8,
+          maxToolRounds: 10,
           onFinish: finishAsk,
         })
       } catch (err) {
@@ -294,7 +309,7 @@ export async function POST(request: NextRequest) {
       system: baseSystemMessage + knowledgeToolNote,
       messages: modelMessages,
       tools: knowledgeTools,
-      stopWhen: stepCountIs(8),
+      stopWhen: stepCountIs(10),
       onFinish: async ({ text, usage }) => {
         await finishAsk(text, {
           inputTokens: usage?.inputTokens ?? 0,

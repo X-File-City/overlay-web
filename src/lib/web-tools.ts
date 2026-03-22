@@ -87,7 +87,8 @@ export function createWebTools(options: WebToolsOptions): ToolSet {
   tools.save_memory = tool({
     description:
       'Save a durable memory about the user (preferences, facts, standing instructions). ' +
-      'Use for information they want remembered across chats.',
+      'You MUST call this when they state personal preferences or long-lived facts (e.g. "I like pasta", "I am vegetarian", "always cite sources"). ' +
+      'Use one short factual sentence per call. Skip for pure small talk or one-off requests.',
     inputSchema: z.object({
       content: z.string().describe('The memory text to store'),
       source: z

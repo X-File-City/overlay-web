@@ -27,6 +27,13 @@ interface AttachedImage {
   name: string
 }
 
+interface PendingChatDocument {
+  clientId: string
+  name: string
+  status: 'uploading' | 'ready' | 'error'
+  error?: string
+}
+
 interface ChatOutput {
   _id: string
   type: 'image' | 'video'
@@ -347,6 +354,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   const [input, setInput] = useState('')
   const [isFirstMessage, setIsFirstMessage] = useState(true)
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
+  const [pendingChatDocuments, setPendingChatDocuments] = useState<PendingChatDocument[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null)
 
@@ -354,6 +362,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   const messagesScrollRef = useRef<HTMLDivElement>(null)
   const shouldScrollRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const docInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const modelPickerRef = useRef<HTMLDivElement>(null)
   const attachMenuRef = useRef<HTMLDivElement>(null)
@@ -495,8 +504,10 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     return () => clearTimeout(t)
   }, [composerMode, selectedModels, selectedActModel, activeChatId])
 
-  // Auto-load a specific chat when embedded in project view
+  // Auto-load a specific chat when embedded in project view (`id` = conversation)
   const idParam = hideSidebar ? searchParams.get('id') : null
+  /** When chat is opened inside a project, files/docs attach to this project for search scoping. */
+  const embedProjectId = hideSidebar ? searchParams.get('projectId') : null
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (idParam) void loadChat(idParam) }, [idParam])
 
@@ -586,6 +597,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     setSelectedTabPerExchange([])
     setGenerationResults(new Map())
     setExchangeGenTypes([])
+    setPendingChatDocuments([])
     lastGeneratedImageUrlRef.current = null
     setSelectedImageModels([DEFAULT_IMAGE_MODEL_ID])
     setSelectedVideoModels([DEFAULT_VIDEO_MODEL_ID])
@@ -602,6 +614,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         askModelIds: selectedModels,
         actModelId: selectedActModel,
         lastMode: composerMode,
+        ...(embedProjectId ? { projectId: embedProjectId } : {}),
       }),
     })
     if (res.ok) {
@@ -840,6 +853,50 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     await loadChats()
   }
 
+  function removePendingDocument(clientId: string) {
+    setPendingChatDocuments((prev) => prev.filter((d) => d.clientId !== clientId))
+  }
+
+  function queueDocumentUpload(file: File) {
+    const clientId = crypto.randomUUID()
+    setAttachmentError(null)
+    setPendingChatDocuments((prev) => [...prev, { clientId, name: file.name, status: 'uploading' }])
+    const form = new FormData()
+    form.append('file', file)
+    if (embedProjectId) form.append('projectId', embedProjectId)
+    void fetch('/api/app/files/ingest-document', { method: 'POST', body: form })
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string }
+          setPendingChatDocuments((prev) =>
+            prev.map((d) =>
+              d.clientId === clientId
+                ? { ...d, status: 'error' as const, error: err.error ?? 'Could not index file' }
+                : d,
+            ),
+          )
+          return
+        }
+        setPendingChatDocuments((prev) =>
+          prev.map((d) => (d.clientId === clientId ? { ...d, status: 'ready' as const } : d)),
+        )
+      })
+      .catch(() => {
+        setPendingChatDocuments((prev) =>
+          prev.map((d) =>
+            d.clientId === clientId
+              ? { ...d, status: 'error' as const, error: 'Network error' }
+              : d,
+          ),
+        )
+      })
+  }
+
+  function addDocumentsFromPicker(files: FileList | File[] | null) {
+    if (!files?.length) return
+    Array.from(files).forEach((file) => queueDocumentUpload(file))
+  }
+
   function addImages(files: FileList | File[]) {
     Array.from(files).forEach((file) => {
       if (!file.type.startsWith('image/')) return
@@ -872,10 +929,21 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   async function handleSend() {
     const text = input.trim()
-    if ((!text && attachedImages.length === 0) || isAnyLoading) return
+    const hasReadyDocs = pendingChatDocuments.some((d) => d.status === 'ready')
+    if (isAnyLoading) return
+
+    if (pendingChatDocuments.some((d) => d.status === 'uploading')) {
+      setAttachmentError('Wait for documents to finish indexing.')
+      return
+    }
+    if (pendingChatDocuments.some((d) => d.status === 'error')) {
+      setAttachmentError('Remove failed documents before sending.')
+      return
+    }
 
     // ── Image / Video generation path ──────────────────────────────────────
     if (effectiveGenType === 'image' || effectiveGenType === 'video') {
+      if (!text && attachedImages.length === 0) return
       if (isSendBlocked) return
       const chatId = activeChatId || await createNewChat()
       if (!chatId) return
@@ -1060,8 +1128,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     }
 
     // ── Normal text chat path ─────────────────────────────────────────────
-    if (attachedImages.length === 0 && !text) return
+    if (attachedImages.length === 0 && !text && !hasReadyDocs) return
     if (isSendBlocked) return
+
+    const indexedFileNames = pendingChatDocuments
+      .filter((d) => d.status === 'ready')
+      .map((d) => d.name)
 
     // Capture before any await — isFirstMessage is true for the first message of a new/fresh chat
     const wasFirst = isFirstMessage
@@ -1070,6 +1142,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
     setInput('')
     setAttachedImages([])
+    setPendingChatDocuments([])
     setAttachmentError(null)
     setIsFirstMessage(false)
     shouldScrollRef.current = true
@@ -1080,10 +1153,13 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     for (const img of attachedImages) {
       parts.push({ type: 'file', url: img.dataUrl, mediaType: img.mimeType })
     }
-    const persistedContent = text || (parts.some((part) => part.type === 'file') ? '[Image attachment]' : '')
+    const persistedContent =
+      text ||
+      (parts.some((part) => part.type === 'file') ? '[Image attachment]' : '') ||
+      (indexedFileNames.length > 0 ? `[Indexed documents: ${indexedFileNames.join(', ')}]` : '')
 
-    if (wasFirst && text) {
-      startFirstMessageRename(chatId, text)
+    if (wasFirst && (text || indexedFileNames.length > 0)) {
+      startFirstMessageRename(chatId, text || indexedFileNames[0] || 'Documents')
     }
 
     const msgCountBeforeSend = chat0.messages.length
@@ -1102,7 +1178,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       void actChat.sendMessage({ role: 'user', parts: parts as any }, {
-        body: { conversationId: chatId, turnId: textTurnId, modelId: selectedActModel },
+        body: {
+          conversationId: chatId,
+          turnId: textTurnId,
+          modelId: selectedActModel,
+          ...(indexedFileNames.length > 0 ? { indexedFileNames } : {}),
+        },
       }).then(() => {
         completeSession(chatId, activeChatIdRef.current === chatId)
         loadChats()
@@ -1150,6 +1231,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             turnId: textTurnId,
             variantIndex: idx,
             skipUserMessage: persistedUserMessage || idx !== 0,
+            ...(indexedFileNames.length > 0 ? { indexedFileNames } : {}),
           },
         })
       )
@@ -1274,15 +1356,28 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           e.preventDefault()
           dragCounterRef.current = 0
           setIsDragging(false)
-          const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
-          if (files.length > 0) addImages(files)
+          const all = Array.from(e.dataTransfer.files)
+          const images = all.filter((f) => f.type.startsWith('image/'))
+          if (images.length > 0) addImages(images)
+          const docExts =
+            /^(pdf|docx|txt|md|markdown|csv|json|html|htm|xml|log|ts|tsx|js|jsx|css|yaml|yml|toml|py|go|rs)$/i
+          const docs = all.filter((f) => {
+            const ext = f.name.split('.').pop() ?? ''
+            return (
+              docExts.test(ext) ||
+              f.type === 'application/pdf' ||
+              f.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+              (f.type.startsWith('text/') && ext !== '')
+            )
+          })
+          if (docs.length > 0) docs.forEach((f) => queueDocumentUpload(f))
         }}
       >
         {isDragging && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#fafafa]/90 border-2 border-dashed border-[#0a0a0a] rounded-lg m-2 pointer-events-none">
             <div className="text-center">
               <ImageIcon size={28} className="mx-auto mb-2 text-[#525252]" />
-              <p className="text-sm font-medium text-[#0a0a0a]">Drop images here</p>
+              <p className="text-sm font-medium text-[#0a0a0a]">Drop images or documents here</p>
             </div>
           </div>
         )}
@@ -1638,10 +1733,10 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
         {/* Input */}
         <div className="px-4 pb-4">
-          {attachedImages.length > 0 && (
+          {(attachedImages.length > 0 || pendingChatDocuments.length > 0) && (
             <div className="mx-auto w-full max-w-4xl mb-2 flex flex-wrap gap-2">
               {attachedImages.map((img, i) => (
-                <div key={i} className="relative group">
+                <div key={`img-${i}`} className="relative group">
                   <img src={img.dataUrl} alt={img.name}
                     className="w-16 h-16 object-cover rounded-lg border border-[#e5e5e5]" />
                   <button
@@ -1649,6 +1744,36 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-[#0a0a0a] text-[#fafafa] rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     <X size={9} />
+                  </button>
+                </div>
+              ))}
+              {pendingChatDocuments.map((doc) => (
+                <div
+                  key={doc.clientId}
+                  className="relative group flex items-center gap-2 max-w-[220px] px-2.5 py-1.5 rounded-lg border border-[#e5e5e5] bg-white text-xs text-[#525252]"
+                >
+                  <FileText size={14} className="shrink-0 text-[#888]" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-[#0a0a0a]">{doc.name}</p>
+                    {doc.status === 'uploading' && (
+                      <p className="text-[10px] text-[#aaa] mt-0.5 animate-pulse">Indexing…</p>
+                    )}
+                    {doc.status === 'ready' && (
+                      <p className="text-[10px] text-emerald-600 mt-0.5">Indexed</p>
+                    )}
+                    {doc.status === 'error' && (
+                      <p className="text-[10px] text-red-500 mt-0.5 truncate" title={doc.error}>
+                        {doc.error ?? 'Failed'}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removePendingDocument(doc.clientId)}
+                    className="shrink-0 p-0.5 rounded hover:bg-[#f0f0f0] text-[#aaa]"
+                    aria-label="Remove"
+                  >
+                    <X size={11} />
                   </button>
                 </div>
               ))}
@@ -1679,6 +1804,17 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                   multiple
                   className="hidden"
                   onChange={(e) => e.target.files && addImages(e.target.files)}
+                />
+                <input
+                  ref={docInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.txt,.md,.markdown,.csv,.json,.html,.htm,.xml,.log,.ts,.tsx,.js,.jsx,.css,.yaml,.yml,.toml,.py,.go,.rs,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    addDocumentsFromPicker(e.target.files)
+                    e.target.value = ''
+                  }}
                 />
                 <div ref={attachMenuRef} className="relative shrink-0">
                   <button
@@ -1720,12 +1856,16 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                       </button>
                       <div className="border-t border-[#f0f0f0] my-1" />
                       <button
-                        disabled
-                        className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-[#bbb] cursor-not-allowed"
+                        type="button"
+                        onClick={() => {
+                          docInputRef.current?.click()
+                          setShowAttachMenu(false)
+                        }}
+                        className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-[#525252] hover:bg-[#f5f5f5] transition-colors"
                       >
                         <FileText size={13} />
                         <span>Documents</span>
-                        <span className="ml-auto text-[10px] text-[#ccc]">soon</span>
+                        <span className="ml-auto text-[10px] text-[#aaa]">PDF, Word, text</span>
                       </button>
                     </div>
                   )}
@@ -1765,7 +1905,11 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                 ) : (
                   <button
                     onClick={handleSend}
-                    disabled={!input.trim() && attachedImages.length === 0}
+                    disabled={
+                      !input.trim() &&
+                      attachedImages.length === 0 &&
+                      !pendingChatDocuments.some((d) => d.status === 'ready')
+                    }
                     className="shrink-0 p-1.5 rounded-lg bg-[#0a0a0a] text-[#fafafa] disabled:opacity-40 hover:bg-[#333] transition-colors"
                   >
                     <Send size={14} />

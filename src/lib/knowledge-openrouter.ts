@@ -29,7 +29,7 @@ export const OPENROUTER_KNOWLEDGE_TOOLS = [
     function: {
       name: 'save_memory',
       description:
-        'Save a durable memory about the user (preferences, facts, instructions they want remembered).',
+        'Save a durable memory about the user. REQUIRED when they share personal preferences or long-lived facts (e.g. liking a food, work role, formatting preferences). Use one short factual line. Skip for small talk only.',
       parameters: {
         type: 'object',
         properties: {

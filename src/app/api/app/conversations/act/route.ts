@@ -9,6 +9,10 @@ import { createBrowserUnifiedTools } from '@/lib/composio-tools'
 import { createWebTools } from '@/lib/web-tools'
 import { calculateTokenCost, isPremiumModel } from '@/lib/model-pricing'
 import { buildAutoRetrievalSystemExtension } from '@/lib/ask-knowledge-context'
+import {
+  MEMORY_SAVE_PROTOCOL,
+  indexedFilesSystemNote,
+} from '@/lib/knowledge-agent-instructions'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 
 export const maxDuration = 120
@@ -27,12 +31,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { messages, systemPrompt, conversationId, turnId, modelId }: {
+    const {
+      messages,
+      systemPrompt,
+      conversationId,
+      turnId,
+      modelId,
+      indexedFileNames,
+    }: {
       messages: UIMessage[]
       systemPrompt?: string
       conversationId?: string
       turnId?: string
       modelId?: string
+      indexedFileNames?: string[]
     } = await request.json()
     const userId = session.user.id
     const effectiveModelId = modelId || 'claude-sonnet-4-6'
@@ -158,6 +170,12 @@ export async function POST(request: NextRequest) {
       // optional
     }
 
+    const indexedNote = indexedFilesSystemNote(
+      Array.isArray(indexedFileNames)
+        ? indexedFileNames.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+        : [],
+    )
+
     const modelMessages = await convertToModelMessages(messages)
     const languageModel = await getGatewayLanguageModel(effectiveModelId, session.accessToken)
     const [composioTools, webToolSet] = await Promise.all([
@@ -176,7 +194,8 @@ export async function POST(request: NextRequest) {
     const knowledgeNote =
       '\nYou have search_knowledge (hybrid search over the user\'s notebook files and memories), save_memory, update_memory, and delete_memory. ' +
       'Use search_knowledge for extra retrieval beyond AUTO_RETRIEVED_KNOWLEDGE. ' +
-      'When you use AUTO_RETRIEVED_KNOWLEDGE or search results, end your reply with **Sources:** listing [n] labels as instructed in that block.'
+      'When you use AUTO_RETRIEVED_KNOWLEDGE or search results, end your reply with **Sources:** listing [n] labels as instructed in that block.\n\n' +
+      MEMORY_SAVE_PROTOCOL
 
     const agent = new ToolLoopAgent({
       model: languageModel,
@@ -188,7 +207,8 @@ export async function POST(request: NextRequest) {
         generationNote +
         knowledgeNote +
         memoryContext +
-        autoRetrieval,
+        autoRetrieval +
+        indexedNote,
     })
 
     let totalInputTokens = 0
