@@ -9,9 +9,13 @@ import { FileViewerPanel, getFileType, isEditableType } from './FileViewer'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface Memory {
-  _id: string
+/** Virtual row: one Convex memory may appear as several sidebar entries. */
+interface MemoryListItem {
+  key: string
+  memoryId: string
+  segmentIndex: number
   content: string
+  fullContent: string
   source: string
   createdAt: number
 }
@@ -96,9 +100,9 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
   const [activeTab, setActiveTab] = useState<Tab>('memories')
 
   // ── Memories state ──
-  const [memories, setMemories] = useState<Memory[]>([])
+  const [memories, setMemories] = useState<MemoryListItem[]>([])
   const [memoriesLoading, setMemoriesLoading] = useState(true)
-  const [selectedMemory, setSelectedMemory] = useState<Memory | null>(null)
+  const [selectedMemory, setSelectedMemory] = useState<MemoryListItem | null>(null)
   const [showAddMemory, setShowAddMemory] = useState(false)
   const [addText, setAddText] = useState('')
   const [isSavingMemory, setIsSavingMemory] = useState(false)
@@ -120,7 +124,7 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
   const loadMemories = useCallback(async () => {
     try {
       const res = await fetch('/api/app/memory')
-      if (res.ok) setMemories(await res.json())
+      if (res.ok) setMemories((await res.json()) as MemoryListItem[])
     } catch { /* ignore */ } finally { setMemoriesLoading(false) }
   }, [])
 
@@ -141,11 +145,12 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
     if (!text || isSavingMemory) return
     setIsSavingMemory(true)
     try {
-      await fetch('/api/app/memory', {
+      const res = await fetch('/api/app/memory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: text, source: 'manual' }),
       })
+      if (!res.ok) return
       setAddText('')
       setShowAddMemory(false)
       await loadMemories()
@@ -154,8 +159,8 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
 
   async function handleDeleteMemory(memoryId: string) {
     await fetch(`/api/app/memory?memoryId=${memoryId}`, { method: 'DELETE' })
-    if (selectedMemory?._id === memoryId) setSelectedMemory(null)
-    setMemories((prev) => prev.filter((m) => m._id !== memoryId))
+    if (selectedMemory?.memoryId === memoryId) setSelectedMemory(null)
+    setMemories((prev) => prev.filter((m) => m.memoryId !== memoryId))
   }
 
   // ── File handlers ──
@@ -269,7 +274,7 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
   const rootNodes = files.filter((f) => f.parentId === null)
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col min-h-0">
       {/* ── Add memory modal ── */}
       {showAddMemory && (
         <div
@@ -292,6 +297,9 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
               onKeyDown={(e) => { if (e.key === 'Enter' && e.metaKey) handleAddMemory() }}
               className="w-full text-sm text-[#0a0a0a] border border-[#e5e5e5] rounded-lg px-3 py-2.5 resize-none outline-none placeholder-[#aaa] focus:border-[#0a0a0a] transition-colors"
             />
+            <p className="mt-2 text-[11px] text-[#888] leading-snug">
+              Long memories stay as one saved item; the sidebar shows short previews so you can scan them quickly.
+            </p>
             <div className="flex gap-2 mt-3 justify-end">
               <button
                 onClick={() => { setShowAddMemory(false); setAddText('') }}
@@ -345,6 +353,7 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
         </div>
       )}
 
+      <div className="flex flex-1 min-h-0 w-full">
       {/* ── Secondary sidebar ── */}
       <div className="w-52 h-full flex flex-col border-r border-[#e5e5e5] bg-[#f5f5f5] shrink-0">
         {/* Action buttons */}
@@ -417,17 +426,17 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
               <div className="space-y-0.5">
                 {memories.map((memory) => (
                   <div
-                    key={memory._id}
+                    key={memory.key}
                     onClick={() => setSelectedMemory(memory)}
                     className={`group flex items-start gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${
-                      selectedMemory?._id === memory._id
+                      selectedMemory?.key === memory.key
                         ? 'bg-[#e8e8e8] text-[#0a0a0a]'
                         : 'text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a]'
                     }`}
                   >
                     <p className="flex-1 text-xs leading-relaxed line-clamp-2 min-w-0">{memory.content}</p>
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleDeleteMemory(memory._id) }}
+                      onClick={(e) => { e.stopPropagation(); handleDeleteMemory(memory.memoryId) }}
                       className="opacity-0 group-hover:opacity-100 shrink-0 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity mt-0.5"
                     >
                       <Trash2 size={10} />
@@ -475,7 +484,7 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
                     {new Date(selectedMemory.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
                   </span>
                   <button
-                    onClick={() => handleDeleteMemory(selectedMemory._id)}
+                    onClick={() => handleDeleteMemory(selectedMemory.memoryId)}
                     className="p-1.5 rounded-md text-[#aaa] hover:bg-red-50 hover:text-red-400 transition-colors"
                   >
                     <Trash2 size={13} />
@@ -483,7 +492,7 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto px-8 py-8">
-                <p className="text-sm text-[#0a0a0a] leading-relaxed whitespace-pre-wrap max-w-2xl">{selectedMemory.content}</p>
+                <p className="text-sm text-[#0a0a0a] leading-relaxed whitespace-pre-wrap max-w-2xl">{selectedMemory.fullContent}</p>
                 {selectedMemory.source && (
                   <p className="text-xs text-[#aaa] mt-4">Source: {selectedMemory.source}</p>
                 )}
@@ -517,6 +526,7 @@ export default function KnowledgeView({ userId: _userId }: { userId: string }) {
             </div>
           )
         )}
+      </div>
       </div>
     </div>
   )

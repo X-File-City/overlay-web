@@ -67,6 +67,20 @@ function gatherErrorText(error: unknown, depth = 0): string {
 export function userFacingOpenRouterError(error: unknown): string {
   const raw = gatherErrorText(error)
   const lower = raw.toLowerCase()
+
+  if (
+    /\b402\b/.test(raw) ||
+    lower.includes('spend limit') ||
+    lower.includes('usd spend') ||
+    lower.includes('payment required') ||
+    lower.includes('insufficient credits')
+  ) {
+    return (
+      'The model provider blocked this request (often a spending limit on the upstream API key or provider account). ' +
+      'Try another model in Ask, check your OpenRouter provider limits, or use a non-OpenRouter model.'
+    )
+  }
+
   if (
     /\b429\b/.test(raw) ||
     lower.includes('rate limit') ||
@@ -80,6 +94,17 @@ export function userFacingOpenRouterError(error: unknown): string {
   }
   if (!raw.trim()) return 'Something went wrong. Please try again.'
   return raw.length > 600 ? `${raw.slice(0, 600)}…` : raw
+}
+
+/** When tool-enabled completions fail (billing, limits), fall back to plain chat without tools. */
+export function shouldFallbackOpenRouterWithoutTools(error: unknown): boolean {
+  const raw = gatherErrorText(error)
+  const lower = raw.toLowerCase()
+  if (/\bOpenRouter (402|403|408|429)\b/.test(raw)) return true
+  if (/\b402\b/.test(raw) && lower.includes('openrouter')) return true
+  if (lower.includes('spend limit') || lower.includes('usd spend')) return true
+  if (lower.includes('payment required') || lower.includes('insufficient_quota')) return true
+  return false
 }
 
 /** Map overlay registry id → OpenRouter `model` string for /v1/chat/completions. */
@@ -258,4 +283,183 @@ export async function streamOpenRouterChat({
       'Cache-Control': 'no-cache',
     },
   })
+}
+
+// ─── Tool loop (non-streaming completions) → UI data stream of final text ─────
+
+type OpenRouterToolCall = {
+  id: string
+  type: string
+  function: { name: string; arguments: string }
+}
+
+type OpenRouterChatMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string | null }
+  | { role: 'assistant'; content: string | null; tool_calls?: OpenRouterToolCall[] }
+  | { role: 'tool'; tool_call_id: string; content: string }
+
+function toApiMessages(initial: OpenRouterMessage[]): OpenRouterChatMessage[] {
+  return initial.map((m) => {
+    if (m.role === 'system') {
+      return { role: 'system' as const, content: m.content }
+    }
+    if (m.role === 'user') {
+      return { role: 'user' as const, content: m.content }
+    }
+    return { role: 'assistant' as const, content: m.content }
+  })
+}
+
+/** Encode plain text as the same Vercel AI data stream format useChat expects. */
+export function encodeAssistantTextAsUiDataStream(
+  fullText: string,
+  usage: { inputTokens: number; outputTokens: number },
+  onFinish?: (text: string, usage: { inputTokens: number; outputTokens: number }) => Promise<void>,
+): Response {
+  const encoder = new TextEncoder()
+  const messageId = `msg_${Date.now()}`
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      controller.enqueue(encoder.encode(`f:${JSON.stringify({ messageId })}\n`))
+      const chunkSize = 48
+      for (let i = 0; i < fullText.length; i += chunkSize) {
+        const piece = fullText.slice(i, i + chunkSize)
+        controller.enqueue(encoder.encode(`0:${JSON.stringify(piece)}\n`))
+      }
+      controller.enqueue(
+        encoder.encode(`e:${JSON.stringify({ finishReason: 'stop', usage, isContinued: false })}\n`),
+      )
+      controller.enqueue(encoder.encode(`d:${JSON.stringify({ finishReason: 'stop', usage })}\n`))
+      controller.close()
+      if (onFinish) {
+        await onFinish(fullText, usage)
+      }
+    },
+  })
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'X-Vercel-AI-Data-Stream': 'v1',
+      'Cache-Control': 'no-cache',
+    },
+  })
+}
+
+/**
+ * Runs OpenRouter chat/completions with tools (non-streaming rounds), executes tools server-side,
+ * then streams the final assistant text to the client in UI message stream format.
+ */
+export async function streamOpenRouterChatWithToolLoop({
+  modelId,
+  messages,
+  tools,
+  executeTool,
+  accessToken,
+  maxToolRounds = 8,
+  onFinish,
+}: {
+  modelId: string
+  messages: OpenRouterMessage[]
+  tools: readonly Record<string, unknown>[]
+  executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>
+  accessToken?: string
+  maxToolRounds?: number
+  onFinish?: (text: string, usage: { inputTokens: number; outputTokens: number }) => Promise<void>
+}): Promise<Response> {
+  const apiKey = await resolveApiKey(accessToken)
+  if (!apiKey) {
+    throw new Error('OpenRouter API key not configured. Set OPENROUTER_API_KEY or configure it in Convex.')
+  }
+
+  const apiMessages: OpenRouterChatMessage[] = toApiMessages(messages)
+  let totalInput = 0
+  let totalOutput = 0
+
+  for (let round = 0; round < maxToolRounds; round++) {
+    const response = await openRouterFetchWithRetry('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://getoverlay.io',
+        'X-Title': 'Overlay',
+      },
+      body: JSON.stringify({
+        model: toOpenRouterApiModelId(modelId),
+        messages: apiMessages,
+        tools,
+        tool_choice: 'auto',
+        stream: false,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`OpenRouter ${response.status}: ${errorText}`)
+    }
+
+    const json = (await response.json()) as {
+      choices?: Array<{
+        finish_reason?: string
+        message?: {
+          role?: string
+          content?: string | null
+          tool_calls?: OpenRouterToolCall[]
+        }
+      }>
+      usage?: { prompt_tokens?: number; completion_tokens?: number }
+    }
+
+    if (json.usage) {
+      totalInput += json.usage.prompt_tokens ?? 0
+      totalOutput += json.usage.completion_tokens ?? 0
+    }
+
+    const choice = json.choices?.[0]
+    const msg = choice?.message
+    if (!msg) {
+      return encodeAssistantTextAsUiDataStream('', { inputTokens: totalInput, outputTokens: totalOutput }, onFinish)
+    }
+
+    const toolCalls = msg.tool_calls
+    if (toolCalls && toolCalls.length > 0) {
+      apiMessages.push({
+        role: 'assistant',
+        content: msg.content ?? null,
+        tool_calls: toolCalls,
+      })
+      for (const tc of toolCalls) {
+        if (tc.type !== 'function') continue
+        let parsedArgs: Record<string, unknown> = {}
+        try {
+          parsedArgs = JSON.parse(tc.function.arguments || '{}') as Record<string, unknown>
+        } catch {
+          parsedArgs = {}
+        }
+        const toolResult = await executeTool(tc.function.name, parsedArgs)
+        const content =
+          typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult)
+        apiMessages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content,
+        })
+      }
+      continue
+    }
+
+    const text = typeof msg.content === 'string' ? msg.content : ''
+    return encodeAssistantTextAsUiDataStream(
+      text,
+      { inputTokens: totalInput, outputTokens: totalOutput },
+      onFinish,
+    )
+  }
+
+  return encodeAssistantTextAsUiDataStream(
+    'I hit the maximum number of tool rounds. Please narrow your request or try again.',
+    { inputTokens: totalInput, outputTokens: totalOutput },
+    onFinish,
+  )
 }

@@ -13,6 +13,7 @@ import type * as conversations from "../conversations.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as keys from "../keys.js";
+import type * as knowledge from "../knowledge.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_stripeOverlaySubscription from "../lib/stripeOverlaySubscription.js";
 import type * as memories from "../memories.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   files: typeof files;
   http: typeof http;
   keys: typeof keys;
+  knowledge: typeof knowledge;
   "lib/auth": typeof lib_auth;
   "lib/stripeOverlaySubscription": typeof lib_stripeOverlaySubscription;
   memories: typeof memories;

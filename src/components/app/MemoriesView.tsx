@@ -3,11 +3,37 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Brain, Trash2, Plus, X } from 'lucide-react'
 
+interface MemoryListItem {
+  key: string
+  memoryId: string
+  segmentIndex: number
+  content: string
+  fullContent: string
+  source: string
+  createdAt: number
+}
+
 interface Memory {
-  _id: string
+  memoryId: string
   content: string
   source: string
   createdAt: number
+}
+
+function uniqueMemoriesFromRows(rows: MemoryListItem[]): Memory[] {
+  const seen = new Set<string>()
+  const out: Memory[] = []
+  for (const r of rows) {
+    if (seen.has(r.memoryId)) continue
+    seen.add(r.memoryId)
+    out.push({
+      memoryId: r.memoryId,
+      content: r.fullContent,
+      source: r.source,
+      createdAt: r.createdAt,
+    })
+  }
+  return out
 }
 
 function getDateLabel(timestamp: number): string {
@@ -32,7 +58,10 @@ export default function MemoriesView({ userId: _userId }: { userId: string }) {
   const loadMemories = useCallback(async () => {
     try {
       const res = await fetch('/api/app/memory')
-      if (res.ok) setMemories(await res.json())
+      if (res.ok) {
+        const rows = (await res.json()) as MemoryListItem[]
+        setMemories(uniqueMemoriesFromRows(rows))
+      }
     } catch {
       // ignore
     } finally {
@@ -62,7 +91,7 @@ export default function MemoriesView({ userId: _userId }: { userId: string }) {
 
   async function handleDelete(memoryId: string) {
     await fetch(`/api/app/memory?memoryId=${memoryId}`, { method: 'DELETE' })
-    setMemories((prev) => prev.filter((m) => m._id !== memoryId))
+    setMemories((prev) => prev.filter((m) => m.memoryId !== memoryId))
   }
 
   // Group by date
@@ -155,11 +184,11 @@ export default function MemoriesView({ userId: _userId }: { userId: string }) {
                 <div className="space-y-1">
                   {groups[label].map((memory) => (
                     <div
-                      key={memory._id}
+                      key={memory.memoryId}
                       className="group flex items-start gap-3 px-3 py-2.5 rounded-lg hover:bg-[#f5f5f5] transition-colors"
                     >
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm text-[#0a0a0a] leading-relaxed">{memory.content}</p>
+                        <p className="text-sm text-[#0a0a0a] leading-relaxed whitespace-pre-wrap">{memory.content}</p>
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-[11px] text-[#aaa]">
                             {new Date(memory.createdAt).toLocaleTimeString('en-US', {
@@ -173,7 +202,7 @@ export default function MemoriesView({ userId: _userId }: { userId: string }) {
                         </div>
                       </div>
                       <button
-                        onClick={() => handleDelete(memory._id)}
+                        onClick={() => handleDelete(memory.memoryId)}
                         className="opacity-0 group-hover:opacity-100 flex-shrink-0 p-1 rounded hover:bg-red-50 transition-all"
                       >
                         <Trash2 size={13} className="text-red-400" />

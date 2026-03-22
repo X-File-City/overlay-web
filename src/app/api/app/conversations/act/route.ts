@@ -8,6 +8,7 @@ import { userFacingOpenRouterError } from '@/lib/openrouter-service'
 import { createBrowserUnifiedTools } from '@/lib/composio-tools'
 import { createWebTools } from '@/lib/web-tools'
 import { calculateTokenCost, isPremiumModel } from '@/lib/model-pricing'
+import { buildAutoRetrievalSystemExtension } from '@/lib/ask-knowledge-context'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 
 export const maxDuration = 120
@@ -133,6 +134,30 @@ export async function POST(request: NextRequest) {
       // optional
     }
 
+    let conversationProjectId: string | undefined
+    if (cid) {
+      try {
+        const conv = await convex.query<{ projectId?: string } | null>('conversations:get', {
+          conversationId: cid,
+        })
+        conversationProjectId = conv?.projectId
+      } catch {
+        // optional
+      }
+    }
+
+    let autoRetrieval = ''
+    try {
+      autoRetrieval = await buildAutoRetrievalSystemExtension({
+        userMessage: latestUserText ?? '',
+        userId,
+        accessToken: session.accessToken,
+        projectId: conversationProjectId,
+      })
+    } catch {
+      // optional
+    }
+
     const modelMessages = await convertToModelMessages(messages)
     const languageModel = await getGatewayLanguageModel(effectiveModelId, session.accessToken)
     const [composioTools, webToolSet] = await Promise.all([
@@ -141,12 +166,17 @@ export async function POST(request: NextRequest) {
         userId,
         accessToken: session.accessToken,
         conversationId: conversationId ?? undefined,
+        projectId: conversationProjectId,
       })),
     ])
     const tools = { ...composioTools, ...webToolSet }
 
     const generationNote =
       '\nYou also have generate_image and generate_video tools. Use them whenever the user asks to create visual content. For videos, inform the user that generation is async and may take a few minutes — results will appear in the Outputs tab.'
+    const knowledgeNote =
+      '\nYou have search_knowledge (hybrid search over the user\'s notebook files and memories), save_memory, update_memory, and delete_memory. ' +
+      'Use search_knowledge for extra retrieval beyond AUTO_RETRIEVED_KNOWLEDGE. ' +
+      'When you use AUTO_RETRIEVED_KNOWLEDGE or search results, end your reply with **Sources:** listing [n] labels as instructed in that block.'
 
     const agent = new ToolLoopAgent({
       model: languageModel,
@@ -156,7 +186,9 @@ export async function POST(request: NextRequest) {
         (systemPrompt ||
           'You are Overlay\u2019s browser agent. Use the available Composio tools to complete the user\u2019s task. You do not have OS-level control, local desktop automation, terminal access, or filesystem access in this environment. If an integration is required but not connected, use the Composio connection tools to guide or initiate that connection. Keep the user informed about what you are doing, and end with a concise summary of what was completed and what still needs attention.') +
         generationNote +
-        memoryContext,
+        knowledgeNote +
+        memoryContext +
+        autoRetrieval,
     })
 
     let totalInputTokens = 0

@@ -2,12 +2,25 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const maxDuration = 120
 import { getSession } from '@/lib/workos-auth'
-import { convertToModelMessages, streamText, type UIMessage } from 'ai'
+import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from 'ai'
 import { convex } from '@/lib/convex'
 import { listMemories } from '@/lib/app-store'
+import { createWebTools } from '@/lib/web-tools'
 import { getGatewayLanguageModel } from '@/lib/ai-gateway'
 import { getModel } from '@/lib/models'
-import { buildOpenRouterMessagesFromUi, streamOpenRouterChat } from '@/lib/openrouter-service'
+import {
+  buildOpenRouterMessagesFromUi,
+  encodeAssistantTextAsUiDataStream,
+  streamOpenRouterChat,
+  streamOpenRouterChatWithToolLoop,
+  shouldFallbackOpenRouterWithoutTools,
+  userFacingOpenRouterError,
+} from '@/lib/openrouter-service'
+import { buildAutoRetrievalSystemExtension } from '@/lib/ask-knowledge-context'
+import {
+  OPENROUTER_KNOWLEDGE_TOOLS,
+  createKnowledgeToolExecutor,
+} from '@/lib/knowledge-openrouter'
 import { calculateTokenCost, isPremiumModel } from '@/lib/model-pricing'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 
@@ -88,23 +101,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    let memoryContext = ''
-    try {
-      const memories = await convex.query<Array<{ content: string }>>('memories:list', { userId })
-      const effectiveMemories = memories || listMemories(userId)
-      if (effectiveMemories.length > 0) {
-        memoryContext = '\n\nRelevant user memories:\n' + effectiveMemories.slice(0, 10).map((m) => `- ${m.content}`).join('\n')
-      }
-    } catch {
-      // optional
-    }
-
-    const systemMessage = [
-      systemPrompt || 'You are a helpful AI assistant.',
-      MATH_FORMAT_INSTRUCTION,
-      memoryContext,
-    ].filter(Boolean).join('\n\n')
-
     const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')
     const latestUserText = latestUserMessage?.parts
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -129,6 +125,53 @@ export async function POST(request: NextRequest) {
 
     const cid = conversationId as Id<'conversations'> | undefined
     const tid = turnId?.trim()
+
+    let conversationProjectId: string | undefined
+    if (cid) {
+      try {
+        const conv = await convex.query<{ projectId?: string } | null>('conversations:get', {
+          conversationId: cid,
+        })
+        conversationProjectId = conv?.projectId
+      } catch {
+        // optional
+      }
+    }
+
+    let memoryContext = ''
+    try {
+      const memories = await convex.query<Array<{ content: string }>>('memories:list', { userId })
+      const effectiveMemories = memories || listMemories(userId)
+      if (effectiveMemories.length > 0) {
+        memoryContext = '\n\nRelevant user memories:\n' + effectiveMemories.slice(0, 10).map((m) => `- ${m.content}`).join('\n')
+      }
+    } catch {
+      // optional
+    }
+
+    let autoRetrieval = ''
+    try {
+      autoRetrieval = await buildAutoRetrievalSystemExtension({
+        userMessage: latestUserText ?? '',
+        userId,
+        accessToken: session.accessToken,
+        projectId: conversationProjectId,
+      })
+    } catch {
+      // optional
+    }
+
+    const baseSystemMessage = [
+      systemPrompt || 'You are a helpful AI assistant.',
+      MATH_FORMAT_INSTRUCTION,
+      memoryContext,
+      autoRetrieval,
+    ].filter(Boolean).join('\n\n')
+
+    const knowledgeToolNote =
+      '\n\nYou can call tools: search_knowledge (search notebook files and memories), save_memory, update_memory, delete_memory. ' +
+      'Use search_knowledge for extra retrieval beyond AUTO_RETRIEVED_KNOWLEDGE. ' +
+      'When your answer uses AUTO_RETRIEVED_KNOWLEDGE or tool search results, end with **Sources:** as instructed there.'
 
     if (cid && tid && latestUserContent && !skipUserMessage) {
       await convex.mutation('conversations:addMessage', {
@@ -198,22 +241,60 @@ export async function POST(request: NextRequest) {
     }
 
     if (getModel(effectiveModelId)?.provider === 'openrouter') {
-      const orMessages = buildOpenRouterMessagesFromUi(messages, systemMessage)
-      return streamOpenRouterChat({
-        modelId: effectiveModelId,
-        messages: orMessages,
+      const systemWithTools = baseSystemMessage + knowledgeToolNote
+      const executeTool = createKnowledgeToolExecutor({
+        userId,
         accessToken: session.accessToken,
-        onFinish: finishAsk,
+        projectId: conversationProjectId,
       })
+      try {
+        const orMessages = buildOpenRouterMessagesFromUi(messages, systemWithTools)
+        return await streamOpenRouterChatWithToolLoop({
+          modelId: effectiveModelId,
+          messages: orMessages,
+          tools: [...OPENROUTER_KNOWLEDGE_TOOLS],
+          executeTool,
+          accessToken: session.accessToken,
+          maxToolRounds: 8,
+          onFinish: finishAsk,
+        })
+      } catch (err) {
+        console.error('[conversations/ask] OpenRouter tool loop failed:', err)
+        if (shouldFallbackOpenRouterWithoutTools(err)) {
+          const fallbackSystem =
+            systemWithTools +
+            '\n\n(Provider blocked tool calling this turn — answer from AUTO_RETRIEVED_KNOWLEDGE and listed memories only; you cannot run tools.)'
+          const fallbackMsgs = buildOpenRouterMessagesFromUi(messages, fallbackSystem)
+          return streamOpenRouterChat({
+            modelId: effectiveModelId,
+            messages: fallbackMsgs,
+            accessToken: session.accessToken,
+            onFinish: finishAsk,
+          })
+        }
+        return encodeAssistantTextAsUiDataStream(
+          userFacingOpenRouterError(err),
+          { inputTokens: 0, outputTokens: 0 },
+          finishAsk,
+        )
+      }
     }
 
     const languageModel = await getGatewayLanguageModel(effectiveModelId, session.accessToken)
     const modelMessages = await convertToModelMessages(messages)
+    const knowledgeTools = createWebTools({
+      userId,
+      accessToken: session.accessToken,
+      conversationId: conversationId ?? undefined,
+      projectId: conversationProjectId,
+    })
 
     const result = streamText({
       model: languageModel,
-      system: systemMessage,
+      system: baseSystemMessage + knowledgeToolNote,
       messages: modelMessages,
+      tools: knowledgeTools,
+      stopWhen: stepCountIs(8),
       onFinish: async ({ text, usage }) => {
         await finishAsk(text, {
           inputTokens: usage?.inputTokens ?? 0,

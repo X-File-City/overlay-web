@@ -138,6 +138,38 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_userId', ['userId']),
 
+  // Searchable chunks for hybrid vector + full-text retrieval (files + memories).
+  knowledgeChunks: defineTable({
+    userId: v.string(),
+    projectId: v.optional(v.string()),
+    sourceKind: v.union(v.literal('file'), v.literal('memory')),
+    sourceId: v.string(),
+    chunkIndex: v.number(),
+    startOffset: v.number(),
+    text: v.string(),
+    title: v.optional(v.string()),
+  })
+    .index('by_source', ['sourceKind', 'sourceId'])
+    .index('by_userId', ['userId'])
+    .searchIndex('search_text', {
+      searchField: 'text',
+      filterFields: ['userId', 'sourceKind'],
+    }),
+
+  // Embeddings stored separately so routine reads avoid loading large vectors.
+  knowledgeChunkEmbeddings: defineTable({
+    chunkId: v.id('knowledgeChunks'),
+    userId: v.string(),
+    sourceKind: v.union(v.literal('file'), v.literal('memory')),
+    embedding: v.array(v.float64()),
+  })
+    .index('by_chunkId', ['chunkId'])
+    .vectorIndex('by_embedding', {
+      vectorField: 'embedding',
+      dimensions: 1536,
+      filterFields: ['userId', 'sourceKind'],
+    }),
+
   slackInstallations: defineTable({
     teamId: v.string(),
     teamName: v.string(),

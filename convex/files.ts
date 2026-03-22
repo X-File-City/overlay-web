@@ -1,5 +1,6 @@
 import { v } from 'convex/values'
 import { Id } from './_generated/dataModel'
+import { internal } from './_generated/api'
 import { mutation, query } from './_generated/server'
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -77,7 +78,7 @@ export const create = mutation({
   },
   handler: async (ctx, { userId, name, type, parentId, content, projectId }) => {
     const now = Date.now()
-    return await ctx.db.insert('files', {
+    const id = await ctx.db.insert('files', {
       userId,
       name,
       type,
@@ -87,6 +88,10 @@ export const create = mutation({
       createdAt: now,
       updatedAt: now,
     })
+    if (type === 'file' && (content ?? '').trim()) {
+      await ctx.scheduler.runAfter(0, internal.knowledge.reindexFileInternal, { fileId: id })
+    }
+    return id
   },
 })
 
@@ -100,7 +105,7 @@ export const createWithStorage = mutation({
   },
   handler: async (ctx, { userId, name, parentId, storageId, projectId }) => {
     const now = Date.now()
-    return await ctx.db.insert('files', {
+    const id = await ctx.db.insert('files', {
       userId,
       name,
       type: 'file',
@@ -110,6 +115,7 @@ export const createWithStorage = mutation({
       createdAt: now,
       updatedAt: now,
     })
+    return id
   },
 })
 
@@ -124,6 +130,10 @@ export const update = mutation({
     if (name !== undefined) patch.name = name
     if (content !== undefined) patch.content = content
     await ctx.db.patch(fileId, patch)
+    const after = await ctx.db.get(fileId)
+    if (after?.type === 'file' && !after.storageId) {
+      await ctx.scheduler.runAfter(0, internal.knowledge.reindexFileInternal, { fileId })
+    }
   },
 })
 
@@ -138,7 +148,13 @@ export const remove = mutation({
       for (const child of children) {
         await deleteSubtree(child._id)
       }
-      const file = (await ctx.db.get(id)) as { storageId?: Id<'_storage'> } | null
+      const file = (await ctx.db.get(id)) as { type?: string; storageId?: Id<'_storage'> } | null
+      if (file?.type === 'file') {
+        await ctx.runMutation(internal.knowledge.purgeKnowledgeSource, {
+          sourceKind: 'file',
+          sourceId: id,
+        })
+      }
       if (file?.storageId) {
         await ctx.storage.delete(file.storageId)
       }
