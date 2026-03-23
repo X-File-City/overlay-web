@@ -5,7 +5,17 @@ import { Send, Plus, Trash2, ChevronDown, ImageIcon, FileText, X, AlertCircle, C
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, getToolName, isToolUIPart, type UIMessage } from 'ai'
 import { useSearchParams } from 'next/navigation'
-import { AVAILABLE_MODELS, DEFAULT_MODEL_ID, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, pickBestModelForAct, type GenerationMode } from '@/lib/models'
+import {
+  AVAILABLE_MODELS,
+  CHAT_MODEL_QUALITY_PRIORITY,
+  DEFAULT_MODEL_ID,
+  IMAGE_MODELS,
+  VIDEO_MODELS,
+  DEFAULT_IMAGE_MODEL_ID,
+  DEFAULT_VIDEO_MODEL_ID,
+  pickBestModelForAct,
+  type GenerationMode,
+} from '@/lib/models'
 import type { SourceCitationMap } from '@/lib/ask-knowledge-context'
 import { AskActModeToggle, GenerationModeToggle } from './GenerationModeToggle'
 import { dispatchChatTitleUpdated, sanitizeChatTitle } from '@/lib/chat-title'
@@ -13,6 +23,89 @@ import { useAsyncSessions } from '@/lib/async-sessions-store'
 import { useNavigationProgress } from '@/lib/navigation-progress'
 import { MarkdownMessage } from './MarkdownMessage'
 import { DelayedTooltip } from './DelayedTooltip'
+
+function getAssistantAfterUserExchangeIndex(msgs: UIMessage[], exchIdx: number): UIMessage | null {
+  let uCount = 0
+  for (let i = 0; i < msgs.length; i++) {
+    if (msgs[i].role === 'user') {
+      if (uCount === exchIdx) {
+        for (let j = i + 1; j < msgs.length; j++) {
+          if (msgs[j].role === 'assistant') return msgs[j]
+          if (msgs[j].role === 'user') break
+        }
+        return null
+      }
+      uCount++
+    }
+  }
+  return null
+}
+
+function cloneUiMessageForThread(msg: UIMessage): UIMessage {
+  try {
+    return structuredClone(msg) as UIMessage
+  } catch {
+    return JSON.parse(JSON.stringify(msg)) as UIMessage
+  }
+}
+
+/** Assistants for exchange `k` from prior picker models, best-first then remaining prev order. */
+function collectAssistantsForExchangeSorted(
+  prevOrder: string[],
+  snapshots: UIMessage[][],
+  qualityPriority: readonly string[],
+  k: number,
+): UIMessage[] {
+  const bySlotModel = new Map<string, UIMessage[]>()
+  prevOrder.forEach((id, j) => {
+    bySlotModel.set(id, snapshots[j] ?? [])
+  })
+  const prevSet = new Set(prevOrder)
+  const orderedIds: string[] = []
+  for (const pid of qualityPriority) {
+    if (prevSet.has(pid) && !orderedIds.includes(pid)) orderedIds.push(pid)
+  }
+  for (const id of prevOrder) {
+    if (!orderedIds.includes(id)) orderedIds.push(id)
+  }
+  const out: UIMessage[] = []
+  for (const id of orderedIds) {
+    const thread = bySlotModel.get(id)
+    if (!thread) continue
+    const a = getAssistantAfterUserExchangeIndex(thread, k)
+    if (a) out.push(a)
+  }
+  return out
+}
+
+/**
+ * Prior context for a **new** picker model: same user turns as slot 0, then per-turn assistant chosen
+ * from prior models so each physical slot gets a different answer when multiple variants existed
+ * (slot index rotates through quality-sorted candidates). Avoids every chip sharing one "best" reply.
+ */
+function buildSynthesizedThreadForPickerSlot(
+  prevOrder: string[],
+  snapshots: UIMessage[][],
+  qualityPriority: readonly string[],
+  physicalSlotIndex: number,
+): UIMessage[] {
+  const primary = snapshots[0] ?? []
+  const userMsgs: UIMessage[] = []
+  for (const m of primary) {
+    if (m.role === 'user') userMsgs.push(m)
+  }
+  if (userMsgs.length === 0) return []
+
+  const out: UIMessage[] = []
+  for (let k = 0; k < userMsgs.length; k++) {
+    out.push(cloneUiMessageForThread(userMsgs[k]!))
+    const candidates = collectAssistantsForExchangeSorted(prevOrder, snapshots, qualityPriority, k)
+    if (candidates.length === 0) continue
+    const pick = candidates[physicalSlotIndex % candidates.length]!
+    out.push(cloneUiMessageForThread(pick))
+  }
+  return out
+}
 
 interface Conversation {
   _id: string
@@ -207,7 +300,8 @@ interface ExchangeBlockProps {
   userDocumentNames: string[]
   userImages: string[]
   exchIdx: number
-  slotIdx: number
+  /** Model id for this tab — stable key for markdown remount when picker slots change */
+  responseModelId: string
   responseText: string
   isStreaming: boolean
   errorMessage: string | null
@@ -229,7 +323,7 @@ interface ExchangeBlockProps {
 }
 
 function ExchangeBlock({
-  userMsgId, userBodyText, userDocumentNames, userImages, exchIdx, slotIdx, responseText, isStreaming, errorMessage,
+  userMsgId, userBodyText, userDocumentNames, userImages, exchIdx, responseModelId, responseText, isStreaming, errorMessage,
   exchModelList, selectedTab, onTabSelect, isLoadingTabs, toolInfos, responseInProgress, sourceCitations,
   turnIdForActions, modelLabel, onDeleteTurn, onReply, actionsLocked, isExiting = false, replyThreadMeta, onJumpToReply,
 }: ExchangeBlockProps) {
@@ -363,7 +457,7 @@ function ExchangeBlock({
         {responseText ? (
           <div className="w-full px-1 py-1 text-sm leading-relaxed text-[#0a0a0a]">
             <MarkdownMessage
-              key={`md-${userMsgId}-${slotIdx}`}
+              key={`md-${userMsgId}-${responseModelId}`}
               text={responseText}
               isStreaming={isStreaming}
               sourceCitations={sourceCitations}
@@ -798,11 +892,49 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   const chatInstances = useMemo(() => [chat0, chat1, chat2, chat3], [chat0, chat1, chat2, chat3])
 
-  const modelSlotMap = useMemo(() => {
-    const map = new Map<string, number>()
-    selectedModels.forEach((id, i) => map.set(id, i))
-    return map
-  }, [selectedModels])
+  /** Full threads for models removed from the picker — keyed by model id so past exchanges stay correct */
+  const orphanModelThreadsRef = useRef(new Map<string, UIMessage[]>())
+
+  const remapChatSlotsForNewModelOrder = useCallback((prevOrder: string[], nextOrder: string[]) => {
+    const snapshots = chatInstances.map((c) => [...c.messages])
+    const byModel = new Map<string, UIMessage[]>()
+    prevOrder.forEach((id, j) => {
+      byModel.set(id, snapshots[j]!)
+    })
+    const orphan = orphanModelThreadsRef.current
+    for (const id of prevOrder) {
+      if (!nextOrder.includes(id)) {
+        const j = prevOrder.indexOf(id)
+        const snap = j >= 0 ? snapshots[j] : undefined
+        if (snap) orphan.set(id, [...snap])
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      if (i < nextOrder.length) {
+        const mid = nextOrder[i]!
+        let thread = byModel.get(mid)
+        if (!thread) {
+          const o = orphan.get(mid)
+          if (o) {
+            thread = [...o]
+            orphan.delete(mid)
+          }
+        }
+        if (thread) chatInstances[i].setMessages(thread)
+        else {
+          const synth = buildSynthesizedThreadForPickerSlot(
+            prevOrder,
+            snapshots,
+            CHAT_MODEL_QUALITY_PRIORITY,
+            i,
+          )
+          chatInstances[i].setMessages(synth)
+        }
+      } else {
+        chatInstances[i].setMessages([])
+      }
+    }
+  }, [chatInstances])
 
   const isAnyLoading =
     chatInstances
@@ -974,8 +1106,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   // ── response lookup ────────────────────────────────────────────────────────
 
-  function getResponseForExchange(slotIdx: number, exchIdx: number) {
-    const msgs = chatInstances[slotIdx].messages
+  function getResponseForExchangeForModel(modelId: string, exchIdx: number): UIMessage | null {
+    const liveIdx = selectedModels.indexOf(modelId)
+    const msgs =
+      liveIdx >= 0
+        ? chatInstances[liveIdx].messages
+        : orphanModelThreadsRef.current.get(modelId) ?? []
     let uCount = 0
     for (let i = 0; i < msgs.length; i++) {
       if (msgs[i].role === 'user') {
@@ -1056,6 +1192,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     setSelectedImageModels([DEFAULT_IMAGE_MODEL_ID])
     setSelectedVideoModels([DEFAULT_VIDEO_MODEL_ID])
     setReplyContext(null)
+    orphanModelThreadsRef.current.clear()
     chatInstances.forEach((c) => c.setMessages([]))
     actChat.setMessages([])
   }
@@ -1764,9 +1901,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
     startSession(chatId, 'ask', activeChatTitle ?? '', msgCountBeforeSend)
 
+    const multiAsk = selectedModels.length > 1
     selectedModels.forEach((_, idx) => {
+      const variantUserId = multiAsk ? `${textTurnId}::v${idx}` : textTurnId
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      chatInstances[idx].setMessages((prev) => [...prev, userUIMessage as any])
+      const u = { ...userUIMessage, id: variantUserId } as any
+      chatInstances[idx].setMessages((prev) => [...prev, u])
     })
 
     setInput('')
@@ -1809,7 +1949,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           {
             role: 'user',
             parts: partsForModel as any,
-            messageId: textTurnId,
+            messageId: multiAsk ? `${textTurnId}::v${idx}` : textTurnId,
             ...(userMetadata ? { metadata: userMetadata } : {}),
           } as any,
           {
@@ -1884,14 +2024,16 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     const isSelected = selectedModels.includes(modelId)
     if (isSelected) {
       if (selectedModels.length === 1) return
-      const newModels = selectedModels.filter((id) => id !== modelId)
+      const prev = [...selectedModels]
+      const newModels = prev.filter((id) => id !== modelId)
+      remapChatSlotsForNewModelOrder(prev, newModels)
       setSelectedModels(newModels)
       localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify(newModels))
     } else {
       if (selectedModels.length >= 4) return
-      const newIdx = selectedModels.length
-      chatInstances[newIdx].setMessages(chatInstances[0].messages)
-      const newModels = [...selectedModels, modelId]
+      const prev = [...selectedModels]
+      const newModels = [...prev, modelId]
+      remapChatSlotsForNewModelOrder(prev, newModels)
       setSelectedModels(newModels)
       localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify(newModels))
     }
@@ -2306,13 +2448,15 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
                 const exchModelList = exchangeModels[curExchIdx] ?? []
                 const selectedTab = selectedTabPerExchange[curExchIdx] ?? 0
-                const selectedModelId = exchModelList[selectedTab] ?? selectedModels[0]
-                const slotIdx = modelSlotMap.get(selectedModelId) ?? 0
+                const selectedModelId = exchModelList[selectedTab] ?? selectedModels[0] ?? ''
                 const isLatest = curExchIdx === latestExchIdx
-                const slotInst = chatInstances[slotIdx]
                 const isActExch = (exchangeModes[curExchIdx] ?? 'ask') === 'act'
+                const streamSlotIdx =
+                  !isActExch && selectedModelId ? selectedModels.indexOf(selectedModelId) : -1
+                const slotInst =
+                  streamSlotIdx >= 0 ? chatInstances[streamSlotIdx] : null
 
-                let responseMsg = getResponseForExchange(slotIdx, curExchIdx)
+                let responseMsg = getResponseForExchangeForModel(selectedModelId, curExchIdx)
                 let responseText = responseMsg ? getMessageText(responseMsg) : ''
 
                 // Act: assistant streams only into actChat; align with chat0 user index (see resolveActAssistant).
@@ -2332,10 +2476,10 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                 const instLoading = isLatest && (
                   isActExch
                     ? (actChat.status === 'streaming' || actChat.status === 'submitted')
-                    : (slotInst.status === 'streaming' || slotInst.status === 'submitted')
+                    : !!slotInst && (slotInst.status === 'streaming' || slotInst.status === 'submitted')
                 )
                 const isStreaming = instLoading && responseText.length > 0
-                const instError = isLatest ? (isActExch ? actChat.error : slotInst.error) : null
+                const instError = isLatest ? (isActExch ? actChat.error : slotInst?.error ?? null) : null
 
                 const toolInfos =
                   responseMsg && 'parts' in responseMsg && Array.isArray((responseMsg as { parts?: unknown[] }).parts)
@@ -2371,7 +2515,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     userImages={getMessageImages(msg as any)}
                     exchIdx={curExchIdx}
-                    slotIdx={slotIdx}
+                    responseModelId={selectedModelId}
                     responseText={responseText}
                     isStreaming={isStreaming}
                     errorMessage={errorLabel(instError)}
@@ -2479,7 +2623,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             ) : (
               <div className="overflow-visible rounded-2xl border border-[#e5e5e5] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
                 {replyContext && (
-                  <div className="flex items-start gap-2 border-b border-[#e5e5e5] bg-[#f0f0f0] px-3 py-2.5 text-xs text-[#525252]">
+                  <div className="flex items-start gap-2 rounded-t-2xl border-b border-[#e5e5e5] bg-[#f0f0f0] px-3 py-2.5 text-xs text-[#525252]">
                     <Reply size={14} className="mt-0.5 shrink-0 text-[#71717a]" strokeWidth={1.75} />
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-[#0a0a0a]">Replying to prior response</p>

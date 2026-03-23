@@ -60,10 +60,10 @@ export const AVAILABLE_MODELS: ChatModel[] = [
 export const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 
 /**
- * When switching from multi-model Ask to Act, prefer the highest-quality model
- * that is already selected (first match wins).
+ * Highest quality first — used when picking a default Act model from a multi-model
+ * selection and when synthesizing a shared prior thread for newly added chat models.
  */
-const ACT_MODEL_QUALITY_PRIORITY: string[] = [
+export const CHAT_MODEL_QUALITY_PRIORITY: string[] = [
   'claude-opus-4-6',
   'gpt-5.2-pro-2025-12-11',
   'gemini-3.1-pro-preview',
@@ -87,7 +87,7 @@ const ACT_MODEL_QUALITY_PRIORITY: string[] = [
 export function pickBestModelForAct(selectedAskModelIds: string[]): string {
   if (selectedAskModelIds.length === 1) return selectedAskModelIds[0]
   const sel = new Set(selectedAskModelIds)
-  for (const id of ACT_MODEL_QUALITY_PRIORITY) {
+  for (const id of CHAT_MODEL_QUALITY_PRIORITY) {
     if (sel.has(id)) return id
   }
   const first = selectedAskModelIds.find((id) => AVAILABLE_MODELS.some((m) => m.id === id))
