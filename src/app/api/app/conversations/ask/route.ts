@@ -24,6 +24,7 @@ import {
 import { calculateTokenCost, isPremiumModel } from '@/lib/model-pricing'
 import {
   MEMORY_SAVE_PROTOCOL,
+  cloneMessagesWithIndexedFileHint,
   indexedFilesSystemNote,
 } from '@/lib/knowledge-agent-instructions'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
@@ -168,11 +169,14 @@ export async function POST(request: NextRequest) {
       // optional
     }
 
-    const indexedNote = indexedFilesSystemNote(
-      Array.isArray(indexedFileNames)
-        ? indexedFileNames.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
-        : [],
-    )
+    const indexedNames = Array.isArray(indexedFileNames)
+      ? indexedFileNames.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+      : []
+
+    const indexedNote = indexedFilesSystemNote(indexedNames)
+
+    /** Model sees indexed context in the user turn; request `messages` stay unchanged for persistence. */
+    const messagesForModel = cloneMessagesWithIndexedFileHint(messages, indexedNames)
 
     const baseSystemMessage = [
       systemPrompt || 'You are a helpful AI assistant.',
@@ -263,7 +267,7 @@ export async function POST(request: NextRequest) {
         projectId: conversationProjectId,
       })
       try {
-        const orMessages = buildOpenRouterMessagesFromUi(messages, systemWithTools)
+        const orMessages = buildOpenRouterMessagesFromUi(messagesForModel, systemWithTools)
         return await streamOpenRouterChatWithToolLoop({
           modelId: effectiveModelId,
           messages: orMessages,
@@ -279,7 +283,7 @@ export async function POST(request: NextRequest) {
           const fallbackSystem =
             systemWithTools +
             '\n\n(Provider blocked tool calling this turn — answer from AUTO_RETRIEVED_KNOWLEDGE and listed memories only; you cannot run tools.)'
-          const fallbackMsgs = buildOpenRouterMessagesFromUi(messages, fallbackSystem)
+          const fallbackMsgs = buildOpenRouterMessagesFromUi(messagesForModel, fallbackSystem)
           return streamOpenRouterChat({
             modelId: effectiveModelId,
             messages: fallbackMsgs,
@@ -296,7 +300,7 @@ export async function POST(request: NextRequest) {
     }
 
     const languageModel = await getGatewayLanguageModel(effectiveModelId, session.accessToken)
-    const modelMessages = await convertToModelMessages(messages)
+    const modelMessages = await convertToModelMessages(messagesForModel)
     const knowledgeTools = createWebTools({
       userId,
       accessToken: session.accessToken,

@@ -5,8 +5,8 @@ import { Send, Plus, Trash2, ChevronDown, ImageIcon, FileText, X, AlertCircle, C
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { useSearchParams } from 'next/navigation'
-import { AVAILABLE_MODELS, DEFAULT_MODEL_ID, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, type GenerationMode } from '@/lib/models'
-import { GenerationModeToggle } from './GenerationModeToggle'
+import { AVAILABLE_MODELS, DEFAULT_MODEL_ID, IMAGE_MODELS, VIDEO_MODELS, DEFAULT_IMAGE_MODEL_ID, DEFAULT_VIDEO_MODEL_ID, pickBestModelForAct, type GenerationMode } from '@/lib/models'
+import { AskActModeToggle, GenerationModeToggle } from './GenerationModeToggle'
 import { dispatchChatTitleUpdated, sanitizeChatTitle } from '@/lib/chat-title'
 import { useAsyncSessions } from '@/lib/async-sessions-store'
 import { useNavigationProgress } from '@/lib/navigation-progress'
@@ -66,6 +66,27 @@ function getMessageImages(msg: { parts?: Array<{ type: string; url?: string; med
     .map((p) => p.url!)
 }
 
+type UserBubbleMetadata = { indexedDocuments?: string[] }
+
+function getUserMessageDocNames(msg: unknown): string[] {
+  const m = msg as { metadata?: UserBubbleMetadata }
+  const fromMeta = m.metadata?.indexedDocuments
+  if (Array.isArray(fromMeta) && fromMeta.length > 0) return fromMeta
+  return []
+}
+
+/** Strip `[Indexed documents: …]` from display text and return attachment names (from persisted content). */
+function splitUserDisplayText(fullText: string): { bodyText: string; docNames: string[] } {
+  const re = /\[Indexed documents:\s*([^\]]+)\]/g
+  const docNames: string[] = []
+  let match: RegExpExecArray | null
+  while ((match = re.exec(fullText)) !== null) {
+    docNames.push(...match[1]!.split(',').map((s) => s.trim()).filter(Boolean))
+  }
+  const bodyText = fullText.replace(re, '').replace(/\n{3,}/g, '\n\n').trim()
+  return { bodyText, docNames }
+}
+
 
 async function generateTitle(text: string): Promise<string | null> {
   try {
@@ -86,7 +107,8 @@ async function generateTitle(text: string): Promise<string | null> {
 
 interface ExchangeBlockProps {
   userMsgId: string
-  userText: string
+  userBodyText: string
+  userDocumentNames: string[]
   userImages: string[]
   exchIdx: number
   slotIdx: number
@@ -103,9 +125,10 @@ interface ExchangeBlockProps {
 
 const ExchangeBlock = React.memo(
   function ExchangeBlock({
-    userText, userImages, exchIdx, slotIdx, responseText, isStreaming, showThinking, errorMessage,
+    userBodyText, userDocumentNames, userImages, exchIdx, slotIdx, responseText, isStreaming, showThinking, errorMessage,
     exchModelList, selectedTab, onTabSelect, isLoadingTabs, prependedAssistantContent,
   }: ExchangeBlockProps) {
+    const showTextBubble = userBodyText.length > 0
     return (
       <div className="flex flex-col gap-2 message-appear" data-exchange-idx={exchIdx}>
         {/* User message */}
@@ -119,9 +142,22 @@ const ExchangeBlock = React.memo(
                 ))}
               </div>
             )}
-            {userText && (
+            {userDocumentNames.length > 0 && (
+              <div className="flex flex-wrap justify-end gap-1.5">
+                {userDocumentNames.map((name) => (
+                  <div
+                    key={name}
+                    className="flex max-w-[220px] items-center gap-1.5 rounded-xl border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs text-[#525252] shadow-sm"
+                  >
+                    <FileText size={13} className="shrink-0 text-[#71717a]" />
+                    <span className="truncate font-medium text-[#0a0a0a]">{name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {showTextBubble && (
               <div className="rounded-2xl rounded-br-sm bg-[#0a0a0a] px-4 py-2.5 text-sm leading-relaxed text-[#fafafa]">
-                <span className="whitespace-pre-wrap">{userText}</span>
+                <span className="whitespace-pre-wrap">{userBodyText}</span>
               </div>
             )}
           </div>
@@ -177,7 +213,9 @@ const ExchangeBlock = React.memo(
   },
   (prev, next) =>
     prev.userMsgId === next.userMsgId &&
-    prev.userText === next.userText &&
+    prev.userBodyText === next.userBodyText &&
+    prev.userDocumentNames.length === next.userDocumentNames.length &&
+    prev.userDocumentNames.every((n, i) => n === next.userDocumentNames[i]) &&
     prev.userImages.length === next.userImages.length &&
     prev.userImages.every((image, index) => image === next.userImages[index]) &&
     prev.exchIdx === next.exchIdx &&
@@ -588,6 +626,15 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       return next
     })
   }, [])
+
+  const handleComposerModeChange = useCallback((next: 'ask' | 'act') => {
+    if (next === 'act') {
+      const best = pickBestModelForAct(selectedModels)
+      setSelectedActModel(best)
+      localStorage.setItem(ACT_MODEL_KEY, best)
+    }
+    setComposerMode(next)
+  }, [selectedModels])
 
   // ── chat management ────────────────────────────────────────────────────────
 
@@ -1140,23 +1187,43 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     const chatId = activeChatId || await createNewChat()
     if (!chatId) return
 
-    setInput('')
-    setAttachedImages([])
-    setPendingChatDocuments([])
-    setAttachmentError(null)
-    setIsFirstMessage(false)
     shouldScrollRef.current = true
     const textTurnId = crypto.randomUUID()
 
-    const parts: Array<{ type: string; text?: string; url?: string; mediaType?: string }> = []
-    if (text) parts.push({ type: 'text', text })
+    type UiPart = { type: string; text?: string; url?: string; mediaType?: string }
+    const partsForModel: UiPart[] = []
+    if (text.trim()) partsForModel.push({ type: 'text', text: text.trim() })
     for (const img of attachedImages) {
-      parts.push({ type: 'file', url: img.dataUrl, mediaType: img.mimeType })
+      partsForModel.push({ type: 'file', url: img.dataUrl, mediaType: img.mimeType })
     }
-    const persistedContent =
-      text ||
-      (parts.some((part) => part.type === 'file') ? '[Image attachment]' : '') ||
-      (indexedFileNames.length > 0 ? `[Indexed documents: ${indexedFileNames.join(', ')}]` : '')
+    const partsForPersist: UiPart[] = [...partsForModel]
+    if (indexedFileNames.length > 0) {
+      partsForPersist.push({
+        type: 'text',
+        text: `[Indexed documents: ${indexedFileNames.join(', ')}]`,
+      })
+    }
+
+    let persistedContent = ''
+    if (text.trim() && indexedFileNames.length > 0) {
+      persistedContent = `${text.trim()}\n\n[Indexed documents: ${indexedFileNames.join(', ')}]`
+    } else if (text.trim()) {
+      persistedContent = text.trim()
+    } else if (partsForModel.some((p) => p.type === 'file')) {
+      persistedContent = '[Image attachment]'
+    } else if (indexedFileNames.length > 0) {
+      persistedContent = `[Indexed documents: ${indexedFileNames.join(', ')}]`
+    }
+
+    const userMetadata =
+      indexedFileNames.length > 0 ? { indexedDocuments: indexedFileNames } : undefined
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userUIMessage: any = {
+      id: textTurnId,
+      role: 'user',
+      parts: partsForModel,
+      ...(userMetadata ? { metadata: userMetadata } : {}),
+    }
 
     if (wasFirst && (text || indexedFileNames.length > 0)) {
       startFirstMessageRename(chatId, text || indexedFileNames[0] || 'Documents')
@@ -1174,17 +1241,34 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       startSession(chatId, 'act', activeChatTitle ?? '', msgCountBeforeSend)
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      chat0.setMessages((prev) => [...prev, { id: `act-user-${Date.now()}`, role: 'user', parts } as any])
+      const nextTranscript = [...chat0.messages, userUIMessage as any]
+      chat0.setMessages(nextTranscript)
+      // actChat.sendMessage({ messageId }) resolves the id against actChat.messages — keep in sync with chat0
+      actChat.setMessages(nextTranscript)
+
+      setInput('')
+      setAttachedImages([])
+      setPendingChatDocuments([])
+      setAttachmentError(null)
+      setIsFirstMessage(false)
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      void actChat.sendMessage({ role: 'user', parts: parts as any }, {
-        body: {
-          conversationId: chatId,
-          turnId: textTurnId,
-          modelId: selectedActModel,
-          ...(indexedFileNames.length > 0 ? { indexedFileNames } : {}),
+      void actChat.sendMessage(
+        {
+          role: 'user',
+          parts: partsForModel as any,
+          messageId: textTurnId,
+          ...(userMetadata ? { metadata: userMetadata } : {}),
+        } as any,
+        {
+          body: {
+            conversationId: chatId,
+            turnId: textTurnId,
+            modelId: selectedActModel,
+            ...(indexedFileNames.length > 0 ? { indexedFileNames } : {}),
+          },
         },
-      }).then(() => {
+      ).then(() => {
         completeSession(chatId, activeChatIdRef.current === chatId)
         loadChats()
       })
@@ -1198,6 +1282,17 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
     startSession(chatId, 'ask', activeChatTitle ?? '', msgCountBeforeSend)
 
+    selectedModels.forEach((_, idx) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      chatInstances[idx].setMessages((prev) => [...prev, userUIMessage as any])
+    })
+
+    setInput('')
+    setAttachedImages([])
+    setPendingChatDocuments([])
+    setAttachmentError(null)
+    setIsFirstMessage(false)
+
     let persistedUserMessage = false
     try {
       const persistRes = await fetch('/api/app/conversations/message', {
@@ -1209,7 +1304,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           mode: 'ask',
           role: 'user',
           content: persistedContent,
-          parts,
+          parts: partsForPersist,
           modelId: selectedModels[0],
         }),
       })
@@ -1224,17 +1319,25 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     void Promise.all(
       selectedModels.map((modelId, idx) =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        chatInstances[idx].sendMessage({ role: 'user', parts: parts as any }, {
-          body: {
-            modelId,
-            conversationId: chatId,
-            turnId: textTurnId,
-            variantIndex: idx,
-            skipUserMessage: persistedUserMessage || idx !== 0,
-            ...(indexedFileNames.length > 0 ? { indexedFileNames } : {}),
+        chatInstances[idx].sendMessage(
+          {
+            role: 'user',
+            parts: partsForModel as any,
+            messageId: textTurnId,
+            ...(userMetadata ? { metadata: userMetadata } : {}),
+          } as any,
+          {
+            body: {
+              modelId,
+              conversationId: chatId,
+              turnId: textTurnId,
+              variantIndex: idx,
+              skipUserMessage: persistedUserMessage || idx !== 0,
+              ...(indexedFileNames.length > 0 ? { indexedFileNames } : {}),
+            },
           },
-        })
-      )
+        ),
+      ),
     ).then(() => {
       completeSession(chatId, activeChatIdRef.current === chatId)
       loadChats()
@@ -1398,30 +1501,8 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             )}
           </div>
 
-          {/* Ask / Act + Model picker + Generation mode toggle */}
+          {/* Model picker + Generation mode toggle */}
           <div className="flex items-center gap-2">
-            <div className="flex rounded-lg border border-[#e5e5e5] overflow-hidden text-xs shrink-0">
-              <button
-                type="button"
-                onClick={() => !isAnyLoading && setComposerMode('ask')}
-                disabled={isAnyLoading}
-                className={`px-2.5 py-1 transition-colors ${
-                  composerMode === 'ask' ? 'bg-[#0a0a0a] text-[#fafafa]' : 'bg-white text-[#525252] hover:bg-[#f5f5f5]'
-                }`}
-              >
-                Ask
-              </button>
-              <button
-                type="button"
-                onClick={() => !isAnyLoading && setComposerMode('act')}
-                disabled={isAnyLoading}
-                className={`px-2.5 py-1 transition-colors border-l border-[#e5e5e5] ${
-                  composerMode === 'act' ? 'bg-[#0a0a0a] text-[#fafafa]' : 'bg-white text-[#525252] hover:bg-[#f5f5f5]'
-                }`}
-              >
-                Act
-              </button>
-            </div>
             <div ref={modelPickerRef} className="relative">
               <button
                 onClick={() => !isAnyLoading && setShowModelPicker((v) => !v)}
@@ -1702,11 +1783,18 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                     </div>
                   ) : undefined
 
+                const rawUserText = getMessageText(msg)
+                const metaDocs = getUserMessageDocNames(msg)
+                const { bodyText, docNames: parsedDocNames } = splitUserDisplayText(rawUserText)
+                const userDocumentNames = metaDocs.length > 0 ? metaDocs : parsedDocNames
+                const userBodyText = metaDocs.length > 0 ? rawUserText.trim() : bodyText
+
                 blocks.push(
                   <ExchangeBlock
                     key={msg.id}
                     userMsgId={msg.id}
-                    userText={getMessageText(msg)}
+                    userBodyText={userBodyText}
+                    userDocumentNames={userDocumentNames}
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     userImages={getMessageImages(msg as any)}
                     exchIdx={curExchIdx}
@@ -1796,7 +1884,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                   : 'No credits remaining. Please top up your account.'}
               </div>
             ) : (
-              <div className="flex items-center gap-2 bg-[#f0f0f0] rounded-2xl px-4 py-2.5">
+              <div className="rounded-2xl border border-[#e5e5e5] bg-white p-3 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -1816,42 +1904,62 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                     e.target.value = ''
                   }}
                 />
-                <div ref={attachMenuRef} className="relative shrink-0">
-                  <button
-                    onClick={() => setShowAttachMenu((v) => !v)}
-                    className="flex items-center justify-center w-6 h-6 rounded-full text-[#aaa] hover:text-[#525252] hover:bg-[#e0e0e0] transition-colors"
-                    title="Attach"
-                  >
-                    <Plus size={14} />
-                  </button>
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onPaste={handlePaste}
+                  placeholder="Ask anything..."
+                  rows={1}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSend()
+                    }
+                  }}
+                  className="w-full min-h-11 resize-none border-0 bg-transparent px-0.5 py-1 text-sm leading-6 text-[#0a0a0a] shadow-none outline-none ring-0 placeholder:text-[#aaa] focus:ring-0"
+                />
+                <div className="mt-2 flex min-h-9 items-center gap-2">
+                  <div ref={attachMenuRef} className="relative shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowAttachMenu((v) => !v)}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[#71717a] transition-colors hover:bg-[#f4f4f5] hover:text-[#0a0a0a]"
+                      title="Attach"
+                    >
+                      <Plus size={18} strokeWidth={1.75} />
+                    </button>
                   {showAttachMenu && (
                     <div className="absolute bottom-full left-0 mb-2 bg-white border border-[#e5e5e5] rounded-xl shadow-lg py-1 w-52 z-20">
                       <button
+                        type="button"
                         onClick={() => { fileInputRef.current?.click(); setShowAttachMenu(false) }}
                         disabled={!supportsVision}
+                        title={!supportsVision ? 'You need a vision model to attach images.' : undefined}
                         className={`flex items-center gap-2.5 w-full px-3 py-2 text-xs transition-colors ${
                           supportsVision
                             ? 'text-[#525252] hover:bg-[#f5f5f5]'
                             : 'text-[#bbb] cursor-not-allowed'
                         }`}
                       >
-                        <ImageIcon size={13} />
+                        <ImageIcon size={13} className="text-[#0a0a0a]" />
                         <span>Attach Images</span>
-                        {!supportsVision && <span className="ml-auto text-[10px] text-[#ccc]">vision required</span>}
                       </button>
                       <div className="border-t border-[#f0f0f0] my-1" />
                       <button
+                        type="button"
                         onClick={() => { setGenerationChip('image'); setShowAttachMenu(false) }}
                         className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-[#525252] hover:bg-[#f5f5f5] transition-colors"
                       >
-                        <ImageIcon size={13} className="text-purple-500" />
+                        <ImageIcon size={13} className="text-[#0a0a0a]" />
                         <span>Generate Image</span>
                       </button>
                       <button
+                        type="button"
                         onClick={() => { setGenerationChip('video'); setShowAttachMenu(false) }}
                         className="flex items-center gap-2.5 w-full px-3 py-2 text-xs text-[#525252] hover:bg-[#f5f5f5] transition-colors"
                       >
-                        <Video size={13} className="text-blue-500" />
+                        <Video size={13} className="text-[#0a0a0a]" />
                         <span>Generate Video</span>
                       </button>
                       <div className="border-t border-[#f0f0f0] my-1" />
@@ -1869,52 +1977,48 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                       </button>
                     </div>
                   )}
-                </div>
-                {generationChip && (
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#0a0a0a] text-[#fafafa] shrink-0">
-                    {generationChip === 'image' ? <ImageIcon size={10} /> : <Video size={10} />}
-                    {generationChip === 'image' ? 'Image' : 'Video'}
-                    <button onClick={() => setGenerationChip(null)} className="ml-0.5 hover:opacity-70">
-                      <X size={9} />
-                    </button>
                   </div>
-                )}
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onPaste={handlePaste}
-                  placeholder={effectiveGenType === 'image' ? 'Describe the image to generate…' : effectiveGenType === 'video' ? 'Describe the video to generate…' : 'Message...'}
-                  rows={1}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      handleSend()
-                    }
-                  }}
-                  className="flex-1 resize-none bg-transparent py-1.5 text-sm leading-6 text-[#0a0a0a] outline-none placeholder-[#aaa]"
-                />
-                {isAnyLoading ? (
-                  <button
-                    onClick={stopAll}
-                    className="shrink-0 p-1.5 rounded-lg bg-[#0a0a0a] text-[#fafafa] hover:bg-[#333] transition-colors"
-                    title="Stop generating"
-                  >
-                    <div className="w-3.5 h-3.5 bg-[#fafafa] rounded-sm" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleSend}
-                    disabled={
-                      !input.trim() &&
-                      attachedImages.length === 0 &&
-                      !pendingChatDocuments.some((d) => d.status === 'ready')
-                    }
-                    className="shrink-0 p-1.5 rounded-lg bg-[#0a0a0a] text-[#fafafa] disabled:opacity-40 hover:bg-[#333] transition-colors"
-                  >
-                    <Send size={14} />
-                  </button>
-                )}
+                  <AskActModeToggle
+                    mode={composerMode}
+                    onChange={handleComposerModeChange}
+                    disabled={isAnyLoading}
+                  />
+                  {generationChip && (
+                    <div className="flex shrink-0 items-center gap-1 rounded-full bg-[#0a0a0a] px-2 py-1 text-xs font-medium text-[#fafafa]">
+                      {generationChip === 'image' ? <ImageIcon size={10} /> : <Video size={10} />}
+                      {generationChip === 'image' ? 'Image' : 'Video'}
+                      <button type="button" onClick={() => setGenerationChip(null)} className="ml-0.5 hover:opacity-70">
+                        <X size={9} />
+                      </button>
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1" />
+                  <div className="flex shrink-0 items-center gap-2">
+                    {isAnyLoading ? (
+                      <button
+                        type="button"
+                        onClick={stopAll}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#0a0a0a] text-[#fafafa] transition-colors hover:bg-[#333]"
+                        title="Stop generating"
+                      >
+                        <div className="h-3.5 w-3.5 rounded-sm bg-[#fafafa]" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSend}
+                        disabled={
+                          !input.trim() &&
+                          attachedImages.length === 0 &&
+                          !pendingChatDocuments.some((d) => d.status === 'ready')
+                        }
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#0a0a0a] text-[#fafafa] transition-colors hover:bg-[#333] disabled:opacity-40"
+                      >
+                        <Send size={17} strokeWidth={1.75} />
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>

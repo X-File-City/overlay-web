@@ -17,6 +17,39 @@ export function indexedFilesSystemNote(fileNames: string[]): string {
   const list = fileNames.map((n) => `"${n}"`).join(', ')
   return (
     `\n\n[Documents indexed this turn: ${list}. They are saved as notebook files and embedded for hybrid search. ` +
-    `Use search_knowledge with specific queries about their content when answering; snippets may not appear in AUTO_RETRIEVED_KNOWLEDGE for this message.]`
+    `You MUST call search_knowledge with targeted queries (titles, section names, or the user's question) before answering — do not claim you cannot access these files. ` +
+    `Snippets may not appear in AUTO_RETRIEVED_KNOWLEDGE for this message.]`
   )
+}
+
+/**
+ * Clone UI messages and append a model-only text part to the latest user turn so the model
+ * always sees explicit attachment context (client bubbles stay clean).
+ */
+export function cloneMessagesWithIndexedFileHint<T extends { role: string; parts?: unknown[] }>(
+  inputMessages: T[],
+  fileNames: string[],
+): T[] {
+  const names = fileNames.filter((n) => typeof n === 'string' && n.trim().length > 0)
+  if (names.length === 0) return inputMessages
+
+  const hint =
+    `[Notebook files indexed for this turn: ${names.map((n) => `"${n}"`).join(', ')}. ` +
+    `Call search_knowledge with relevant queries to read their content before you answer. ` +
+    `Do not tell the user you cannot see or open these documents.]`
+
+  const msgs = inputMessages.map((m) => ({
+    ...m,
+    parts: m.parts ? m.parts.map((p) => (typeof p === 'object' && p !== null ? { ...p } : p)) : undefined,
+  })) as T[]
+
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i]!.role !== 'user') continue
+    const prev = msgs[i]!.parts ? [...msgs[i]!.parts!] : []
+    prev.push({ type: 'text', text: hint } as (typeof prev)[number])
+    msgs[i] = { ...msgs[i]!, parts: prev }
+    break
+  }
+
+  return msgs
 }

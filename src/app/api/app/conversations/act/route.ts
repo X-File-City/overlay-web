@@ -11,6 +11,7 @@ import { calculateTokenCost, isPremiumModel } from '@/lib/model-pricing'
 import { buildAutoRetrievalSystemExtension } from '@/lib/ask-knowledge-context'
 import {
   MEMORY_SAVE_PROTOCOL,
+  cloneMessagesWithIndexedFileHint,
   indexedFilesSystemNote,
 } from '@/lib/knowledge-agent-instructions'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
@@ -170,13 +171,14 @@ export async function POST(request: NextRequest) {
       // optional
     }
 
-    const indexedNote = indexedFilesSystemNote(
-      Array.isArray(indexedFileNames)
-        ? indexedFileNames.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
-        : [],
-    )
+    const indexedNames = Array.isArray(indexedFileNames)
+      ? indexedFileNames.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+      : []
 
-    const modelMessages = await convertToModelMessages(messages)
+    const indexedNote = indexedFilesSystemNote(indexedNames)
+    const messagesForModel = cloneMessagesWithIndexedFileHint(messages, indexedNames)
+
+    const modelMessages = await convertToModelMessages(messagesForModel)
     const languageModel = await getGatewayLanguageModel(effectiveModelId, session.accessToken)
     const [composioTools, webToolSet] = await Promise.all([
       createBrowserUnifiedTools({ userId, accessToken: session.accessToken }),

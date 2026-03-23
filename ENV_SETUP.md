@@ -9,8 +9,11 @@
 STRIPE_SECRET_KEY=sk_test_...          # From Stripe Dashboard > API keys
 STRIPE_WEBHOOK_SECRET=whsec_...        # From Stripe Dashboard > Webhooks
 
-# Convex Configuration
-NEXT_PUBLIC_CONVEX_URL=https://different-caiman-77.convex.cloud  # Your Convex deployment URL
+# Convex Configuration (production deployment — Vercel prod / .env.production)
+NEXT_PUBLIC_CONVEX_URL=https://colorful-chickadee-419.convex.cloud
+
+# Convex dev deployment — local `next dev` and preview apps (optional but recommended)
+DEV_NEXT_PUBLIC_CONVEX_URL=https://different-caiman-77.convex.cloud
 
 # App URLs
 NEXT_PUBLIC_APP_URL=https://getoverlay.io
@@ -21,7 +24,8 @@ DEV_NEXT_PUBLIC_APP_URL=https://your-overlay-dev.vercel.app   # Use your Vercel 
 
 ```bash
 EXPO_PUBLIC_AUTH_BASE_URL=https://your-overlay-dev.vercel.app
-EXPO_PUBLIC_CONVEX_URL=https://different-caiman-77.convex.cloud
+# Use prod or dev Convex URL to match your build (prod: colorful-chickadee-419; dev: different-caiman-77)
+EXPO_PUBLIC_CONVEX_URL=https://colorful-chickadee-419.convex.cloud
 ```
 
 ### Setting Up Stripe Products
@@ -98,8 +102,8 @@ npx convex env set WORKOS_CLIENT_ID client_...
 The Electron app will fetch API keys from WorkOS Vault via Convex, so you only need:
 
 ```bash
-# Convex Configuration
-VITE_CONVEX_URL=https://different-caiman-77.convex.cloud
+# Convex Configuration (prod: colorful-chickadee-419; dev: different-caiman-77)
+VITE_CONVEX_URL=https://colorful-chickadee-419.convex.cloud
 
 # WorkOS Auth (already configured)
 VITE_WORKOS_CLIENT_ID=client_...

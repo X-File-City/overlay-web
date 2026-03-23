@@ -59,6 +59,41 @@ export const AVAILABLE_MODELS: ChatModel[] = [
 
 export const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 
+/**
+ * When switching from multi-model Ask to Act, prefer the highest-quality model
+ * that is already selected (first match wins).
+ */
+const ACT_MODEL_QUALITY_PRIORITY: string[] = [
+  'claude-opus-4-6',
+  'gpt-5.2-pro-2025-12-11',
+  'gemini-3.1-pro-preview',
+  'gpt-5.2-2025-12-11',
+  'claude-sonnet-4-6',
+  'gpt-5-mini-2025-08-07',
+  'gemini-3-flash-preview',
+  'gemini-2.5-flash',
+  'grok-4-1-fast-reasoning',
+  'gpt-4.1-2025-04-14',
+  'claude-haiku-4-5',
+  'gemini-2.5-flash-lite',
+  'gpt-5-nano-2025-08-07',
+  'llama-3.3-70b-versatile',
+  'moonshotai/kimi-k2-instruct-0905',
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'openrouter/free',
+]
+
+export function pickBestModelForAct(selectedAskModelIds: string[]): string {
+  if (selectedAskModelIds.length === 1) return selectedAskModelIds[0]
+  const sel = new Set(selectedAskModelIds)
+  for (const id of ACT_MODEL_QUALITY_PRIORITY) {
+    if (sel.has(id)) return id
+  }
+  const first = selectedAskModelIds.find((id) => AVAILABLE_MODELS.some((m) => m.id === id))
+  return first ?? DEFAULT_MODEL_ID
+}
+
 export function getModel(id: string): ChatModel | undefined {
   return AVAILABLE_MODELS.find((m) => m.id === id)
 }

@@ -17,6 +17,21 @@ function splitRowCells(line: string): string[] {
   return endBar.split('|').map((c) => c.trim())
 }
 
+const BULLET_START = /^[•\-*]\s|^-\s|^\d+\.\s/m
+
+function isBulletContinuationRow(cells: string[]): boolean {
+  const trimmed = cells.map((c) => c.trim())
+  const nonEmpty = trimmed.filter((c) => c !== '')
+  if (nonEmpty.length !== 1) return false
+  return BULLET_START.test(nonEmpty[0]!)
+}
+
+function bulletTextFromRow(cells: string[]): string {
+  const trimmed = cells.map((c) => c.trim())
+  const hit = trimmed.find((c) => c !== '')
+  return hit ?? ''
+}
+
 function mergeContinuationIntoPreviousRow(prevLine: string, contLine: string): string {
   const prevCells = splitRowCells(prevLine)
   const contCells = splitRowCells(contLine)
@@ -24,7 +39,7 @@ function mergeContinuationIntoPreviousRow(prevLine: string, contLine: string): s
 
   const first = contCells[0] ?? ''
   const second = contCells[1] ?? ''
-  const bulletish = /^[•\-*]\s|^-\s|^\d+\.\s/m.test(first.trim())
+  const bulletish = BULLET_START.test(first.trim())
   const secondEmpty = (second === '' || second === undefined) && contCells.length <= 2
 
   // `| • second point |` (one cell) or `| • point | |` (bullet + empty col)
@@ -35,6 +50,24 @@ function mergeContinuationIntoPreviousRow(prevLine: string, contLine: string): s
   }
 
   return prevLine
+}
+
+/** Merge GFM rows where a bullet line was parsed as its own row (often with empty trailing columns). */
+function mergeBulletContinuationIntoPreviousRow(prevLine: string, contLine: string): string | null {
+  const prevCells = splitRowCells(prevLine)
+  const contCells = splitRowCells(contLine)
+  if (prevCells.length < 2 || contCells.length < 1) return null
+  if (!isBulletContinuationRow(contCells)) return null
+
+  const bullet = bulletTextFromRow(contCells)
+  if (!bullet) return null
+
+  const out = [...prevCells]
+  let target = out.length - 1
+  while (target >= 0 && out[target]!.trim() === '') target--
+  if (target < 0) target = out.length - 1
+  out[target] = `${out[target]!.trim()} <br /> ${bullet}`
+  return `| ${out.join(' | ')} |`
 }
 
 function mergeTableBlock(lines: string[]): string[] {
@@ -61,11 +94,16 @@ function mergeTableBlock(lines: string[]): string[] {
       const cells = splitRowCells(line)
       if (
         cells.length >= 2 &&
-        /^[•\-*]\s|^-\s|^\d+\.\s/m.test((cells[0] ?? '').trim()) &&
+        BULLET_START.test((cells[0] ?? '').trim()) &&
         (cells[1] === '' || cells[1] === undefined) &&
         cells.length === 2
       ) {
         out[out.length - 1] = mergeContinuationIntoPreviousRow(out[out.length - 1]!, line)
+        continue
+      }
+      const mergedBullet = mergeBulletContinuationIntoPreviousRow(out[out.length - 1]!, line)
+      if (mergedBullet) {
+        out[out.length - 1] = mergedBullet
         continue
       }
     }

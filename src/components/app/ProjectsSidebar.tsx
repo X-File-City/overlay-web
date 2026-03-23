@@ -9,6 +9,12 @@ import {
 import { CHAT_TITLE_UPDATED_EVENT, type ChatTitleUpdatedDetail } from '@/lib/chat-title'
 import { getFileType } from './FileViewer'
 
+/** Align chevron column + icon column across folders, chats, notes, and files */
+const TREE_GUTTER_PX = 8
+const TREE_DEPTH_STEP_PX = 16
+const TREE_CHEVRON_COL = 'w-[22px] shrink-0 flex items-center justify-center'
+const TREE_ICON_COL = 'w-[14px] shrink-0 flex items-center justify-center text-[#888]'
+
 interface Project {
   _id: string
   name: string
@@ -27,6 +33,8 @@ function ProjectFileTreeNode({
   file,
   allFiles,
   depth,
+  baseIndentPx,
+  legacyInline = false,
   expandedIds,
   onToggleFolder,
   onOpenFile,
@@ -35,6 +43,10 @@ function ProjectFileTreeNode({
   file: ProjectFile
   allFiles: ProjectFile[]
   depth: number
+  /** Left padding before chevron/icon columns (matches project row gutter + depth) */
+  baseIndentPx: number
+  /** Expanded project list (secondary sidebar): old indent + layout; drill-in view uses aligned columns */
+  legacyInline?: boolean
   expandedIds: Set<string>
   onToggleFolder: (id: string, e: React.MouseEvent) => void
   onOpenFile: (id: string) => void
@@ -46,6 +58,9 @@ function ProjectFileTreeNode({
   })
   const isFolder = file.type === 'folder'
   const open = expandedIds.has(file._id)
+  const rowPadLeft = legacyInline
+    ? baseIndentPx + depth * 12
+    : baseIndentPx + depth * TREE_DEPTH_STEP_PX
 
   return (
     <div>
@@ -62,14 +77,37 @@ function ProjectFileTreeNode({
         className={`group flex items-center gap-1.5 py-1.5 rounded-md text-xs text-[#525252] transition-colors ${
           file.type === 'file' ? 'cursor-pointer hover:bg-[#ebebeb] hover:text-[#0a0a0a]' : 'cursor-pointer hover:bg-[#ebebeb] hover:text-[#0a0a0a]'
         }`}
-        style={{ paddingLeft: `${depth * 12 + 8}px`, paddingRight: '8px' }}
+        style={{ paddingLeft: `${rowPadLeft}px`, paddingRight: '8px' }}
         onClick={(e) => {
           if ((e.target as HTMLElement).closest('button')) return
           if (isFolder) onToggleFolder(file._id, e)
           else onOpenFile(file._id)
         }}
       >
-        {isFolder ? (
+        {legacyInline ? (
+          isFolder ? (
+            <>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleFolder(file._id, e)
+                }}
+                className="shrink-0 p-0.5 rounded hover:bg-[#d8d8d8] transition-colors"
+              >
+                <ChevronRight size={10} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+              </button>
+              {open
+                ? <FolderOpen size={12} className="shrink-0 text-[#888]" />
+                : <Folder size={12} className="shrink-0 text-[#888]" />}
+            </>
+          ) : (
+            <>
+              <span className="w-[18px] shrink-0 inline-block" />
+              <FileText size={12} className="shrink-0 text-[#888]" />
+            </>
+          )
+        ) : isFolder ? (
           <>
             <button
               type="button"
@@ -77,18 +115,20 @@ function ProjectFileTreeNode({
                 e.stopPropagation()
                 onToggleFolder(file._id, e)
               }}
-              className="shrink-0 p-0.5 rounded hover:bg-[#d8d8d8] transition-colors"
+              className={`${TREE_CHEVRON_COL} p-0.5 rounded hover:bg-[#d8d8d8] transition-colors`}
             >
               <ChevronRight size={10} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
             </button>
-            {open
-              ? <FolderOpen size={12} className="shrink-0 text-[#888]" />
-              : <Folder size={12} className="shrink-0 text-[#888]" />}
+            <div className={TREE_ICON_COL}>
+              {open ? <FolderOpen size={12} /> : <Folder size={12} />}
+            </div>
           </>
         ) : (
           <>
-            <span className="w-[18px] shrink-0 inline-block" />
-            <FileText size={12} className="shrink-0 text-[#888]" />
+            <div className={TREE_CHEVRON_COL} aria-hidden />
+            <div className={TREE_ICON_COL}>
+              <FileText size={12} />
+            </div>
           </>
         )}
         <span className="flex-1 truncate">{file.name}</span>
@@ -106,6 +146,8 @@ function ProjectFileTreeNode({
           file={ch}
           allFiles={allFiles}
           depth={depth + 1}
+          baseIndentPx={baseIndentPx}
+          legacyInline={legacyInline}
           expandedIds={expandedIds}
           onToggleFolder={onToggleFolder}
           onOpenFile={onOpenFile}
@@ -135,10 +177,13 @@ function ProjectNode({
   const children = allProjects.filter((p) => p.parentId === project._id)
   const isOpen = expandedIds.has(project._id)
   const isSelected = project._id === selectedId
+  const itemPlPx = depth * 16 + 28
+  const itemPl = `${itemPlPx}px`
 
   // Inline items loaded on-demand when expanded
-  const [items, setItems] = useState<{ chats: ProjectChat[]; notes: ProjectNote[] } | null>(null)
+  const [items, setItems] = useState<{ chats: ProjectChat[]; notes: ProjectNote[]; files: ProjectFile[] } | null>(null)
   const [itemsLoading, setItemsLoading] = useState(false)
+  const [expandedFileIds, setExpandedFileIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (!isOpen || items !== null) return
@@ -146,16 +191,18 @@ function ProjectNode({
     async function load() {
       setItemsLoading(true)
       try {
-        const [cr, nr] = await Promise.all([
+        const [cr, nr, fr] = await Promise.all([
           fetch(`/api/app/conversations?projectId=${project._id}`),
           fetch(`/api/app/notes?projectId=${project._id}`),
+          fetch(`/api/app/files?projectId=${project._id}`),
         ])
         if (cancelled) return
-        const [chats, notes] = await Promise.all([
+        const [chats, notes, files] = await Promise.all([
           cr.ok ? cr.json() : [],
           nr.ok ? nr.json() : [],
+          fr.ok ? fr.json() : [],
         ])
-        if (!cancelled) setItems({ chats, notes })
+        if (!cancelled) setItems({ chats, notes, files })
       } finally {
         if (!cancelled) setItemsLoading(false)
       }
@@ -164,7 +211,28 @@ function ProjectNode({
     return () => { cancelled = true }
   }, [isOpen, project._id, items])
 
-  const itemPl = `${depth * 16 + 28}px`
+  function toggleInlineFileFolder(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    setExpandedFileIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function handleDeleteInlineFile(fileId: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    await fetch(`/api/app/files?fileId=${fileId}`, { method: 'DELETE' })
+    setItems((prev) => (prev ? { ...prev, files: prev.files.filter((f) => f._id !== fileId) } : null))
+  }
+
+  const rootInlineFiles = items?.files
+    .filter((f) => f.parentId == null)
+    .sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+      return a.name.localeCompare(b.name)
+    }) ?? []
 
   return (
     <div>
@@ -175,8 +243,8 @@ function ProjectNode({
         style={{ paddingLeft: `${depth * 16 + 8}px`, paddingRight: '8px' }}
         onClick={() => onNavigate(project)}
       >
-        {/* Chevron always visible — toggles inline expansion */}
         <button
+          type="button"
           onClick={(e) => onToggle(project._id, e)}
           className="shrink-0 p-0.5 rounded hover:bg-[#d8d8d8] transition-colors"
         >
@@ -184,10 +252,10 @@ function ProjectNode({
         </button>
         {isOpen
           ? <FolderOpen size={12} className="shrink-0 text-[#888]" />
-          : <Folder size={12} className="shrink-0 text-[#888]" />
-        }
+          : <Folder size={12} className="shrink-0 text-[#888]" />}
         <span className="flex-1 truncate">{project.name}</span>
         <button
+          type="button"
           onClick={(e) => onDelete(project._id, e)}
           className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
         >
@@ -197,7 +265,6 @@ function ProjectNode({
 
       {isOpen && (
         <>
-          {/* Subprojects */}
           {children.map((child) => (
             <ProjectNode
               key={child._id}
@@ -214,7 +281,6 @@ function ProjectNode({
             />
           ))}
 
-          {/* Inline items */}
           {itemsLoading ? (
             <div className="flex items-center py-1.5" style={{ paddingLeft: itemPl }}>
               <Loader2 size={10} className="animate-spin text-[#bbb]" />
@@ -231,6 +297,7 @@ function ProjectNode({
                   <MessageSquare size={10} className="shrink-0 text-[#aaa]" />
                   <span className="flex-1 truncate">{chat.title}</span>
                   <button
+                    type="button"
                     onClick={(e) => onDeleteItem('chat', chat._id, e)}
                     className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
                   >
@@ -248,6 +315,7 @@ function ProjectNode({
                   <BookOpen size={10} className="shrink-0 text-[#aaa]" />
                   <span className="flex-1 truncate">{note.title || 'Untitled'}</span>
                   <button
+                    type="button"
                     onClick={(e) => onDeleteItem('note', note._id, e)}
                     className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
                   >
@@ -255,7 +323,21 @@ function ProjectNode({
                   </button>
                 </div>
               ))}
-              {children.length === 0 && items.chats.length === 0 && items.notes.length === 0 && (
+              {rootInlineFiles.map((file) => (
+                <ProjectFileTreeNode
+                  key={file._id}
+                  file={file}
+                  allFiles={items.files}
+                  depth={0}
+                  baseIndentPx={itemPlPx}
+                  legacyInline
+                  expandedIds={expandedFileIds}
+                  onToggleFolder={toggleInlineFileFolder}
+                  onOpenFile={(id) => onNavigateItem(project, 'file', id)}
+                  onDeleteFile={handleDeleteInlineFile}
+                />
+              ))}
+              {children.length === 0 && items.chats.length === 0 && items.notes.length === 0 && rootInlineFiles.length === 0 && (
                 <p className="text-[10px] text-[#bbb] py-1" style={{ paddingLeft: itemPl }}>Empty</p>
               )}
             </>
@@ -736,9 +818,13 @@ export default function ProjectsSidebar() {
                   onClick={() => handleNavigate(sub)}
                   className="group flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors"
                 >
-                  <Folder size={12} className="shrink-0 text-[#888]" />
+                  <div className={TREE_CHEVRON_COL} aria-hidden />
+                  <div className={TREE_ICON_COL}>
+                    <Folder size={12} />
+                  </div>
                   <span className="flex-1 truncate">{sub.name}</span>
                   <button
+                    type="button"
                     onClick={(e) => handleDeleteProject(sub._id, e)}
                     className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
                   >
@@ -746,16 +832,19 @@ export default function ProjectsSidebar() {
                   </button>
                 </div>
               ))}
-              {/* Chats */}
               {projectChats.map((chat) => (
                 <div
                   key={chat._id}
                   onClick={() => projectNav('chat', chat._id)}
                   className="group flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
                 >
-                  <MessageSquare size={12} className="shrink-0 text-[#888]" />
+                  <div className={TREE_CHEVRON_COL} aria-hidden />
+                  <div className={TREE_ICON_COL}>
+                    <MessageSquare size={12} />
+                  </div>
                   <span className="flex-1 truncate">{chat.title}</span>
                   <button
+                    type="button"
                     onClick={(e) => handleDeleteItem('chat', chat._id, e)}
                     className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
                   >
@@ -763,16 +852,19 @@ export default function ProjectsSidebar() {
                   </button>
                 </div>
               ))}
-              {/* Notes */}
               {projectNotes.map((note) => (
                 <div
                   key={note._id}
                   onClick={() => projectNav('note', note._id)}
                   className="group flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs text-[#525252] hover:bg-[#ebebeb] hover:text-[#0a0a0a] transition-colors cursor-pointer"
                 >
-                  <BookOpen size={12} className="shrink-0 text-[#888]" />
+                  <div className={TREE_CHEVRON_COL} aria-hidden />
+                  <div className={TREE_ICON_COL}>
+                    <BookOpen size={12} />
+                  </div>
                   <span className="flex-1 truncate">{note.title || 'Untitled'}</span>
                   <button
+                    type="button"
                     onClick={(e) => handleDeleteItem('note', note._id, e)}
                     className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[#d8d8d8] transition-opacity shrink-0"
                   >
@@ -780,13 +872,13 @@ export default function ProjectsSidebar() {
                   </button>
                 </div>
               ))}
-              {/* Files (nested) */}
               {rootProjectFiles.map((file) => (
                 <ProjectFileTreeNode
                   key={file._id}
                   file={file}
                   allFiles={projectFiles}
                   depth={0}
+                  baseIndentPx={TREE_GUTTER_PX}
                   expandedIds={expandedProjFolderIds}
                   onToggleFolder={toggleProjFolder}
                   onOpenFile={(id) => projectNav('file', id)}

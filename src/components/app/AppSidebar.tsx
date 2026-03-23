@@ -7,7 +7,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   MessageSquare, BookOpen, Bot, Brain, Wrench, LogOut, User,
   Smartphone, Puzzle, MessageCircle, Monitor, ChevronUp, AlertCircle,
-  FolderOpen, Cpu, Images,
+  FolderOpen, Cpu, Images, Loader2,
 } from 'lucide-react'
 import type { AuthUser } from '@/lib/workos-auth'
 import { useAsyncSessions } from '@/lib/async-sessions-store'
@@ -199,7 +199,11 @@ export default function AppSidebar({ user, accessToken }: { user: AuthUser; acce
               <Icon size={15} />
               <span className="flex-1 text-left">{label}</span>
               {isPending ? (
-                <div className="w-3.5 h-3.5 rounded-full border-2 border-[#fafafa]/30 border-t-[#fafafa] animate-spin shrink-0" />
+                <Loader2
+                  size={14}
+                  className={`shrink-0 animate-spin ${active ? 'text-[#fafafa]' : 'text-[#525252]'}`}
+                  aria-hidden
+                />
               ) : unreadCount > 0 ? (
                 <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] font-medium ${
                   active ? 'bg-[#fafafa] text-[#0a0a0a]' : 'bg-[#0a0a0a] text-[#fafafa]'

@@ -208,9 +208,10 @@ All test cards use:
 
 ### Check Convex Data
 
-Open Convex dashboard:
+Open Convex dashboard (dev: `different-caiman-77`, prod: `colorful-chickadee-419`):
 ```
 https://dashboard.convex.dev/d/different-caiman-77
+https://dashboard.convex.dev/d/colorful-chickadee-419
 ```
 
 Check tables:

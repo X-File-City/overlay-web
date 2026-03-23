@@ -157,6 +157,17 @@ html {
   vertical-align: top;
 }
 
+/* Keep lists inside a single cell visually grouped (GFM + merged continuations). */
+.markdown-content td ul,
+.markdown-content td ol {
+  margin: 0.35em 0 0;
+  padding-left: 1.25em;
+}
+
+.markdown-content td li {
+  margin: 0.15em 0;
+}
+
 .markdown-content tr:nth-child(even) td,
 .app-note-editor tr:nth-child(even) td {
   background: #fafafa;
