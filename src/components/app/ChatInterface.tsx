@@ -16,12 +16,13 @@ import {
   Download,
   Copy,
   Reply,
+  BrainCircuit,
+  ArrowUp,
 } from 'lucide-react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, getToolName, isToolUIPart, type UIMessage } from 'ai'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import {
-  AVAILABLE_MODELS,
   CHAT_MODEL_QUALITY_PRIORITY,
   DEFAULT_MODEL_ID,
   IMAGE_MODELS,
@@ -30,7 +31,9 @@ import {
   DEFAULT_VIDEO_MODEL_ID,
   getChatModelDisplayName,
   getModel,
+  getModelsByIntelligence,
   pickBestModelForAct,
+  type ChatModel,
   type GenerationMode,
 } from '@/lib/models'
 import type { SourceCitationMap } from '@/lib/ask-knowledge-context'
@@ -41,6 +44,51 @@ import { useNavigationProgress } from '@/lib/navigation-progress'
 import { MarkdownMessage } from './MarkdownMessage'
 import { DelayedTooltip } from './DelayedTooltip'
 import { normalizeAgentAssistantText } from '@/lib/agent-assistant-text'
+
+function ModelBadges({ m, isHovered, isFreeTier }: { m: ChatModel; isHovered: boolean; isFreeTier: boolean }) {
+  const router = useRouter()
+  const showUpgrade = isFreeTier && m.cost > 0
+
+  if (isHovered) {
+    return (
+      <span className="flex items-center gap-1 shrink-0 h-5">
+        {showUpgrade && (
+          <span
+            onClick={(e) => { e.stopPropagation(); router.push('/account') }}
+            className="inline-flex items-center h-5 px-1.5 rounded-full bg-[#fef9ec] text-[#b45309] text-[9px] font-semibold leading-none cursor-pointer hover:bg-[#fde68a] transition-colors"
+          >
+            Upgrade
+          </span>
+        )}
+        <span className={`inline-flex items-center h-5 px-1.5 rounded-full text-[9px] font-semibold leading-none tracking-tight ${
+          m.cost === 0 ? 'bg-[#ecfdf5] text-[#065f46]' : 'bg-[#f0f0f0] text-[#525252]'
+        }`}>
+          {m.cost === 0 ? 'Free' : '$'.repeat(m.cost)}
+        </span>
+      </span>
+    )
+  }
+
+  return (
+    <span className="flex items-center gap-1 shrink-0 h-5">
+      {showUpgrade && (
+        <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-[#fef9ec] text-[#b45309]">
+          <ArrowUp size={10} strokeWidth={2} />
+        </span>
+      )}
+      {m.supportsVision && (
+        <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-[#f0f0f0] text-[#888]">
+          <ImageIcon size={10} strokeWidth={1.75} />
+        </span>
+      )}
+      {m.supportsReasoning && (
+        <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-[#f0f0f0] text-[#888]">
+          <BrainCircuit size={10} strokeWidth={1.75} />
+        </span>
+      )}
+    </span>
+  )
+}
 
 function getAssistantAfterUserExchangeIndex(msgs: UIMessage[], exchIdx: number): UIMessage | null {
   let uCount = 0
@@ -952,6 +1000,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   const lastGeneratedImageUrlRef = useRef<string | null>(null)
 
   const [showModelPicker, setShowModelPicker] = useState(false)
+  const [hoveredModelId, setHoveredModelId] = useState<string | null>(null)
   const [showAttachMenu, setShowAttachMenu] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const dragCounterRef = useRef(0)
@@ -1204,13 +1253,23 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   }, [chat0.messages, actChat.messages])
 
   useEffect(() => {
-    if (!showModelPicker) return
+    if (!showModelPicker) {
+      setHoveredModelId(null)
+      return
+    }
     function handleOutside(e: MouseEvent) {
       if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node))
         setShowModelPicker(false)
     }
-    document.addEventListener('mousedown', handleOutside)
-    return () => document.removeEventListener('mousedown', handleOutside)
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setShowModelPicker(false)
+    }
+    document.addEventListener('mousedown', handleOutside, true)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleOutside, true)
+      document.removeEventListener('keydown', handleEscape)
+    }
   }, [showModelPicker])
 
   useEffect(() => {
@@ -2125,7 +2184,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       if (meta && e.shiftKey && (e.key === '/' || e.key === '?')) {
         if (isAnyLoadingRef.current) return
         e.preventDefault()
-        setShowModelPicker(true)
+        setShowModelPicker((v) => !v)
         return
       }
 
@@ -2327,7 +2386,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                 </button>
               </DelayedTooltip>
               {showModelPicker && (
-                <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-[#e5e5e5] rounded-lg shadow-lg z-10 py-1 max-h-72 overflow-y-auto">
+                <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-[#e5e5e5] rounded-lg shadow-lg z-10 py-1 max-h-72 overflow-y-auto" onMouseLeave={() => setHoveredModelId(null)}>
                   {generationMode === 'image' ? (
                     IMAGE_MODELS.map((m) => {
                         const isSel = selectedImageModels.includes(m.id)
@@ -2343,7 +2402,6 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                               {isSel ? <Check size={10} /> : <span className="w-[10px] inline-block" />}
                               {m.name}
                             </span>
-                            <span className="text-[#aaa] ml-2">{m.provider}</span>
                           </button>
                         )
                       })
@@ -2362,32 +2420,35 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                               {isSel ? <Check size={10} /> : <span className="w-[10px] inline-block" />}
                               {m.name}
                             </span>
-                            <span className="text-[#aaa] ml-2">{m.provider}</span>
                           </button>
                         )
                       })
                   ) : composerMode === 'act' ? (
-                    AVAILABLE_MODELS.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => {
-                          setSelectedActModel(m.id)
-                          localStorage.setItem(ACT_MODEL_KEY, m.id)
-                          setShowModelPicker(false)
-                        }}
-                        className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-[#f5f5f5] ${
-                          m.id === selectedActModel ? 'text-[#0a0a0a] font-medium' : 'text-[#525252]'
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          {m.id === selectedActModel ? <Check size={10} /> : <span className="w-[10px] inline-block" />}
-                          {m.name}
-                        </span>
-                        <span className="text-[#aaa] ml-2">{m.provider}</span>
-                      </button>
-                    ))
+                    getModelsByIntelligence(isFreeTier).map((m) => {
+                      const isSel = m.id === selectedActModel
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => {
+                            setSelectedActModel(m.id)
+                            localStorage.setItem(ACT_MODEL_KEY, m.id)
+                            setShowModelPicker(false)
+                          }}
+                          onMouseEnter={() => setHoveredModelId(m.id)}
+                          className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-[#f5f5f5] ${
+                            isSel ? 'text-[#0a0a0a] font-medium' : 'text-[#525252]'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2">
+                            {isSel ? <Check size={10} /> : <span className="w-[10px] inline-block" />}
+                            {m.name}
+                          </span>
+                          <ModelBadges m={m} isHovered={hoveredModelId === m.id} isFreeTier={isFreeTier} />
+                        </button>
+                      )
+                    })
                   ) : (
-                    AVAILABLE_MODELS.map((m) => {
+                    getModelsByIntelligence(isFreeTier).map((m) => {
                       const isSelected = selectedModels.includes(m.id)
                       const isDisabled = !isSelected && selectedModels.length >= 4
                       return (
@@ -2395,6 +2456,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                           key={m.id}
                           onClick={() => toggleModel(m.id)}
                           disabled={isDisabled}
+                          onMouseEnter={() => !isDisabled && setHoveredModelId(m.id)}
                           className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between ${
                             isDisabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[#f5f5f5]'
                           } ${isSelected ? 'text-[#0a0a0a] font-medium' : 'text-[#525252]'}`}
@@ -2403,7 +2465,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                             {isSelected ? <Check size={10} /> : <span className="w-[10px] inline-block" />}
                             {m.name}
                           </span>
-                          <span className="text-[#aaa] ml-2">{m.provider}</span>
+                          <ModelBadges m={m} isHovered={hoveredModelId === m.id} isFreeTier={isFreeTier} />
                         </button>
                       )
                     })

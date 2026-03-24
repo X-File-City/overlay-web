@@ -6,6 +6,9 @@ export interface ChatModel {
   provider: 'openai' | 'anthropic' | 'google' | 'groq' | 'xai' | 'openrouter'
   openClawRef: string
   description?: string
+  intelligence: number
+  /** 0 = free, 1 = cheap, 2 = mid, 3 = expensive */
+  cost: 0 | 1 | 2 | 3
   supportsVision: boolean
   supportsReasoning: boolean
   supportsSearch: boolean
@@ -31,29 +34,28 @@ export interface VideoModel {
 
 export const AVAILABLE_MODELS: ChatModel[] = [
   // Google Models
-  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', provider: 'google', openClawRef: 'vercel-ai-gateway/google/gemini-3.1-pro-preview', description: 'Most capable', supportsVision: true, supportsReasoning: true, supportsSearch: false },
-  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', provider: 'google', openClawRef: 'vercel-ai-gateway/google/gemini-3-flash', description: 'Fast & efficient', supportsVision: true, supportsReasoning: true, supportsSearch: false },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'google', openClawRef: 'vercel-ai-gateway/google/gemini-2.5-flash', description: 'Balanced', supportsVision: true, supportsReasoning: true, supportsSearch: false },
-  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', provider: 'google', openClawRef: 'vercel-ai-gateway/google/gemini-2.5-flash-lite', description: 'Lightweight', supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', provider: 'google', openClawRef: 'vercel-ai-gateway/google/gemini-3.1-pro-preview', description: 'Most capable', intelligence: 2, cost: 3, supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', provider: 'google', openClawRef: 'vercel-ai-gateway/google/gemini-3-flash', description: 'Fast & efficient', intelligence: 1.5, cost: 2, supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'google', openClawRef: 'vercel-ai-gateway/google/gemini-2.5-flash', description: 'Balanced', intelligence: 1.5, cost: 2, supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', provider: 'google', openClawRef: 'vercel-ai-gateway/google/gemini-2.5-flash-lite', description: 'Lightweight', intelligence: 1, cost: 1, supportsVision: true, supportsReasoning: true, supportsSearch: false },
   // OpenAI Models
-  { id: 'gpt-5.2-2025-12-11', name: 'GPT-5.2', provider: 'openai', openClawRef: 'vercel-ai-gateway/openai/gpt-5.2', description: 'Powerful', supportsVision: true, supportsReasoning: true, supportsSearch: false },
-  { id: 'gpt-5-mini-2025-08-07', name: 'GPT-5 Mini', provider: 'openai', openClawRef: 'vercel-ai-gateway/openai/gpt-5-mini', description: 'Compact', supportsVision: true, supportsReasoning: true, supportsSearch: false },
-  { id: 'gpt-5-nano-2025-08-07', name: 'GPT-5 Nano', provider: 'openai', openClawRef: 'vercel-ai-gateway/openai/gpt-5-nano', description: 'Fastest', supportsVision: true, supportsReasoning: true, supportsSearch: false },
-  { id: 'gpt-4.1-2025-04-14', name: 'GPT-4.1', provider: 'openai', openClawRef: 'vercel-ai-gateway/openai/gpt-4.1', description: 'Reliable', supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'gpt-5.2-2025-12-11', name: 'GPT-5.2', provider: 'openai', openClawRef: 'vercel-ai-gateway/openai/gpt-5.2', description: 'Powerful', intelligence: 2, cost: 3, supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'gpt-5-mini-2025-08-07', name: 'GPT-5 Mini', provider: 'openai', openClawRef: 'vercel-ai-gateway/openai/gpt-5-mini', description: 'Compact', intelligence: 1.5, cost: 2, supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'gpt-5-nano-2025-08-07', name: 'GPT-5 Nano', provider: 'openai', openClawRef: 'vercel-ai-gateway/openai/gpt-5-nano', description: 'Fastest', intelligence: 1, cost: 1, supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'gpt-4.1-2025-04-14', name: 'GPT-4.1', provider: 'openai', openClawRef: 'vercel-ai-gateway/openai/gpt-4.1', description: 'Reliable', intelligence: 1.5, cost: 2, supportsVision: true, supportsReasoning: true, supportsSearch: false },
   // Anthropic Models
-  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'anthropic', openClawRef: 'vercel-ai-gateway/anthropic/claude-opus-4.6', description: 'Most capable', supportsVision: true, supportsReasoning: true, supportsSearch: false },
-  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', openClawRef: 'vercel-ai-gateway/anthropic/claude-sonnet-4.6', description: 'Best balance', supportsVision: true, supportsReasoning: true, supportsSearch: false },
-  { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', provider: 'anthropic', openClawRef: 'vercel-ai-gateway/anthropic/claude-haiku-4.5', description: 'Fast & light', supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'anthropic', openClawRef: 'vercel-ai-gateway/anthropic/claude-opus-4.6', description: 'Most capable', intelligence: 2, cost: 3, supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', openClawRef: 'vercel-ai-gateway/anthropic/claude-sonnet-4.6', description: 'Best balance', intelligence: 1.75, cost: 2, supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', provider: 'anthropic', openClawRef: 'vercel-ai-gateway/anthropic/claude-haiku-4.5', description: 'Fast & light', intelligence: 1.25, cost: 1, supportsVision: true, supportsReasoning: true, supportsSearch: false },
   // xAI Models
-  { id: 'grok-4-1-fast-reasoning', name: 'Grok 4.1 Fast', provider: 'xai', openClawRef: 'vercel-ai-gateway/xai/grok-4.1-fast-reasoning', description: 'Fast reasoning', supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: 'grok-4-1-fast-reasoning', name: 'Grok 4.1 Fast', provider: 'xai', openClawRef: 'vercel-ai-gateway/xai/grok-4.1-fast-reasoning', description: 'Fast reasoning', intelligence: 1.5, cost: 2, supportsVision: true, supportsReasoning: true, supportsSearch: false },
   // Groq Models
-  { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', provider: 'groq', openClawRef: 'vercel-ai-gateway/meta/llama-3.3-70b', description: 'Versatile', supportsVision: false, supportsReasoning: false, supportsSearch: false },
-  { id: 'moonshotai/kimi-k2-0905', name: 'Kimi K2', provider: 'groq', openClawRef: 'vercel-ai-gateway/moonshotai/kimi-k2-0905', description: 'MoonShot AI', supportsVision: false, supportsReasoning: false, supportsSearch: false },
-  { id: 'openai/gpt-oss-120b', name: 'GPT OSS 120B', provider: 'groq', openClawRef: 'vercel-ai-gateway/openai/gpt-oss-120b', description: 'OpenAI OSS', supportsVision: false, supportsReasoning: false, supportsSearch: false },
-  { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', provider: 'groq', openClawRef: 'vercel-ai-gateway/openai/gpt-oss-20b', description: 'OpenAI OSS', supportsVision: false, supportsReasoning: false, supportsSearch: false },
+  { id: 'moonshotai/kimi-k2-0905', name: 'Kimi K2', provider: 'groq', openClawRef: 'vercel-ai-gateway/moonshotai/kimi-k2-0905', description: 'Long-context', intelligence: 1.5, cost: 1, supportsVision: false, supportsReasoning: true, supportsSearch: false },
+  { id: 'openai/gpt-oss-120b', name: 'GPT OSS 120B', provider: 'groq', openClawRef: 'vercel-ai-gateway/openai/gpt-oss-120b', description: 'Open weights', intelligence: 1.25, cost: 1, supportsVision: false, supportsReasoning: true, supportsSearch: false },
+  { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', provider: 'groq', openClawRef: 'vercel-ai-gateway/openai/gpt-oss-20b', description: 'Open weights', intelligence: 0.75, cost: 1, supportsVision: false, supportsReasoning: true, supportsSearch: false },
 
   // OpenRouter (free) — only the auto router; API id stays `openrouter/free` (do not send bare `free`).
-  { id: 'openrouter/free', name: 'Free Router', provider: 'openrouter', openClawRef: 'openrouter/free', description: 'Auto free model', supportsVision: false, supportsReasoning: false, supportsSearch: false },
+  { id: 'openrouter/free', name: 'Auto', provider: 'openrouter', openClawRef: 'openrouter/free', description: 'Auto-selects a free model', intelligence: 1.25, cost: 0, supportsVision: true, supportsReasoning: true, supportsSearch: false },
 ]
 
 export const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
@@ -75,7 +77,6 @@ export const CHAT_MODEL_QUALITY_PRIORITY: string[] = [
   'claude-haiku-4-5',
   'gemini-2.5-flash-lite',
   'gpt-5-nano-2025-08-07',
-  'llama-3.3-70b-versatile',
   'moonshotai/kimi-k2-0905',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
@@ -110,6 +111,22 @@ export function getChatModelDisplayName(modelId: string): string {
 
 export function getProviderModels(provider: ChatModel['provider']): ChatModel[] {
   return AVAILABLE_MODELS.filter((m) => m.provider === provider)
+}
+
+/** Models sorted by intelligence (CHAT_MODEL_QUALITY_PRIORITY order), with free router first when on free tier. */
+export function getModelsByIntelligence(isFreeTier: boolean): ChatModel[] {
+  const idxMap = new Map(CHAT_MODEL_QUALITY_PRIORITY.map((id, i) => [id, i]))
+  const sorted = [...AVAILABLE_MODELS].sort(
+    (a, b) => (idxMap.get(a.id) ?? 999) - (idxMap.get(b.id) ?? 999),
+  )
+  if (isFreeTier) {
+    const freeIdx = sorted.findIndex((m) => m.id === 'openrouter/free')
+    if (freeIdx > 0) {
+      const [free] = sorted.splice(freeIdx, 1)
+      sorted.unshift(free!)
+    }
+  }
+  return sorted
 }
 
 // ─── Image Models (priority order — top = highest priority fallback) ──────────

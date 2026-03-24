@@ -31,6 +31,10 @@ import { mergeReplyContextIntoMessagesForModel } from '@/lib/reply-context-for-m
 import { buildAssistantPersistenceFromSteps } from '@/lib/persist-assistant-turn'
 import { getInternalApiBaseUrl } from '@/lib/url'
 import { sanitizeUiMessagesForModelApi } from '@/lib/sanitize-ui-messages-for-model'
+import {
+  buildPersistedMessageContent,
+  sanitizeMessagePartsForPersistence,
+} from '@/lib/chat-message-persistence'
 import type { StepResult, ToolSet } from 'ai'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 
@@ -76,6 +80,7 @@ export async function POST(request: NextRequest) {
       systemPrompt,
       skipUserMessage,
       indexedFileNames,
+      attachmentNames,
       replyContextForModel,
     }: {
       messages: UIMessage[]
@@ -87,6 +92,7 @@ export async function POST(request: NextRequest) {
       skipUserMessage?: boolean
       /** Notebook files just indexed from chat attachments (this turn). */
       indexedFileNames?: string[]
+      attachmentNames?: string[]
       /** Thread reply context appended to last user turn for the model only. */
       replyContextForModel?: string
     } = await request.json()
@@ -147,7 +153,9 @@ export async function POST(request: NextRequest) {
           mediaType: 'mediaType' in part ? part.mediaType : undefined,
         }
       })
-    const latestUserContent = latestUserText || (latestUserParts?.some((part) => part.type === 'file') ? '[Image attachment]' : '')
+    const latestUserContent = buildPersistedMessageContent(undefined, latestUserParts, {
+      attachmentNames,
+    }) || latestUserText
 
     const cid = conversationId as Id<'conversations'> | undefined
     const tid = turnId?.trim()
@@ -218,9 +226,11 @@ export async function POST(request: NextRequest) {
         turnId: tid,
         role: 'user',
         mode: 'ask',
-        content: latestUserContent,
+        content: latestUserText || latestUserContent,
         contentType: 'text',
-        parts: latestUserParts,
+        parts: sanitizeMessagePartsForPersistence(latestUserParts, {
+          attachmentNames,
+        }),
         modelId: effectiveModelId,
       })
     }

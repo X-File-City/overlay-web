@@ -22,6 +22,10 @@ import { mergeReplyContextIntoMessagesForModel } from '@/lib/reply-context-for-m
 import { buildAssistantPersistenceFromSteps } from '@/lib/persist-assistant-turn'
 import { getInternalApiBaseUrl } from '@/lib/url'
 import { sanitizeUiMessagesForModelApi } from '@/lib/sanitize-ui-messages-for-model'
+import {
+  buildPersistedMessageContent,
+  sanitizeMessagePartsForPersistence,
+} from '@/lib/chat-message-persistence'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 
 function summarizeToolOutputForLog(output: unknown): string {
@@ -57,6 +61,7 @@ export async function POST(request: NextRequest) {
       turnId,
       modelId,
       indexedFileNames,
+      attachmentNames,
       replyContextForModel,
     }: {
       messages: UIMessage[]
@@ -65,6 +70,7 @@ export async function POST(request: NextRequest) {
       turnId?: string
       modelId?: string
       indexedFileNames?: string[]
+      attachmentNames?: string[]
       replyContextForModel?: string
     } = await request.json()
     const userId = session.user.id
@@ -122,7 +128,9 @@ export async function POST(request: NextRequest) {
           mediaType: 'mediaType' in part ? part.mediaType : undefined,
         }
       })
-    const latestUserContent = latestUserText || (latestUserParts?.some((p) => p.type === 'file') ? '[Image attachment]' : '')
+    const latestUserContent = buildPersistedMessageContent(undefined, latestUserParts, {
+      attachmentNames,
+    }) || latestUserText
 
     const cid = conversationId as Id<'conversations'> | undefined
     const tid = (turnId?.trim() || `act-${Date.now()}`)
@@ -135,9 +143,11 @@ export async function POST(request: NextRequest) {
           turnId: tid,
           role: 'user',
           mode: 'act',
-          content: latestUserContent,
+          content: latestUserText || latestUserContent,
           contentType: 'text',
-          parts: latestUserParts,
+          parts: sanitizeMessagePartsForPersistence(latestUserParts, {
+            attachmentNames,
+          }),
           modelId: effectiveModelId,
         })
         if (messages.filter((m) => m.role === 'user').length === 1) {

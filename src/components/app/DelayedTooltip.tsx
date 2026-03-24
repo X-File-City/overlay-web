@@ -6,7 +6,7 @@ const SHOW_DELAY_MS = 450
 
 /**
  * Tooltip with delayed show and immediate hide when the cursor leaves the wrapper.
- * @param side `top` = above the trigger (default). `bottom` = below (avoids clipping under page/header edges).
+ * @param side `top` = above (default). `bottom` = below. `left` = to the left (useful for right-aligned badges).
  */
 export function DelayedTooltip({
   label,
@@ -17,7 +17,7 @@ export function DelayedTooltip({
   label: string
   children: React.ReactNode
   className?: string
-  side?: 'top' | 'bottom'
+  side?: 'top' | 'bottom' | 'left'
 }) {
   const [open, setOpen] = useState(false)
   /** DOM timers use numeric handles; avoids NodeJS.Timeout vs number mismatch in client builds. */
@@ -46,10 +46,12 @@ export function DelayedTooltip({
       {open && (
         <span
           role="tooltip"
-          className={`pointer-events-none absolute left-1/2 z-[60] -translate-x-1/2 whitespace-nowrap rounded-md border border-[#e5e5e5] bg-[#f0f0f0] px-2 py-1 text-[11px] font-medium text-[#525252] shadow-sm ${
+          className={`pointer-events-none absolute z-70 whitespace-nowrap rounded-md border border-[#e5e5e5] bg-[#f0f0f0] px-2 py-1 text-[11px] font-medium text-[#525252] shadow-sm ${
             side === 'bottom'
-              ? 'top-full mt-1.5'
-              : 'bottom-full mb-1.5'
+              ? 'top-full mt-1.5 left-1/2 -translate-x-1/2'
+              : side === 'left'
+              ? 'right-full mr-1.5 top-1/2 -translate-y-1/2'
+              : 'bottom-full mb-1.5 left-1/2 -translate-x-1/2'
           }`}
         >
           {label}

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/workos-auth'
 import { convex } from '@/lib/convex'
+import {
+  buildPersistedMessageContent,
+  sanitizeMessagePartsForPersistence,
+} from '@/lib/chat-message-persistence'
 import type { Id } from '../../../../../../convex/_generated/dataModel'
 
 export async function POST(request: NextRequest) {
@@ -15,6 +19,7 @@ export async function POST(request: NextRequest) {
       role?: 'user' | 'assistant'
       content?: string
       parts?: Array<{ type: string; text?: string; url?: string; mediaType?: string }>
+      attachmentNames?: string[]
       model?: string
       modelId?: string
       contentType?: 'text' | 'image' | 'video'
@@ -23,9 +28,12 @@ export async function POST(request: NextRequest) {
       replySnippet?: string
     }
 
-    const normalizedParts = body.parts?.filter((part) => part.type === 'text' || part.type === 'file')
-    const normalizedContent = body.content?.trim() ||
-      (normalizedParts?.some((part) => part.type === 'file') ? '[Image attachment]' : '')
+    const normalizedParts = sanitizeMessagePartsForPersistence(body.parts, {
+      attachmentNames: body.attachmentNames,
+    })
+    const normalizedContent = buildPersistedMessageContent(body.content, body.parts, {
+      attachmentNames: body.attachmentNames,
+    })
 
     const turnId = body.turnId?.trim()
     if (!body.conversationId || !body.role || !normalizedContent || !turnId) {

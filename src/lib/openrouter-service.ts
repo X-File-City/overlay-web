@@ -8,9 +8,13 @@
 import type { UIMessage } from 'ai'
 import { convex } from '@/lib/convex'
 
+type OpenRouterContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
 export interface OpenRouterMessage {
   role: 'system' | 'user' | 'assistant'
-  content: string
+  content: string | OpenRouterContentPart[]
 }
 
 const OPENROUTER_RETRY_ATTEMPTS = 7
@@ -133,20 +137,53 @@ export function buildOpenRouterMessagesFromUi(
   for (const m of messages) {
     if (m.role !== 'user' && m.role !== 'assistant') continue
     const parts = m.parts ?? []
-    const textParts = parts.filter((p) => p.type === 'text')
-    const hasFile = parts.some((p) => p.type === 'file')
-    let content = textParts
+    if (m.role === 'user') {
+      const contentParts: OpenRouterContentPart[] = []
+      let hasUnsupportedFiles = false
+
+      for (const part of parts) {
+        if (part.type === 'text') {
+          const text = 'text' in part && typeof part.text === 'string' ? part.text : ''
+          if (text.trim()) contentParts.push({ type: 'text', text })
+          continue
+        }
+        if (part.type !== 'file') continue
+        const url = 'url' in part ? part.url : undefined
+        const mediaType = 'mediaType' in part ? part.mediaType : undefined
+        if (
+          typeof url === 'string' &&
+          url.length > 0 &&
+          typeof mediaType === 'string' &&
+          mediaType.startsWith('image/')
+        ) {
+          contentParts.push({ type: 'image_url', image_url: { url } })
+        } else {
+          hasUnsupportedFiles = true
+        }
+      }
+
+      if (hasUnsupportedFiles) {
+        contentParts.push({
+          type: 'text',
+          text: '[User attached non-image file(s) — describe or acknowledge as needed]',
+        })
+      }
+
+      if (contentParts.length === 0) {
+        contentParts.push({ type: 'text', text: '(empty message)' })
+      }
+
+      out.push({ role: m.role, content: contentParts })
+      continue
+    }
+
+    const content = parts
+      .filter((p) => p.type === 'text')
       .map((p) => ('text' in p && typeof p.text === 'string' ? p.text : ''))
       .join('\n')
-    if (hasFile && m.role === 'user') {
-      content = content
-        ? `${content}\n\n[User attached file(s) — describe or acknowledge as needed]`
-        : '[User attached file(s)]'
-    }
-    if (!content.trim() && m.role === 'user') {
-      content = '(empty message)'
-    }
-    if (m.role === 'assistant' && !content.trim()) continue
+      .trim()
+
+    if (!content) continue
     out.push({ role: m.role, content })
   }
   return out
