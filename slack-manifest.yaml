@@ -8,27 +8,27 @@ features:
     always_online: true
   slash_commands:
     - command: /ask
-      url: https://getoverlay.io/api/slack/slash/ask
+      url: https://your-public-app.example.com/api/slack/slash/ask
       description: Ask the AI a question
       usage_hint: "[your question]"
     - command: /note
-      url: https://getoverlay.io/api/slack/slash/note
+      url: https://your-public-app.example.com/api/slack/slash/note
       description: Save a note to Overlay
       usage_hint: "[content to save]"
     - command: /search
-      url: https://getoverlay.io/api/slack/slash/search
+      url: https://your-public-app.example.com/api/slack/slash/search
       description: Search your Overlay notes and memories
       usage_hint: "[search query]"
     - command: /summarize
-      url: https://getoverlay.io/api/slack/slash/summarize
+      url: https://your-public-app.example.com/api/slack/slash/summarize
       description: Summarize recent channel messages
     - command: /voice
-      url: https://getoverlay.io/api/slack/slash/voice
+      url: https://your-public-app.example.com/api/slack/slash/voice
       description: Get a link to Overlay voice transcription
 
 oauth_config:
   redirect_urls:
-    - https://getoverlay.io/api/slack/oauth/callback
+    - https://your-public-app.example.com/api/slack/oauth/callback
   scopes:
     bot:
       - chat:write
@@ -42,13 +42,13 @@ oauth_config:
 
 settings:
   event_subscriptions:
-    request_url: https://getoverlay.io/api/slack/events
+    request_url: https://your-public-app.example.com/api/slack/events
     bot_events:
       - message.im
       - app_mention
   interactivity:
     is_enabled: true
-    request_url: https://getoverlay.io/api/slack/events
+    request_url: https://your-public-app.example.com/api/slack/events
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

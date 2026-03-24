@@ -1,0 +1,57 @@
+name: Security Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  public-env-guard:
+    name: Guard Public Env Names
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Fail on public secret-like env vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          matches="$(
+            git grep -nE 'NEXT_PUBLIC_[A-Z0-9_]*(SECRET|TOKEN|KEY|PASSWORD)' -- \
+              . \
+              ':(exclude).env.example' \
+              ':(exclude)README.md' \
+              ':(exclude)ENV_SETUP.md' \
+              ':(exclude)TESTING_CHECKLIST.md' \
+              ':(exclude)docs/**' \
+              || true
+          )"
+
+          if [ -n "$matches" ]; then
+            echo "Forbidden public env variable names found:"
+            echo "$matches"
+            exit 1
+          fi
+
+          echo "No forbidden NEXT_PUBLIC_* secret-like variables found."

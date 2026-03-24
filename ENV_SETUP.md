@@ -1,75 +1,92 @@
-# Environment Variables Setup
+# Environment Setup
 
-## Landing Page (`overlay-landing/.env.local`)
+This document is safe for a public repository. Replace every hostname, deployment slug,
+and secret below with values that belong to your own environment.
 
-### Required Variables
+Start with `.env.example`, then fill in the environment files for the surfaces you use.
+
+## Web App (`overlay-landing/.env.local`)
 
 ```bash
-# Stripe Configuration
-STRIPE_SECRET_KEY=sk_test_...          # From Stripe Dashboard > API keys
-STRIPE_WEBHOOK_SECRET=whsec_...        # From Stripe Dashboard > Webhooks
+# Stripe
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
 
-# Convex Configuration (production deployment — Vercel prod / .env.production)
-NEXT_PUBLIC_CONVEX_URL=https://colorful-chickadee-419.convex.cloud
-
-# Convex dev deployment — local `next dev` and preview apps (optional but recommended)
-DEV_NEXT_PUBLIC_CONVEX_URL=https://different-caiman-77.convex.cloud
+# Convex
+NEXT_PUBLIC_CONVEX_URL=https://your-prod-deployment.convex.cloud
+DEV_NEXT_PUBLIC_CONVEX_URL=https://your-dev-deployment.convex.cloud
 
 # App URLs
-NEXT_PUBLIC_APP_URL=https://getoverlay.io
-DEV_NEXT_PUBLIC_APP_URL=https://your-overlay-dev.vercel.app   # Use your Vercel development deployment for auth in local dev
+NEXT_PUBLIC_APP_URL=https://your-public-app.example.com
+DEV_NEXT_PUBLIC_APP_URL=https://your-preview-app.example.com
+
+# Auth / server-to-server secrets
+SESSION_SECRET=replace-with-a-long-random-secret
+INTERNAL_API_SECRET=replace-with-another-long-random-secret
+
+# Optional integrations
+AI_GATEWAY_API_KEY=vgw_...
+WORKOS_CLIENT_ID=client_...
+WORKOS_API_KEY=sk_...
 ```
 
 ## Mobile App (`overlay-mobile/.env`)
 
 ```bash
-EXPO_PUBLIC_AUTH_BASE_URL=https://your-overlay-dev.vercel.app
-# Use prod or dev Convex URL to match your build (prod: colorful-chickadee-419; dev: different-caiman-77)
-EXPO_PUBLIC_CONVEX_URL=https://colorful-chickadee-419.convex.cloud
+EXPO_PUBLIC_AUTH_BASE_URL=https://your-public-app.example.com
+EXPO_PUBLIC_CONVEX_URL=https://your-prod-deployment.convex.cloud
 ```
 
-### Setting Up Stripe Products
+## Desktop / Electron App (`.env`)
 
-Your Stripe products should have the following **lookup keys** configured:
+```bash
+VITE_CONVEX_URL=https://your-prod-deployment.convex.cloud
+VITE_WORKOS_CLIENT_ID=client_...
+```
+
+## Convex Environment Variables
+
+Set the same sensitive values in Convex that your backend needs directly:
+
+```bash
+npx convex env set INTERNAL_API_SECRET "replace-with-a-long-random-secret"
+npx convex env set WORKOS_API_KEY "sk_..."
+npx convex env set WORKOS_CLIENT_ID "client_..."
+```
+
+If you edit files inside `convex/`, push both deployments:
+
+```bash
+npm run convex:push:all
+```
+
+## Stripe Setup
+
+Recommended lookup keys:
 
 | Product | Lookup Key | Price | Type |
-|---------|------------|-------|------|
+| --- | --- | --- | --- |
 | Pro | `pro_monthly` | $20/month | Subscription |
 | Max | `max_monthly` | $100/month | Subscription |
 
-To add lookup keys:
-1. Go to Stripe Dashboard > Products
-2. Click on each product > Edit price
-3. Add the lookup key in the "Lookup key" field
+Webhook endpoint example:
 
-### Setting Up Stripe Webhooks
+```text
+https://your-public-app.example.com/api/webhooks/stripe
+```
 
-1. Go to Stripe Dashboard > Developers > Webhooks
-2. Add endpoint: `https://your-domain.com/api/webhooks/stripe`
-3. Select events:
-   - `checkout.session.completed`
-   - `customer.subscription.created`
-   - `customer.subscription.updated`
-   - `customer.subscription.deleted`
-   - `invoice.payment_succeeded`
-   - `invoice.payment_failed`
-4. Copy the signing secret to `STRIPE_WEBHOOK_SECRET`
+For local development:
 
-For local development, use Stripe CLI:
 ```bash
 stripe listen --forward-to localhost:3000/api/webhooks/stripe
 ```
 
----
+## WorkOS / Vault Setup
 
-## Convex Backend (`convex/.env.local`)
+If you use WorkOS Vault for provider credentials, create secrets for the providers you
+enable and point Convex at those object IDs.
 
 ```bash
-# WorkOS Configuration (for API key fetching)
-WORKOS_API_KEY=sk_...                  # WorkOS API key
-WORKOS_CLIENT_ID=client_...            # WorkOS Client ID
-
-# Vault Object IDs (optional - defaults are used if not set)
 VAULT_ANTHROPIC_KEY_ID=api-key-anthropic
 VAULT_OPENAI_KEY_ID=api-key-openai
 VAULT_GOOGLE_KEY_ID=api-key-google
@@ -78,44 +95,12 @@ VAULT_XAI_KEY_ID=api-key-xai
 VAULT_OPENROUTER_KEY_ID=api-key-openrouter
 ```
 
-### Setting Up WorkOS Vault
+## Quick Checklist
 
-1. Go to WorkOS Dashboard > Vault
-2. Create secrets for each API key:
-   - `api-key-anthropic` → Your Anthropic API key
-   - `api-key-openai` → Your OpenAI API key
-   - `api-key-google` → Your Google AI API key
-   - `api-key-groq` → Your Groq API key
-   - `api-key-xai` → Your xAI API key
-   - `api-key-openrouter` → Your OpenRouter API key
-
-To set Convex environment variables:
-```bash
-npx convex env set WORKOS_API_KEY sk_...
-npx convex env set WORKOS_CLIENT_ID client_...
-```
-
----
-
-## Electron App (`.env`)
-
-The Electron app will fetch API keys from WorkOS Vault via Convex, so you only need:
-
-```bash
-# Convex Configuration (prod: colorful-chickadee-419; dev: different-caiman-77)
-VITE_CONVEX_URL=https://colorful-chickadee-419.convex.cloud
-
-# WorkOS Auth (already configured)
-VITE_WORKOS_CLIENT_ID=client_...
-```
-
----
-
-## Quick Start Checklist
-
-- [ ] Create Stripe products with lookup keys
-- [ ] Set up Stripe webhook endpoint
-- [ ] Add API keys to WorkOS Vault
-- [ ] Set Convex environment variables
-- [ ] Update `.env.local` in landing page
-- [ ] Test with Stripe CLI locally
+- [ ] Copy `.env.example` into your local env files
+- [ ] Create separate Convex prod and dev deployments
+- [ ] Set `SESSION_SECRET` and `INTERNAL_API_SECRET` everywhere they are required
+- [ ] Configure Stripe products and the Stripe webhook
+- [ ] Configure WorkOS auth and any Vault-backed provider keys
+- [ ] Run `npm run dev`
+- [ ] Run `npm run convex:push:all` after backend changes

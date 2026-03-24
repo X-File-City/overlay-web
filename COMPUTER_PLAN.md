@@ -1114,8 +1114,8 @@ export const createComputerCheckout = action({
     computerId: v.string(),   // passed as string — Convex IDs are strings
     userId: v.string(),
     email: v.optional(v.string()),
-    successUrl: v.string(),   // e.g. https://app.getoverlay.io/app/computer/{id}?paid=1
-    cancelUrl: v.string(),    // e.g. https://app.getoverlay.io/app/computer/new
+    successUrl: v.string(),   // e.g. https://your-public-app.example.com/app/computer/{id}?paid=1
+    cancelUrl: v.string(),    // e.g. https://your-public-app.example.com/app/computer/new
   },
   returns: v.object({
     sessionId: v.string(),

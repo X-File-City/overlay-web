@@ -1,43 +1,217 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Overlay Web App
 
-## Getting Started
+Overlay is a Next.js + Convex application that combines a public marketing site with a
+signed-in AI workspace. The product is centered around chat, notes, memories, knowledge,
+projects, media generation, Slack integrations, and a hosted "computer" workflow.
 
-First, run the development server:
+This repository contains the web surface for Overlay:
+
+- The landing site and pricing/legal pages.
+- The authenticated `/app/*` product experience.
+- Next.js API routes for auth, Stripe, Slack, file/media flows, and AI interactions.
+- The Convex backend schema and functions that power app data, usage tracking, and
+  server-side integrations.
+
+## What You Can Do In Overlay
+
+- Chat with multiple model providers.
+- Save and retrieve notes, memories, files, and project context.
+- Run "Ask" and "Act" flows with tool calling.
+- Generate images and videos.
+- Connect external tools through Composio.
+- Use Slack slash commands and Slack linking.
+- Manage subscriptions and entitlements with Stripe.
+- Provision and interact with hosted computer sessions.
+
+## Tech Stack
+
+- `Next.js 15` with the App Router.
+- `Convex` for backend functions, data, and realtime state.
+- `WorkOS` for authentication.
+- `Stripe` for billing and subscription events.
+- `Slack Bolt` and `@slack/web-api` for Slack integration.
+- `Vercel AI SDK` plus provider SDKs for OpenAI, Anthropic, Google, Groq, xAI, and OpenRouter.
+- `TipTap`, `react-markdown`, and KaTeX for rich editing and rendering.
+
+## Repository Layout
+
+```text
+.
+├── convex/                  # Backend schema, queries, mutations, actions, HTTP routes
+├── src/app/                 # Next.js pages, layouts, and API route handlers
+├── src/components/          # Marketing and app UI components
+├── src/lib/                 # Shared auth, model, tools, Stripe, Slack, and helper code
+├── scripts/                 # Sanity scripts and one-off checks
+├── docs/                    # Product and implementation docs
+├── ENV_SETUP.md             # Environment setup guide
+├── SECURITY.md              # Security policy and reporting guidance
+└── TESTING_CHECKLIST.md     # Manual Stripe/subscription test notes
+```
+
+## Important Product Areas
+
+### Public site
+
+- `/` is the animated landing page.
+- `/pricing`, `/manifesto`, `/privacy`, and `/terms` are public content pages.
+
+### Authenticated app
+
+- `/app/chat`
+- `/app/notes`
+- `/app/memories`
+- `/app/knowledge`
+- `/app/projects`
+- `/app/outputs`
+- `/app/integrations`
+- `/app/slack-connect`
+- `/app/voice`
+- `/app/computer`
+
+### Key API surfaces
+
+- `src/app/api/auth/*` for sign-in, SSO, callback, session, desktop/mobile handoff, and refresh.
+- `src/app/api/app/conversations/*` for Ask/Act chat flows.
+- `src/app/api/app/files/*`, `memory`, `notes`, `projects`, `skills`, and `outputs`.
+- `src/app/api/webhooks/stripe/route.ts` for Stripe webhooks.
+- `src/app/api/slack/*` for Slack OAuth, events, and slash commands.
+
+## Local Development
+
+### Prerequisites
+
+- Node.js 20+
+- npm
+- A Convex account and separate dev/prod deployments
+- WorkOS app credentials if you want auth enabled
+- Stripe test credentials if you want billing flows enabled
+
+### Install
+
+```bash
+npm install
+```
+
+### Configure environment variables
+
+1. Copy `.env.example` to the env files you need.
+2. Fill in the placeholders with your own deployment URLs and secrets.
+3. Read `ENV_SETUP.md` for the full setup matrix across web, Convex, mobile, and desktop.
+
+### Run the app
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Build locally
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run build
+npm run start
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Convex Workflow
 
-## Learn More
+This repo expects separate Convex environments for development and production.
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run convex:push:prod
+npm run convex:push:dev
+npm run convex:push:all
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+If you change anything inside `convex/`, push both deployments so the web app and backend
+stay aligned.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Available Commands
 
-## Deploy on Vercel
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Run the Next.js development server |
+| `npm run build` | Create a production build |
+| `npm run start` | Serve the production build |
+| `npm run lint` | Run ESLint |
+| `npm run test:model-routing` | Run the model routing sanity script |
+| `npm run test:unified-tools` | Run the unified tools sanity script |
+| `npm run convex:push:prod` | Push Convex changes to production |
+| `npm run convex:push:dev` | Push Convex changes to dev |
+| `npm run convex:push:all` | Push Convex changes to both deployments |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Ask / Act Tooling
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Overlay merges several tool layers into chat:
 
-## Unified chat tools (Ask / Act)
+- Overlay-native tools from `src/lib/tools/build.ts`
+- Composio tool integrations from `src/lib/composio-tools.ts`
+- AI Gateway / Perplexity search when enabled
 
-- **Registry:** Overlay-native tools live in `src/lib/tools/build.ts` (knowledge, notes, hosted computer, media in Act). Composio and AI Gateway `perplexity_search` are merged in `src/app/api/app/conversations/ask/route.ts` and `act/route.ts`.
-- **Audit / cost classes:** Successful and failed calls for Perplexity, image/video generation, and Composio tools are appended to the Convex `toolInvocations` table via `usage:recordToolInvocation` (see `src/lib/tools/record-tool-invocation.ts`). Cheap internal reads (e.g. `search_knowledge`, notes listings) are not logged there by default.
-- **Rollback:** Set `UNIFIED_TOOLS_ASK=false` to serve Ask with overlay tools only (no Composio, no Perplexity merge) if you need an emergency narrow surface.
-- **References:** [Vercel AI Gateway web search / Perplexity](https://vercel.com/docs/ai-gateway/capabilities/web-search), [OpenRouter + Vercel AI SDK](https://openrouter.ai/docs/guides/community/vercel-ai-sdk), [OpenRouter SDK tools (future generator/HITL)](https://openrouter.ai/docs/sdks/typescript/call-model/tools).
+Primary orchestration happens in:
+
+- `src/app/api/app/conversations/ask/route.ts`
+- `src/app/api/app/conversations/act/route.ts`
+
+Successful and failed tool calls can also be recorded into Convex usage/audit tables.
+
+## Models And Generation
+
+Model catalogs live in `src/lib/models.ts` and include:
+
+- Text chat models
+- Image generation models
+- Video generation models
+
+The app supports capability-aware model metadata such as:
+
+- reasoning
+- vision
+- search
+- cost tier
+
+## Integrations
+
+Overlay currently includes integration surfaces for:
+
+- WorkOS auth
+- Stripe billing
+- Slack app flows
+- Composio-connected tools
+- OpenRouter
+- Vercel AI Gateway
+
+## Security Notes
+
+- Public docs use placeholders instead of live deployment identifiers.
+- Local Cursor state files are ignored and should not be committed.
+- Transfer tokens are short-lived, encrypted before storage, and hashed for lookup.
+- Sensitive logs are redacted in the higher-risk chat and computer surfaces.
+- See `SECURITY.md` for reporting guidance and secure contribution expectations.
+
+## CI / Repository Safeguards
+
+GitHub Actions includes a security workflow that:
+
+- runs `gitleaks` for secret scanning
+- blocks `NEXT_PUBLIC_*` variables that look like secret-bearing env names
+
+## Open Source Expectations
+
+If you plan to contribute:
+
+- do not commit real secrets, tokens, or customer data
+- keep public docs on placeholders
+- treat `NEXT_PUBLIC_*` values as public
+- prefer adding new backend logic in `convex/` and corresponding web handlers in `src/app/api/`
+
+## Related Docs
+
+- `ENV_SETUP.md`
+- `SECURITY.md`
+- `TESTING_CHECKLIST.md`
+- `COMPUTER_PLAN.md`
+
+## Status
+
+This repository is actively evolving. Expect product-specific architecture, auth, billing,
+and tool integrations to change as the system is hardened and prepared for broader
+open-source collaboration.
