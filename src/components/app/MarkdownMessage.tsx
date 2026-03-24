@@ -308,90 +308,24 @@ function splitStreamingMarkdown(text: string): { completedBlocks: string[]; stre
   return { completedBlocks, streamTail: text.slice(offset) }
 }
 
-function splitStreamingTailForAnimation(
-  text: string,
-): { completedChunks: Array<{ key: string; text: string }>; activeChunk: string } {
-  const completedChunks: Array<{ key: string; text: string }> = []
-  let start = 0
-  let i = 0
-
-  while (i < text.length) {
-    const ch = text[i]!
-
-    if (ch === '\n') {
-      const chunk = text.slice(start, i + 1)
-      if (chunk) completedChunks.push({ key: `line-${i}`, text: chunk })
-      start = i + 1
-      i += 1
-      continue
-    }
-
-    if (ch === '.' || ch === '!' || ch === '?') {
-      let end = i + 1
-      while (end < text.length && `"'”’)]}`.includes(text[end]!)) end += 1
-
-      if (end >= text.length) break
-      if (!/\s/.test(text[end]!)) {
-        i += 1
-        continue
-      }
-
-      while (end < text.length && /\s/.test(text[end]!) && text[end] !== '\n') end += 1
-      const chunk = text.slice(start, end)
-      if (chunk) completedChunks.push({ key: `sent-${end}`, text: chunk })
-      start = end
-      i = end
-      continue
-    }
-
-    i += 1
-  }
-
-  return {
-    completedChunks,
-    activeChunk: text.slice(start),
-  }
-}
-
 export function MarkdownMessage({ text, isStreaming, sourceCitations, suppressTypingIndicator = false }: Props) {
   const hasCitationMap = !!(sourceCitations && Object.keys(sourceCitations).length > 0)
-  const normalizedLive = useMemo(
-    () => normalizeGeneratedMarkdown(text, { sourceCitations, linkifyCitations: false }),
-    [text, sourceCitations],
-  )
-  const normalizedFinal = useMemo(
-    () => normalizeGeneratedMarkdown(text, { sourceCitations, linkifyCitations: hasCitationMap }),
-    [text, sourceCitations, hasCitationMap],
+  const normalizedDisplay = useMemo(
+    () =>
+      normalizeGeneratedMarkdown(text, {
+        sourceCitations,
+        linkifyCitations: !isStreaming && hasCitationMap,
+      }),
+    [text, sourceCitations, isStreaming, hasCitationMap],
   )
   const { completedBlocks, streamTail } = useMemo(
-    () => (isStreaming ? splitStreamingMarkdown(normalizedLive) : { completedBlocks: [], streamTail: '' }),
-    [isStreaming, normalizedLive],
+    () => splitStreamingMarkdown(normalizedDisplay),
+    [normalizedDisplay],
   )
-  const { completedChunks, activeChunk } = useMemo(
-    () => (isStreaming ? splitStreamingTailForAnimation(streamTail) : { completedChunks: [], activeChunk: '' }),
-    [isStreaming, streamTail],
-  )
-  const hasBlocks = completedBlocks.length > 0
-  const showInlineTypingDots =
-    isStreaming && !suppressTypingIndicator && !hasBlocks && !streamTail.trim()
+  const trailingBlock = !isStreaming && streamTail.trim() ? streamTail.trim() : ''
+  const showInlineTypingDots = isStreaming && !suppressTypingIndicator
 
-  if (!isStreaming && normalizedFinal.trim()) {
-    return (
-      <div className="markdown-content">
-        <div className="md-block-appear">
-          <ReactMarkdown
-            remarkPlugins={markdownRemarkPlugins}
-            rehypePlugins={markdownRehypePlugins}
-            components={mdComponents}
-          >
-            {normalizedFinal}
-          </ReactMarkdown>
-        </div>
-      </div>
-    )
-  }
-
-  if (!isStreaming && !normalizedFinal.trim()) {
+  if (!normalizedDisplay.trim() && !isStreaming) {
     return null
   }
 
@@ -409,15 +343,15 @@ export function MarkdownMessage({ text, isStreaming, sourceCitations, suppressTy
         </div>
       ))}
 
-      {isStreaming && streamTail.trim() ? (
-        <div key="md-stream-tail" className="md-stream-tail whitespace-pre-wrap wrap-break-word text-inherit">
-          {/* Animate only finalized sentence/line chunks so the stream feels alive without reflow flicker. */}
-          {completedChunks.map((chunk) => (
-            <span key={chunk.key} className="md-inline-appear">
-              {chunk.text}
-            </span>
-          ))}
-          {activeChunk ? <span>{activeChunk}</span> : null}
+      {trailingBlock ? (
+        <div key={`md-block-${completedBlocks.length}`} className="md-block-appear">
+          <ReactMarkdown
+            remarkPlugins={markdownRemarkPlugins}
+            rehypePlugins={markdownRehypePlugins}
+            components={mdComponents}
+          >
+            {trailingBlock}
+          </ReactMarkdown>
         </div>
       ) : null}
 
