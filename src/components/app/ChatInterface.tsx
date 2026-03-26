@@ -1517,6 +1517,19 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     persistActiveRuntimeUiState()
   }, [persistActiveRuntimeUiState])
 
+  useEffect(() => {
+    if (!isFreeTier || activeChatId) return
+    const askAlreadyAuto =
+      selectedModels.length === 1 && selectedModels[0] === FREE_TIER_AUTO_MODEL_ID
+    const actAlreadyAuto = selectedActModel === FREE_TIER_AUTO_MODEL_ID
+    if (askAlreadyAuto && actAlreadyAuto) return
+
+    setSelectedModels([FREE_TIER_AUTO_MODEL_ID])
+    setSelectedActModel(FREE_TIER_AUTO_MODEL_ID)
+    localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify([FREE_TIER_AUTO_MODEL_ID]))
+    localStorage.setItem(ACT_MODEL_KEY, FREE_TIER_AUTO_MODEL_ID)
+  }, [activeChatId, isFreeTier, selectedActModel, selectedModels])
+
   // ── data loading ──────────────────────────────────────────────────────────
 
   const loadSubscription = useCallback(async () => {

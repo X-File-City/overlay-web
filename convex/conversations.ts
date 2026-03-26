@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { DEFAULT_MODEL_ID } from '../src/lib/models'
 import { mutation, query } from './_generated/server'
 import { Id } from './_generated/dataModel'
 import { requireAccessToken, validateServerSecret } from './lib/auth'
@@ -27,7 +28,7 @@ const messageParts = v.optional(v.array(messagePart))
 
 function clampAskModels(ids: string[]): string[] {
   const uniq = [...new Set(ids.filter(Boolean))]
-  if (uniq.length === 0) return ['claude-sonnet-4-6']
+  if (uniq.length === 0) return [DEFAULT_MODEL_ID]
   return uniq.slice(0, 4)
 }
 
@@ -108,8 +109,8 @@ export const create = mutation({
         throw new Error('Unauthorized')
       }
     }
-    const ask = clampAskModels(askModelIds ?? ['claude-sonnet-4-6'])
-    const act = actModelId?.trim() || ask[0] || 'claude-sonnet-4-6'
+    const ask = clampAskModels(askModelIds ?? [DEFAULT_MODEL_ID])
+    const act = actModelId?.trim() || ask[0] || DEFAULT_MODEL_ID
     const now = Date.now()
     return await ctx.db.insert('conversations', {
       userId,

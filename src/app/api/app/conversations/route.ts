@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getInternalApiSecret } from '@/lib/internal-api-secret'
+import { DEFAULT_MODEL_ID, FREE_TIER_AUTO_MODEL_ID } from '@/lib/models'
 import { getSession } from '@/lib/workos-auth'
 import { convex } from '@/lib/convex'
 import type { Id } from '../../../../../convex/_generated/dataModel'
@@ -141,6 +142,15 @@ export async function POST(request: NextRequest) {
     const session = await getSession()
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const serverSecret = getInternalApiSecret()
+    const entitlements = await convex.query<{ tier: 'free' | 'pro' | 'max' } | null>(
+      'usage:getEntitlementsByServer',
+      {
+        userId: session.user.id,
+        serverSecret,
+      },
+      { throwOnError: true },
+    )
+    const isFreeTier = entitlements?.tier === 'free'
     const body = await request.json() as {
       title?: string
       projectId?: string
@@ -153,8 +163,8 @@ export async function POST(request: NextRequest) {
       serverSecret,
       title: body.title || 'New Chat',
       projectId: body.projectId ?? undefined,
-      askModelIds: body.askModelIds,
-      actModelId: body.actModelId,
+      askModelIds: isFreeTier ? [FREE_TIER_AUTO_MODEL_ID] : body.askModelIds,
+      actModelId: isFreeTier ? FREE_TIER_AUTO_MODEL_ID : (body.actModelId ?? body.askModelIds?.[0] ?? DEFAULT_MODEL_ID),
       lastMode: body.lastMode,
     })
     return NextResponse.json({ id })

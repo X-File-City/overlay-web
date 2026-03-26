@@ -7,6 +7,7 @@ import {
   BookOpen, FileText, Upload, FolderPlus, Loader2, Trash2, ArrowLeft,
 } from 'lucide-react'
 import { CHAT_TITLE_UPDATED_EVENT, type ChatTitleUpdatedDetail } from '@/lib/chat-title'
+import { DEFAULT_MODEL_ID } from '@/lib/models'
 import { getFileType } from './FileViewer'
 
 /** Align chevron column + icon column across folders, chats, notes, and files */
@@ -519,8 +520,8 @@ export default function ProjectsSidebar() {
       body: JSON.stringify({
         title: 'New Chat',
         projectId: selectedProject._id,
-        askModelIds: ['claude-sonnet-4-6'],
-        actModelId: 'claude-sonnet-4-6',
+        askModelIds: [DEFAULT_MODEL_ID],
+        actModelId: DEFAULT_MODEL_ID,
         lastMode: 'ask',
       }),
     })
