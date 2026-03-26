@@ -903,6 +903,8 @@ export default function ComputerDetailClient({
   const openTerminal = useCallback(async () => {
     if (showTerminalPanel) {
       setShowTerminalPanel(false)
+      setTerminalUrl(null)
+      setTerminalError(null)
       return
     }
 
@@ -912,7 +914,11 @@ export default function ComputerDetailClient({
 
     setIsOpeningTerminal(true)
     try {
-      const response = await fetch(`/api/app/computer-terminal?computerId=${computerId}`)
+      await fetch('/api/app/computer-terminal/socket', { cache: 'no-store' })
+
+      const response = await fetch(`/api/app/computer-terminal?computerId=${computerId}`, {
+        cache: 'no-store',
+      })
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null
         setTerminalError(payload?.error || 'Terminal is not available yet. Try again in a moment.')
@@ -1525,57 +1531,77 @@ export default function ComputerDetailClient({
           )}
 
           {showTerminalPanel && (
-            <div className="h-[40vh] min-h-[280px] shrink-0 border-t border-[#dcdcdc] bg-[#111]">
-              <div className="flex h-10 items-center justify-between border-b border-white/10 px-4 text-xs text-[#d6d6d6]">
-                <div className="flex items-center gap-2">
-                  <Terminal size={13} />
-                  <span>VPS Terminal</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowTerminalPanel(false)}
-                  className="rounded-md px-2 py-1 text-[#b8b8b8] transition-colors hover:bg-white/10 hover:text-white"
-                >
-                  Close
-                </button>
-              </div>
-
-              <div className="h-[calc(100%-2.5rem)]">
-                {isOpeningTerminal && !terminalUrl ? (
-                  <div className="flex h-full items-center justify-center gap-2 text-sm text-[#b8b8b8]">
-                    <Loader2 size={16} className="animate-spin" />
-                    Connecting terminal...
+            <div className="shrink-0 px-4 pb-4">
+              <div className="overflow-hidden rounded-[22px] border border-[#e7e7e7] bg-white shadow-[0_18px_44px_rgba(0,0,0,0.07)]">
+                <div className="flex items-center justify-between border-b border-[#ececec] bg-[#fcfcfc] px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f1f1] text-[#202020]">
+                      <Terminal size={14} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[12px] font-medium tracking-[-0.01em] text-[#111]">VPS Terminal</p>
+                      <p className="text-[11px] text-[#8a8a8a]">Interactive shell rooted in the computer workspace</p>
+                    </div>
                   </div>
-                ) : terminalError ? (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-                    <p className="max-w-md text-sm text-[#d6d6d6]">{terminalError}</p>
+
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-[#ececec] bg-white px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] text-[#7a7a7a]">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#0a0a0a]" />
+                      Live
+                    </span>
                     <button
                       type="button"
                       onClick={() => {
-                        setTerminalUrl(null)
                         setShowTerminalPanel(false)
-                        void openTerminal()
+                        setTerminalUrl(null)
+                        setTerminalError(null)
                       }}
-                      className="rounded-md border border-white/15 px-3 py-1.5 text-xs text-white transition-colors hover:bg-white/10"
+                      className="rounded-full border border-[#e8e8e8] bg-white px-3 py-1.5 text-[11px] font-medium text-[#555] transition-colors hover:border-[#d8d8d8] hover:bg-[#f7f7f7] hover:text-[#111]"
                     >
-                      Retry
+                      Close
                     </button>
                   </div>
-                ) : terminalUrl ? (
-                  <iframe
-                    key={terminalUrl}
-                    ref={terminalFrameRef}
-                    src={terminalUrl}
-                    title="Computer terminal"
-                    className="h-full w-full border-0 bg-[#111]"
-                    allow="clipboard-read; clipboard-write"
-                    onLoad={() => terminalFrameRef.current?.focus()}
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-[#b8b8b8]">
-                    Terminal is not available yet.
+                </div>
+
+                <div className="bg-[linear-gradient(180deg,#17181c_0%,#0d0d0f_100%)] p-2.5">
+                  <div className="h-[40vh] min-h-[300px] overflow-hidden rounded-[16px] border border-white/10 bg-[#111] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                    {isOpeningTerminal && !terminalUrl ? (
+                      <div className="flex h-full items-center justify-center gap-2 text-sm text-[#b8b8b8]">
+                        <Loader2 size={16} className="animate-spin" />
+                        Connecting terminal...
+                      </div>
+                    ) : terminalError ? (
+                      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                        <p className="max-w-md text-sm text-[#d6d6d6]">{terminalError}</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTerminalUrl(null)
+                            setShowTerminalPanel(false)
+                            void openTerminal()
+                          }}
+                          className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-white transition-colors hover:bg-white/10"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : terminalUrl ? (
+                      <iframe
+                        key={terminalUrl}
+                        ref={terminalFrameRef}
+                        src={terminalUrl}
+                        title="Computer terminal"
+                        className="h-full w-full border-0 bg-[#111]"
+                        allow="clipboard-read; clipboard-write"
+                        onLoad={() => terminalFrameRef.current?.focus()}
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-sm text-[#b8b8b8]">
+                        Terminal is not available yet.
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             </div>
           )}

@@ -1,27 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/workos-auth'
 import { getInternalApiSecret } from '@/lib/internal-api-secret'
+import { createComputerTerminalBridgeToken } from '@/lib/computer-terminal-bridge'
 import { convex } from '@/lib/convex'
-
-function normalizeTerminalUrl(terminalUrl: string): string {
-  try {
-    const parsed = new URL(terminalUrl)
-    const token = parsed.searchParams.get('token')?.trim()
-    if (!token) {
-      return terminalUrl
-    }
-
-    parsed.username = 'overlay'
-    parsed.password = token
-    parsed.searchParams.delete('token')
-    if (!parsed.pathname || parsed.pathname === '') {
-      parsed.pathname = '/'
-    }
-    return parsed.toString()
-  } catch {
-    return terminalUrl
-  }
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -44,8 +25,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Terminal is not available yet.' }, { status: 503 })
     }
 
+    const bridge = createComputerTerminalBridgeToken({
+      computerId,
+      userId: session.user.id,
+    })
+
     return NextResponse.json({
-      terminalUrl: normalizeTerminalUrl(result.terminalUrl),
+      terminalUrl: `/api/app/computer-terminal/view?bridge=${encodeURIComponent(bridge)}`,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to get terminal access'
