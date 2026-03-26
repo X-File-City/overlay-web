@@ -19,6 +19,14 @@ const TAG = '[Computer]'
 const stripeClient = new StripeSubscriptions(components.stripe, {})
 const textEncoder = new TextEncoder()
 
+function generateGatewayToken(): string {
+  return crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')
+}
+
+function generateReadySecret(): string {
+  return crypto.randomUUID().replace(/-/g, '')
+}
+
 function getRequiredHetznerSshKeyId(): number {
   const raw = process.env.HETZNER_SSH_KEY_ID?.trim()
   if (!raw) {
@@ -102,14 +110,19 @@ export const create = mutation({
     name: v.string(),
     region: v.union(v.literal('eu-central'), v.literal('us-east')),
     userId: v.string(),
-    accessToken: v.string(),
+    accessToken: v.optional(v.string()),
+    serverSecret: v.optional(v.string()),
   },
   returns: v.id('computers'),
   handler: async (ctx, args) => {
     console.log(
       `${TAG} create — region=${args.region} name=${summarizeTextForLog(args.name)}`
     )
-    await requireAccessToken(args.accessToken, args.userId)
+    await authorizeUserAccess({
+      accessToken: args.accessToken,
+      serverSecret: args.serverSecret,
+      userId: args.userId,
+    })
     const trimmedName = args.name.trim()
     if (!trimmedName) {
       throw new Error('Computer name is required')
@@ -125,10 +138,8 @@ export const create = mutation({
     if (duplicate) {
       throw new Error('You already have a computer with this name. Choose a different name.')
     }
-    const gatewayToken =
-      crypto.randomUUID().replace(/-/g, '') +
-      crypto.randomUUID().replace(/-/g, '')
-    const readySecret = crypto.randomUUID().replace(/-/g, '')
+    const gatewayToken = generateGatewayToken()
+    const readySecret = generateReadySecret()
     const id = await ctx.db.insert('computers', {
       userId: args.userId,
       name: trimmedName,
@@ -191,6 +202,28 @@ export const setProvisioningInfo = internalMutation({
   },
 })
 
+export const beginProvisioning: ReturnType<typeof internalMutation> = internalMutation({
+  args: { computerId: v.id('computers') },
+  handler: async (ctx, { computerId }): Promise<boolean> => {
+    console.log(`${TAG} beginProvisioning — computerId=${redactIdentifierForLog(computerId)}`)
+    const computer = await ctx.db.get(computerId)
+    if (!computer) {
+      throw new Error('Computer not found')
+    }
+    if (computer.status !== 'pending_payment') {
+      console.log(`${TAG} beginProvisioning — SKIP status=${computer.status}`)
+      return false
+    }
+    await ctx.db.patch(computerId, {
+      status: 'provisioning',
+      provisioningStep: 'creating_server',
+      updatedAt: Date.now(),
+    })
+    console.log(`${TAG} beginProvisioning — DONE status=provisioning step=creating_server`)
+    return true
+  },
+})
+
 export const setProvisioningStep = internalMutation({
   args: { computerId: v.id('computers'), step: v.string() },
   handler: async (ctx, args) => {
@@ -249,6 +282,43 @@ export const setError = internalMutation({
   },
 })
 
+export const resetForRepair = internalMutation({
+  args: { computerId: v.id('computers') },
+  returns: v.object({
+    oldHetznerServerId: v.optional(v.number()),
+    oldHetznerFirewallId: v.optional(v.number()),
+  }),
+  handler: async (ctx, args) => {
+    console.warn(`${TAG} resetForRepair — computerId=${redactIdentifierForLog(args.computerId)}`)
+    const computer = await ctx.db.get(args.computerId)
+    if (!computer) {
+      throw new Error('Computer not found')
+    }
+
+    const oldHetznerServerId = computer.hetznerServerId
+    const oldHetznerFirewallId = computer.hetznerFirewallId
+
+    await ctx.db.patch(args.computerId, {
+      status: 'provisioning',
+      provisioningStep: 'creating_server',
+      errorMessage: undefined,
+      hetznerServerId: undefined,
+      hetznerServerIp: undefined,
+      hetznerFirewallId: undefined,
+      gatewayToken: generateGatewayToken(),
+      readySecret: generateReadySecret(),
+      chatSessionKey: undefined,
+      chatRequestedModelRef: undefined,
+      chatEffectiveModel: undefined,
+      chatEffectiveProvider: undefined,
+      chatModelResolvedAt: undefined,
+      updatedAt: Date.now(),
+    })
+
+    return { oldHetznerServerId, oldHetznerFirewallId }
+  },
+})
+
 export const setPastDue = internalMutation({
   args: { computerId: v.id('computers') },
   handler: async (ctx, args) => {
@@ -289,6 +359,8 @@ export const logEvent = internalMutation({
     computerId: v.id('computers'),
     type: v.string(),
     message: v.string(),
+    sessionKey: v.optional(v.string()),
+    sessionTitle: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     console.log(
@@ -298,6 +370,8 @@ export const logEvent = internalMutation({
       computerId: args.computerId,
       type: args.type,
       message: args.message,
+      sessionKey: args.sessionKey,
+      sessionTitle: args.sessionTitle,
       createdAt: Date.now(),
     })
   },
@@ -323,6 +397,108 @@ export const get = query({
     const computer = await ctx.db.get(args.computerId)
     if (!computer || computer.userId !== args.userId) return null
     return { ...computer, gatewayToken: undefined, readySecret: undefined }
+  },
+})
+
+export const activatePaidComputer: ReturnType<typeof action> = action({
+  args: {
+    computerId: v.id('computers'),
+    stripeSubscriptionId: v.string(),
+    stripeCustomerId: v.string(),
+    serverSecret: v.string(),
+  },
+  returns: v.object({
+    status: v.string(),
+  }),
+  handler: async (ctx, args): Promise<{ status: string }> => {
+    if (!validateServerSecret(args.serverSecret)) {
+      throw new Error('Unauthorized')
+    }
+
+    const existingComputer = await ctx.runQuery(internal.computers.getInternal, {
+      computerId: args.computerId,
+    }) as { status: string } | null
+
+    if (!existingComputer) {
+      throw new Error('Computer not found')
+    }
+
+    await ctx.runMutation(internal.computers.setStripeInfo, {
+      computerId: args.computerId,
+      stripeSubscriptionId: args.stripeSubscriptionId,
+      stripeCustomerId: args.stripeCustomerId,
+    })
+
+    if (existingComputer.status === 'pending_payment') {
+      await ctx.runAction(internal.computers.provisionComputer, {
+        computerId: args.computerId,
+      })
+    }
+
+    const updatedComputer = await ctx.runQuery(internal.computers.getInternal, {
+      computerId: args.computerId,
+    }) as { status?: string } | null
+
+    return {
+      status: updatedComputer?.status ?? existingComputer.status,
+    }
+  },
+})
+
+export const repairComputerInstance = action({
+  args: {
+    computerId: v.id('computers'),
+    userId: v.string(),
+    accessToken: v.string(),
+  },
+  returns: v.object({
+    queued: v.boolean(),
+    status: v.string(),
+  }),
+  handler: async (ctx, { computerId, userId, accessToken }) => {
+    console.warn(
+      `${TAG} repairComputerInstance — START computerId=${redactIdentifierForLog(computerId)}`
+    )
+
+    await requireAccessToken(accessToken, userId)
+
+    const computer = await ctx.runQuery(internal.computers.getInternal, { computerId })
+    if (!computer || computer.userId !== userId) {
+      throw new Error('Computer not found')
+    }
+
+    if (computer.status === 'deleted') {
+      throw new Error('Computer has been deleted')
+    }
+
+    const reset = await ctx.runMutation(internal.computers.resetForRepair, {
+      computerId,
+    })
+
+    await ctx.runMutation(internal.computers.logEvent, {
+      computerId,
+      type: 'status_change',
+      message: 'Gateway was unreachable. Reprovisioning this computer now.',
+    })
+
+    if (reset.oldHetznerServerId || reset.oldHetznerFirewallId) {
+      await ctx.scheduler.runAfter(
+        1000,
+        internal.computers.cleanupDetachedComputerResources,
+        {
+          computerId,
+          hetznerServerId: reset.oldHetznerServerId,
+          hetznerFirewallId: reset.oldHetznerFirewallId,
+        }
+      )
+    }
+
+    await ctx.runAction(internal.computers.provisionComputer, { computerId })
+
+    console.warn(
+      `${TAG} repairComputerInstance — QUEUED computerId=${redactIdentifierForLog(computerId)}`
+    )
+    return { queued: true, status: 'provisioning' }
   },
 })
 
@@ -398,10 +574,14 @@ export const resolveForChatTools = query({
 })
 
 export const list = query({
-  args: { userId: v.string(), accessToken: v.string() },
+  args: {
+    userId: v.string(),
+    accessToken: v.optional(v.string()),
+    serverSecret: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     try {
-      await requireAccessToken(args.accessToken, args.userId)
+      await authorizeUserAccess(args)
     } catch {
       return []
     }
@@ -415,10 +595,15 @@ export const list = query({
 })
 
 export const listEvents = query({
-  args: { computerId: v.id('computers'), userId: v.string(), accessToken: v.string() },
+  args: {
+    computerId: v.id('computers'),
+    userId: v.string(),
+    accessToken: v.optional(v.string()),
+    serverSecret: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     try {
-      await requireAccessToken(args.accessToken, args.userId)
+      await authorizeUserAccess(args)
     } catch {
       return []
     }
@@ -462,9 +647,43 @@ export const listChatMessages = query({
             ? 'user'
             : 'assistant',
         content: event.message,
+        sessionKey: event.sessionKey,
+        sessionTitle: event.sessionTitle,
         createdAt: event.createdAt,
         isError: event.type === 'chat_error',
       }))
+  },
+})
+
+export const listSessionEvents = query({
+  args: {
+    computerId: v.id('computers'),
+    userId: v.string(),
+    accessToken: v.optional(v.string()),
+    serverSecret: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    try {
+      await authorizeUserAccess(args)
+    } catch {
+      return []
+    }
+
+    const computer = await ctx.db.get(args.computerId)
+    if (!computer || computer.userId !== args.userId) return []
+
+    const events = await ctx.db
+      .query('computerEvents')
+      .withIndex('by_computerId_createdAt', (q) => q.eq('computerId', args.computerId))
+      .order('asc')
+      .collect()
+
+    return events.filter((event) =>
+      Boolean(event.sessionKey) ||
+      event.type === 'chat_user' ||
+      event.type === 'chat_assistant' ||
+      event.type === 'chat_error'
+    )
   },
 })
 
@@ -506,6 +725,30 @@ export const getChatConnection = query({
   },
 })
 
+export const getTerminalAccess = query({
+  args: {
+    computerId: v.id('computers'),
+    userId: v.string(),
+    accessToken: v.optional(v.string()),
+    serverSecret: v.optional(v.string()),
+  },
+  returns: v.object({ terminalUrl: v.string() }),
+  handler: async (ctx, args): Promise<{ terminalUrl: string }> => {
+    await authorizeUserAccess(args)
+    const computer = await ctx.runQuery(internal.computers.getInternal, { computerId: args.computerId })
+    if (!computer || computer.userId !== args.userId) {
+      throw new Error('Computer not found')
+    }
+    if (computer.status !== 'ready' || !computer.hetznerServerIp || !computer.gatewayToken) {
+      throw new Error('Computer is not ready')
+    }
+    const terminalToken = computer.gatewayToken.slice(0, 32)
+    return {
+      terminalUrl: `http://overlay:${terminalToken}@${computer.hetznerServerIp}:18790/`,
+    }
+  },
+})
+
 export const addChatMessage = mutation({
   args: {
     computerId: v.id('computers'),
@@ -514,6 +757,8 @@ export const addChatMessage = mutation({
     serverSecret: v.optional(v.string()),
     role: v.union(v.literal('user'), v.literal('assistant')),
     content: v.string(),
+    sessionKey: v.optional(v.string()),
+    sessionTitle: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await authorizeUserAccess(args)
@@ -532,6 +777,8 @@ export const addChatMessage = mutation({
       computerId: args.computerId,
       type: args.role === 'user' ? 'chat_user' : 'chat_assistant',
       message: content,
+      sessionKey: args.sessionKey,
+      sessionTitle: args.sessionTitle,
       createdAt: Date.now(),
     })
 
@@ -546,6 +793,7 @@ export const addChatError = mutation({
     accessToken: v.optional(v.string()),
     serverSecret: v.optional(v.string()),
     message: v.string(),
+    sessionKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await authorizeUserAccess(args)
@@ -559,6 +807,39 @@ export const addChatError = mutation({
       computerId: args.computerId,
       type: 'chat_error',
       message: args.message,
+      sessionKey: args.sessionKey,
+      createdAt: Date.now(),
+    })
+
+    return { ok: true }
+  },
+})
+
+export const recordSessionEvent = mutation({
+  args: {
+    computerId: v.id('computers'),
+    userId: v.string(),
+    accessToken: v.optional(v.string()),
+    serverSecret: v.optional(v.string()),
+    type: v.string(),
+    message: v.string(),
+    sessionKey: v.string(),
+    sessionTitle: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await authorizeUserAccess(args)
+
+    const computer = await ctx.db.get(args.computerId)
+    if (!computer || computer.userId !== args.userId) {
+      throw new Error('Computer not found')
+    }
+
+    await ctx.db.insert('computerEvents', {
+      computerId: args.computerId,
+      type: args.type,
+      message: args.message,
+      sessionKey: args.sessionKey,
+      sessionTitle: args.sessionTitle,
       createdAt: Date.now(),
     })
 
@@ -912,37 +1193,46 @@ export const provisionComputer = internalAction({
       `${TAG} provisionComputer — loaded computer region=${computer.region} status=${computer.status} name=${summarizeTextForLog(computer.name)}`
     )
 
-    const HETZNER_TOKEN = process.env.HETZNER_API_TOKEN!
-    const CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL!
-    const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY!
-    const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
-
-    if (!HETZNER_TOKEN) console.error(`${TAG} provisionComputer — WARNING: HETZNER_API_TOKEN is not set`)
-    if (!CONVEX_HTTP_URL) console.error(`${TAG} provisionComputer — WARNING: CONVEX_HTTP_URL is not set`)
-    if (!AI_GATEWAY_API_KEY) console.error(`${TAG} provisionComputer — WARNING: AI_GATEWAY_API_KEY is not set`)
-    if (!AI_GATEWAY_API_KEY) throw new Error('AI_GATEWAY_API_KEY is not configured')
-
-    const location = 'ash'
-    const sshKeyId = getRequiredHetznerSshKeyId()
-    const sshSourceIps = getRequiredHetznerSshSourceIps()
-    console.log(`${TAG} provisionComputer — using Hetzner location=${location} for region=${computer.region}`)
-
-    const userdata = buildCloudInit({
-      gatewayToken: computer.gatewayToken!,
-      hooksToken: await deriveHooksToken(computer.gatewayToken!),
-      readySecret: computer.readySecret!,
-      computerId: computerId,
-      convexHttpUrl: CONVEX_HTTP_URL,
-      aiGatewayApiKey: AI_GATEWAY_API_KEY,
-      openrouterApiKey: OPENROUTER_API_KEY,
-    })
-    console.log(`${TAG} provisionComputer — cloud-init built (${userdata.length} chars)`)
+    if (computer.status !== 'pending_payment') {
+      console.log(`${TAG} provisionComputer — SKIP status=${computer.status}`)
+      return
+    }
 
     try {
-      await ctx.runMutation(internal.computers.setProvisioningStep, { computerId, step: 'creating_server' })
+      const claimed = await ctx.runMutation(internal.computers.beginProvisioning, { computerId }) as boolean
+      if (!claimed) {
+        console.log(`${TAG} provisionComputer — SKIP: computer already claimed for provisioning`)
+        return
+      }
+
+      const HETZNER_TOKEN = process.env.HETZNER_API_TOKEN!
+      const CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL!
+      const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY!
+      const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
+
+      if (!HETZNER_TOKEN) console.error(`${TAG} provisionComputer — WARNING: HETZNER_API_TOKEN is not set`)
+      if (!CONVEX_HTTP_URL) console.error(`${TAG} provisionComputer — WARNING: CONVEX_HTTP_URL is not set`)
+      if (!AI_GATEWAY_API_KEY) console.error(`${TAG} provisionComputer — WARNING: AI_GATEWAY_API_KEY is not set`)
+      if (!AI_GATEWAY_API_KEY) throw new Error('AI_GATEWAY_API_KEY is not configured')
+
+      const location = 'ash'
+      const sshKeyId = getRequiredHetznerSshKeyId()
+      const sshSourceIps = getRequiredHetznerSshSourceIps()
+      console.log(`${TAG} provisionComputer — using Hetzner location=${location} for region=${computer.region}`)
+
+      const userdata = buildCloudInit({
+        gatewayToken: computer.gatewayToken!,
+        hooksToken: await deriveHooksToken(computer.gatewayToken!),
+        readySecret: computer.readySecret!,
+        computerId: computerId,
+        convexHttpUrl: CONVEX_HTTP_URL,
+        aiGatewayApiKey: AI_GATEWAY_API_KEY,
+        openrouterApiKey: OPENROUTER_API_KEY,
+      })
+      console.log(`${TAG} provisionComputer — cloud-init built (${userdata.length} chars)`)
 
       // ── Step 1: Create firewall first so we can attach it at server creation ─
-      console.log(`${TAG} provisionComputer — calling Hetzner POST /v1/firewalls (ports 22, 18789)`)
+      console.log(`${TAG} provisionComputer — calling Hetzner POST /v1/firewalls (ports 22, 18789, 18790)`)
       const fwRes = await retryFetch(
         'https://api.hetzner.cloud/v1/firewalls',
         {
@@ -956,6 +1246,7 @@ export const provisionComputer = internalAction({
             rules: [
               { direction: 'in', protocol: 'tcp', port: '22',    source_ips: sshSourceIps },
               { direction: 'in', protocol: 'tcp', port: '18789', source_ips: ['0.0.0.0/0', '::/0'] },
+              { direction: 'in', protocol: 'tcp', port: '18790', source_ips: ['0.0.0.0/0', '::/0'] },
             ],
           }),
         }
@@ -1130,6 +1421,76 @@ export const teardownComputer = internalAction({
   },
 })
 
+export const confirmGatewayReadyExternally = internalAction({
+  args: {
+    computerId: v.id('computers'),
+    readySecret: v.string(),
+  },
+  returns: v.object({
+    ok: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    console.log(
+      `${TAG} confirmGatewayReadyExternally — START computerId=${redactIdentifierForLog(args.computerId)}`
+    )
+
+    const computer = await ctx.runQuery(internal.computers.getInternal, {
+      computerId: args.computerId,
+    })
+
+    if (!computer) {
+      throw new Error('Computer not found')
+    }
+
+    if (computer.readySecret !== args.readySecret) {
+      throw new Error('Invalid readySecret')
+    }
+
+    if (!computer.hetznerServerIp || !computer.gatewayToken) {
+      throw new Error('Computer is missing gateway connection details')
+    }
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      try {
+        const response = await fetch(`http://${computer.hetznerServerIp}:18789/healthz`, {
+          signal: AbortSignal.timeout(5000),
+          headers: { Authorization: `Bearer ${computer.gatewayToken}` },
+        })
+
+        console.log(
+          `${TAG} confirmGatewayReadyExternally — attempt=${attempt + 1} status=${response.status}`
+        )
+
+        if (response.ok) {
+          await ctx.runMutation(internal.computers.setReady, {
+            computerId: args.computerId,
+            readySecret: args.readySecret,
+          })
+          await ctx.runMutation(internal.computers.logEvent, {
+            computerId: args.computerId,
+            type: 'status_change',
+            message: 'OpenClaw gateway is externally reachable and ready.',
+          })
+          return { ok: true }
+        }
+      } catch (error) {
+        console.warn(
+          `${TAG} confirmGatewayReadyExternally — attempt=${attempt + 1} failed: ${summarizeErrorForLog(error)}`
+        )
+      }
+
+      await sleep(5000)
+    }
+
+    await ctx.runMutation(internal.computers.logEvent, {
+      computerId: args.computerId,
+      type: 'status_change',
+      message: 'Gateway reported local health but external reachability is still pending.',
+    })
+    return { ok: false }
+  },
+})
+
 export const deleteComputerInstance = action({
   args: {
     computerId: v.id('computers'),
@@ -1262,6 +1623,36 @@ export const deleteComputerResources = internalAction({
     await ctx.runMutation(internal.computers.deleteComputer, { computerId })
     console.log(
       `${TAG} deleteComputerResources — COMPLETE computerId=${redactIdentifierForLog(computerId)}`
+    )
+  },
+})
+
+export const cleanupDetachedComputerResources = internalAction({
+  args: {
+    computerId: v.id('computers'),
+    hetznerServerId: v.optional(v.number()),
+    hetznerFirewallId: v.optional(v.number()),
+  },
+  handler: async (_ctx, args) => {
+    console.log(
+      `${TAG} cleanupDetachedComputerResources — START computerId=${redactIdentifierForLog(args.computerId)}`
+    )
+
+    const HETZNER_TOKEN = process.env.HETZNER_API_TOKEN!
+    if (!HETZNER_TOKEN) {
+      throw new Error('HETZNER_API_TOKEN not configured')
+    }
+
+    if (args.hetznerServerId) {
+      await ensureServerDeleted(args.hetznerServerId, HETZNER_TOKEN)
+    }
+
+    if (args.hetznerFirewallId) {
+      await ensureFirewallDeleted(args.hetznerFirewallId, HETZNER_TOKEN)
+    }
+
+    console.log(
+      `${TAG} cleanupDetachedComputerResources — COMPLETE computerId=${redactIdentifierForLog(args.computerId)}`
     )
   },
 })
@@ -1552,6 +1943,7 @@ function buildCloudInit(p: CloudInitParams): string {
     .replaceAll('{{AI_GATEWAY_API_KEY}}', p.aiGatewayApiKey)
     .replaceAll('{{OPENROUTER_API_KEY}}', p.openrouterApiKey ?? '')
     .replaceAll('{{MODEL_ALLOWLIST_JSON}}', buildComputerModelsAllowlistJson())
+    .replaceAll('{{TERMINAL_TOKEN}}',   p.gatewayToken.slice(0, 32))
 }
 
 const CLOUD_INIT_TEMPLATE = `#cloud-config
@@ -1604,6 +1996,30 @@ write_files:
             - "0.0.0.0:18789:18789"
           command:
             ["openclaw", "gateway", "run"]
+
+  - path: /etc/systemd/system/ttyd.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Web terminal (ttyd)
+      After=network.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/ttyd -W --port 18790 -c overlay:{{TERMINAL_TOKEN}} /usr/local/bin/overlay-terminal-shell
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /usr/local/bin/overlay-terminal-shell
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      cd /root/.openclaw/workspace
+      exec /bin/bash -l
 
   - path: /usr/local/bin/openclaw
     permissions: '0755'
@@ -1677,12 +2093,20 @@ write_files:
       systemctl enable --now docker
       clog "Docker CE installed and daemon started"
 
-      # Step 2: Prepare directories
+      # Step 2: Install ttyd web terminal
+      curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd
+      chmod +x /usr/local/bin/ttyd
+      systemctl daemon-reload
+      systemctl enable ttyd
+      systemctl start ttyd
+      clog "ttyd web terminal started on port 18790"
+
+      # Step 3: Prepare directories
       mkdir -p /root/.openclaw/workspace
       chown -R 1000:1000 /root/.openclaw
       clog "Installed host openclaw wrapper"
 
-      # Step 3: Pull the prebuilt OpenClaw image and configure it through the CLI
+      # Step 4: Pull the prebuilt OpenClaw image and configure it through the CLI
       clog "Pulling prebuilt OpenClaw image..."
       cd /root/openclaw-deploy
       set -a
@@ -1721,6 +2145,7 @@ write_files:
       docker_openclaw openclaw config set hooks.allowedSessionKeyPrefixes '["hook:computer:"]' --strict-json
       docker_openclaw openclaw config set hooks.allowedAgentIds '["default"]' --strict-json
       docker_openclaw openclaw config set cron.enabled false --strict-json
+
       docker_openclaw openclaw config validate
 
       clog "OpenClaw config validated. Starting container..."
@@ -1728,7 +2153,7 @@ write_files:
       docker compose up -d
       clog "Docker container started. Waiting for healthz..."
 
-      # Step 4: Wait for OpenClaw to be healthy (90 x 5s = 7.5 min)
+      # Step 5: Wait for OpenClaw to be healthy (90 x 5s = 7.5 min)
       for i in $(seq 1 90); do
         if curl -sf --max-time 5 http://localhost:18789/healthz > /dev/null 2>&1; then
           curl -s -X POST "$CONVEX_URL/computer/ready" \\

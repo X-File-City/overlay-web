@@ -40,6 +40,7 @@ interface ComputerTreeData {
   activeSessionKey: string | null
   files: WorkspaceFileItem[]
   sessions: SessionItem[]
+  workspaceUnavailableReason: string | null
 }
 
 interface ComputerSessionsEventDetail {
@@ -61,6 +62,12 @@ const STATUS_COLORS: Record<ComputerStatus, string> = {
 
 function StatusDot({ status }: { status: ComputerStatus }) {
   return <Circle size={6} className={`shrink-0 fill-current ${STATUS_COLORS[status]}`} />
+}
+
+function shouldSuppressWorkspaceWarning(reason: string | null): boolean {
+  if (!reason) return false
+  const lower = reason.toLowerCase()
+  return lower.includes('operator.read') || lower.includes('denied read access')
 }
 
 function buildComputerHref(computerId: string, params?: Record<string, string | undefined>) {
@@ -132,6 +139,7 @@ function ComputerNode({
     activeSessionKey: null,
     files: [],
     sessions: [],
+    workspaceUnavailableReason: null,
   })
   const [hasLoadedDetails, setHasLoadedDetails] = useState(false)
   const [loadingInitialDetails, setLoadingInitialDetails] = useState(false)
@@ -145,13 +153,20 @@ function ComputerNode({
   const currentSessionKey = searchParams.get('sessionKey')
   const activeSessionKey = currentSessionKey || details.activeSessionKey || null
   const computerRowActive = isComputerRoute && !currentView && !activeSessionKey
+  const visibleWorkspaceWarning = shouldSuppressWorkspaceWarning(details.workspaceUnavailableReason)
+    ? null
+    : details.workspaceUnavailableReason
 
   const refreshWorkspace = useCallback(async () => {
     const response = await fetch(`/api/app/computer-workspace?computerId=${computer._id}`)
     const payload = response.ok ? await response.json() : null
     setDetails((current) => ({
       ...current,
-      files: Array.isArray(payload?.files) ? payload.files : current.files,
+      files: Array.isArray(payload?.files) ? payload.files : [],
+      workspaceUnavailableReason:
+        typeof payload?.unavailableReason === 'string' && payload.unavailableReason.trim()
+          ? payload.unavailableReason.trim()
+          : null,
     }))
   }, [computer._id])
 
@@ -182,6 +197,12 @@ function ComputerNode({
       }
     })
   }, [hasLoadedDetails, isOpen, refreshSessions, refreshWorkspace])
+
+  useEffect(() => {
+    if (!isOpen) return
+    if (computer.status !== 'ready') return
+    void Promise.all([refreshWorkspace(), refreshSessions()])
+  }, [computer.status, isOpen, refreshSessions, refreshWorkspace])
 
   useEffect(() => {
     if (!isOpen) return
@@ -350,6 +371,24 @@ function ComputerNode({
             )
           })}
 
+          {hasLoadedDetails && workspaceOpen && Boolean(visibleWorkspaceWarning) && (
+            <p
+              className="py-1 text-[10px] text-[#c08a00]"
+              style={{ paddingLeft: `${2 * 16 + 18}px` }}
+            >
+              Workspace unavailable: {visibleWorkspaceWarning}
+            </p>
+          )}
+
+          {hasLoadedDetails && workspaceOpen && !visibleWorkspaceWarning && details.files.length === 0 && (
+            <p
+              className="py-1 text-[10px] text-[#bbb]"
+              style={{ paddingLeft: `${2 * 16 + 18}px` }}
+            >
+              No files yet
+            </p>
+          )}
+
           {hasLoadedDetails && (
             <>
               <TreeRow
@@ -431,23 +470,19 @@ export default function ComputerSidebar({ userId, accessToken }: { userId: strin
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const inFlightFetchRef = useRef<Promise<ComputerItem[] | null> | null>(null)
 
-  const fetchComputers = useCallback(async (options?: { background?: boolean }) => {
+  const fetchComputers = useCallback(async () => {
     if (inFlightFetchRef.current) {
       return await inFlightFetchRef.current
     }
 
-    const nextRequest = convex.query<ComputerItem[]>(
-      'computers:list',
-      { userId, accessToken },
-      {
-        background: options?.background,
-        suppressNetworkConsoleError: options?.background,
-      }
-    )
-      .then((result) => {
-        if (result) {
-          setComputers(result)
+    const nextRequest = fetch('/api/app/computers', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) {
+          return null
         }
+        const payload = await response.json() as { computers?: ComputerItem[] }
+        const result = Array.isArray(payload.computers) ? payload.computers : []
+        setComputers(result)
         return result
       })
       .finally(() => {
@@ -456,7 +491,7 @@ export default function ComputerSidebar({ userId, accessToken }: { userId: strin
 
     inFlightFetchRef.current = nextRequest
     return await nextRequest
-  }, [userId, accessToken])
+  }, [])
 
   const handleDeleteComputer = useCallback(async (computerId: string, computerName: string, event: React.MouseEvent) => {
     event.stopPropagation()
@@ -470,15 +505,11 @@ export default function ComputerSidebar({ userId, accessToken }: { userId: strin
 
     setDeletingId(computerId)
     try {
-      const result = await convex.action<{ queued: boolean }>('computers:deleteComputerInstance', {
+      await convex.action('computers:deleteComputerInstance', {
         computerId,
         userId,
         accessToken,
       })
-
-      if (!result?.queued) {
-        throw new Error('Delete failed')
-      }
 
       setComputers((prev) => prev.filter((computer) => computer._id !== computerId))
       window.dispatchEvent(
@@ -495,6 +526,21 @@ export default function ComputerSidebar({ userId, accessToken }: { userId: strin
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to delete computer'
+      if (message === 'Computer not found') {
+        setComputers((prev) => prev.filter((computer) => computer._id !== computerId))
+        window.dispatchEvent(
+          new CustomEvent('overlay:computers-updated', {
+            detail: {
+              computerId,
+              type: 'deleted',
+            },
+          })
+        )
+        if (pathname === `/app/computer/${computerId}`) {
+          router.replace('/app/computer')
+        }
+        return
+      }
       window.alert(message)
     } finally {
       setDeletingId((current) => (current === computerId ? null : current))
@@ -520,7 +566,7 @@ export default function ComputerSidebar({ userId, accessToken }: { userId: strin
 
   useEffect(() => {
     function refreshInBackground() {
-      void fetchComputers({ background: true })
+      void fetchComputers()
     }
 
     function handleVisibilityChange() {

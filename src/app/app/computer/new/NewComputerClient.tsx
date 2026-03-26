@@ -26,12 +26,22 @@ export default function NewComputerClient({ userId, email, accessToken }: Props)
     setError(null)
     try {
       // 1. Create pending computer record in Convex
-      const computerId = await convex.mutation<string>('computers:create', {
-        name: name.trim(),
-        region: 'eu-central',
-        userId,
-        accessToken,
+      const createResponse = await fetch('/api/app/computers', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          region: 'eu-central',
+        }),
       })
+
+      const createPayload = await createResponse.json() as { id?: string; error?: string }
+      if (!createResponse.ok) {
+        throw new Error(createPayload.error || 'Failed to create computer record')
+      }
+      const computerId = createPayload.id
 
       if (!computerId) throw new Error('Failed to create computer record')
 
@@ -43,7 +53,7 @@ export default function NewComputerClient({ userId, email, accessToken }: Props)
           userId,
           accessToken,
           email,
-          successUrl: `${window.location.origin}/app/computer/${computerId}?paid=1`,
+          successUrl: `${window.location.origin}/app/computer/${computerId}?paid=1&session_id={CHECKOUT_SESSION_ID}`,
           cancelUrl: `${window.location.origin}/app/computer/new`,
         }
       )

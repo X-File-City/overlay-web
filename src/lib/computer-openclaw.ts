@@ -1,10 +1,31 @@
 import { DEFAULT_MODEL_ID, AVAILABLE_MODELS, getModel } from '@/lib/models'
 import { convex } from '@/lib/convex'
+import { getInternalApiSecret } from '@/lib/internal-api-secret'
+import {
+  attachDevelopmentGatewayDeviceIdentity,
+  buildGatewayConnectDevice,
+  type GatewayDeviceIdentity,
+} from '@/lib/openclaw-gateway-device'
 import { getSession } from '@/lib/workos-auth'
 import type { Id } from '../../convex/_generated/dataModel'
 
 const GATEWAY_PROTOCOL_VERSION = 3
 export const MAIN_AGENT_ID = 'main'
+const DEFAULT_COMPUTER_WORKSPACE_PATH = '~/.openclaw/workspace'
+const COMPUTER_WORKSPACE_BOOTSTRAP_FILE_NAMES = [
+  'AGENTS.md',
+  'SOUL.md',
+  'TOOLS.md',
+  'IDENTITY.md',
+  'USER.md',
+  'HEARTBEAT.md',
+  'BOOTSTRAP.md',
+] as const
+const COMPUTER_WORKSPACE_PRIMARY_MEMORY_FILE_NAME = 'MEMORY.md'
+const COMPUTER_WORKSPACE_FALLBACK_FILE_NAMES = [
+  ...COMPUTER_WORKSPACE_BOOTSTRAP_FILE_NAMES,
+  COMPUTER_WORKSPACE_PRIMARY_MEMORY_FILE_NAME,
+] as const
 
 /** Bearer + userId from chat tool execution (no browser cookie on internal fetch). */
 export type ComputerToolAuth = { userId: string; accessToken: string }
@@ -13,6 +34,7 @@ export interface ComputerConnectionInfo {
   gatewayToken: string
   hooksToken: string
   hetznerServerIp: string
+  gatewayDeviceIdentity?: GatewayDeviceIdentity
 }
 
 export interface ComputerRuntimeState {
@@ -52,7 +74,9 @@ interface GatewaySessionsDeletePayload {
 }
 
 interface GatewayErrorShape {
+  code?: string
   message?: string
+  details?: unknown
 }
 
 interface GatewayResponseFrame {
@@ -84,7 +108,7 @@ interface GatewayChatEventPayload {
 interface GatewayEventFrame {
   type?: string
   event?: string
-  payload?: GatewayChatEventPayload
+  payload?: unknown
 }
 
 export interface GatewaySessionRow {
@@ -141,6 +165,7 @@ export interface ComputerWorkspaceFileItem {
 
 export interface AuthenticatedComputerContext {
   accessToken: string
+  serverSecret?: string
   computerId: string
   connection: ComputerConnectionInfo
   computer: ComputerRuntimeState
@@ -235,7 +260,7 @@ export async function getAuthenticatedComputerContextWithToken(params: {
   accessToken: string
 }): Promise<AuthenticatedComputerContext> {
   const { computerId, userId, accessToken } = params
-  const connection = await convex.query<ComputerConnectionInfo | null>(
+  const baseConnection = await convex.query<ComputerConnectionInfo | null>(
     'computers:getChatConnection',
     {
       computerId: computerId as Id<'computers'>,
@@ -244,9 +269,14 @@ export async function getAuthenticatedComputerContextWithToken(params: {
     },
     { throwOnError: true, timeoutMs: 30_000 },
   )
-  if (!connection) {
+  if (!baseConnection) {
     throw new Error('Computer is not ready')
   }
+
+  const connection = await attachDevelopmentGatewayDeviceIdentity({
+    computerId,
+    connection: baseConnection,
+  })
 
   const computer = await convex.query<ComputerRuntimeState | null>(
     'computers:get',
@@ -274,11 +304,47 @@ export async function getAuthenticatedComputerContext(
   if (!session) {
     throw new Error('Unauthorized')
   }
-  return getAuthenticatedComputerContextWithToken({
+
+  const userId = session.user.id
+  const accessToken = session.accessToken
+  const serverSecret = getInternalApiSecret()
+
+  const baseConnection = await convex.query<ComputerConnectionInfo | null>(
+    'computers:getChatConnection',
+    {
+      computerId: computerId as Id<'computers'>,
+      userId,
+      serverSecret,
+    },
+    { throwOnError: true, timeoutMs: 30_000 },
+  )
+  if (!baseConnection) {
+    throw new Error('Computer is not ready')
+  }
+
+  const connection = await attachDevelopmentGatewayDeviceIdentity({
     computerId,
-    userId: session.user.id,
-    accessToken: session.accessToken,
+    connection: baseConnection,
   })
+
+  const computer = await convex.query<ComputerRuntimeState | null>(
+    'computers:get',
+    {
+      computerId: computerId as Id<'computers'>,
+      userId,
+      serverSecret,
+    },
+    { throwOnError: true, timeoutMs: 30_000 },
+  )
+
+  return {
+    accessToken,
+    computerId,
+    connection,
+    computer: computer ?? {},
+    serverSecret,
+    userId,
+  }
 }
 
 export async function listComputerSessions(
@@ -292,19 +358,49 @@ export async function listComputerSessions(
   const context = toolAuth
     ? await getAuthenticatedComputerContextWithToken({ computerId, ...toolAuth })
     : await getAuthenticatedComputerContext(computerId)
-  const payload = await callGatewayRequest<GatewaySessionListPayload>({
-    ip: context.connection.hetznerServerIp,
-    gatewayToken: context.connection.gatewayToken,
-    method: 'sessions.list',
-    params: {
-      agentId: MAIN_AGENT_ID,
-      includeGlobal: false,
-      includeUnknown: false,
-      includeDerivedTitles: true,
-      includeLastMessage: true,
-      limit: 200,
-    },
-  })
+  let payload: GatewaySessionListPayload | null = null
+
+  try {
+    payload = await callGatewayRequest<GatewaySessionListPayload>({
+      ip: context.connection.hetznerServerIp,
+      gatewayToken: context.connection.gatewayToken,
+      gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
+      method: 'sessions.list',
+      params: {
+        agentId: MAIN_AGENT_ID,
+        includeGlobal: false,
+        includeUnknown: false,
+        includeDerivedTitles: true,
+        includeLastMessage: true,
+        limit: 200,
+      },
+    })
+  } catch (error) {
+    if (!shouldIgnoreGatewaySessionReadError(error)) {
+      throw error
+    }
+
+    const fallbackActiveSessionKey =
+      context.computer.chatSessionKey?.trim() ||
+      buildLegacyComputerSessionKey(context.userId, computerId)
+
+    return {
+      activeSessionKey: fallbackActiveSessionKey,
+      storePath: null,
+      sessions: fallbackActiveSessionKey
+        ? [
+            {
+              key: fallbackActiveSessionKey,
+              title: 'New Chat',
+              updatedAt: null,
+              status: 'unavailable',
+              modelProvider: context.computer.chatEffectiveProvider?.trim() || null,
+              model: context.computer.chatEffectiveModel?.trim() || null,
+            },
+          ]
+        : [],
+    }
+  }
 
   const allRows = Array.isArray(payload?.sessions) ? payload.sessions : []
   const sessionRows = allRows.filter((row) =>
@@ -355,15 +451,29 @@ export async function getComputerSessionMessages(
   const context = toolAuth
     ? await getAuthenticatedComputerContextWithToken({ computerId: params.computerId, ...toolAuth })
     : await getAuthenticatedComputerContext(params.computerId)
-  const payload = await callGatewayRequest<GatewaySessionGetPayload>({
-    ip: context.connection.hetznerServerIp,
-    gatewayToken: context.connection.gatewayToken,
-    method: 'sessions.get',
-    params: {
-      key: params.sessionKey,
-      limit: 400,
-    },
-  })
+  let payload: GatewaySessionGetPayload | null = null
+
+  try {
+    payload = await callGatewayRequest<GatewaySessionGetPayload>({
+      ip: context.connection.hetznerServerIp,
+      gatewayToken: context.connection.gatewayToken,
+      gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
+      method: 'sessions.get',
+      params: {
+        key: params.sessionKey,
+        limit: 400,
+      },
+    })
+  } catch (error) {
+    if (!shouldIgnoreGatewaySessionReadError(error)) {
+      throw error
+    }
+
+    return {
+      sessionKey: params.sessionKey,
+      messages: [],
+    }
+  }
 
   const messages = Array.isArray(payload?.messages)
     ? payload.messages
@@ -401,21 +511,30 @@ export async function createComputerSession(
     resolveOpenClawModelRef(requestedModelId) ?? resolveOpenClawModelRef(DEFAULT_MODEL_ID)
   const createdKey = buildComputerSessionKey(params.computerId)
 
-  const created = await callGatewayRequest<GatewaySessionsCreatePayload>({
-    ip: context.connection.hetznerServerIp,
-    gatewayToken: context.connection.gatewayToken,
-    method: 'sessions.create',
-    params: {
-      agentId: MAIN_AGENT_ID,
-      key: createdKey,
-      label: 'New Chat',
-    },
-  })
-
-  const sessionKey = created?.key?.trim() || createdKey
+  let sessionKey: string
+  try {
+    const created = await callGatewayRequest<GatewaySessionsCreatePayload>({
+      ip: context.connection.hetznerServerIp,
+      gatewayToken: context.connection.gatewayToken,
+      gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
+      method: 'sessions.create',
+      params: {
+        agentId: MAIN_AGENT_ID,
+        key: createdKey,
+        label: 'New Chat',
+      },
+    })
+    sessionKey = created?.key?.trim() || createdKey
+  } catch (error) {
+    if (!shouldIgnoreGatewaySessionMutationError(error)) {
+      throw error
+    }
+    sessionKey = createdKey
+  }
   const appliedSessionModel = await applyPreferredModel({
     ip: context.connection.hetznerServerIp,
     gatewayToken: context.connection.gatewayToken,
+    gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
     sessionKey,
     modelId: requestedModelId,
     modelRef: requestedModelRef,
@@ -426,6 +545,7 @@ export async function createComputerSession(
     (await readGatewaySessionModel({
       ip: context.connection.hetznerServerIp,
       gatewayToken: context.connection.gatewayToken,
+      gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
       sessionKey,
     }).catch(() => null))
 
@@ -435,6 +555,7 @@ export async function createComputerSession(
       computerId: params.computerId,
       userId: context.userId,
       accessToken: context.accessToken,
+      serverSecret: context.serverSecret,
       sessionKey: latestSessionModel?.sessionKey ?? sessionKey,
       requestedModelId,
       requestedModelRef: requestedModelRef ?? undefined,
@@ -479,21 +600,29 @@ export async function updateComputerSession(
     resolveOpenClawModelRef(selectedModelId) ?? resolveOpenClawModelRef(DEFAULT_MODEL_ID)
 
   if (typeof params.label === 'string') {
-    await callGatewayRequest<GatewaySessionsPatchPayload>({
-      ip: context.connection.hetznerServerIp,
-      gatewayToken: context.connection.gatewayToken,
-      method: 'sessions.patch',
-      params: {
-        key: params.sessionKey,
-        label: params.label.trim() || null,
-      },
-    })
+    try {
+      await callGatewayRequest<GatewaySessionsPatchPayload>({
+        ip: context.connection.hetznerServerIp,
+        gatewayToken: context.connection.gatewayToken,
+        gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
+        method: 'sessions.patch',
+        params: {
+          key: params.sessionKey,
+          label: params.label.trim() || null,
+        },
+      })
+    } catch (error) {
+      if (!shouldIgnoreGatewaySessionMutationError(error)) {
+        throw error
+      }
+    }
   }
 
   const appliedSessionModel = params.modelId
     ? await applyPreferredModel({
         ip: context.connection.hetznerServerIp,
         gatewayToken: context.connection.gatewayToken,
+        gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
         sessionKey: params.sessionKey,
         modelId: selectedModelId,
         modelRef: requestedModelRef,
@@ -505,6 +634,7 @@ export async function updateComputerSession(
     (await readGatewaySessionModel({
       ip: context.connection.hetznerServerIp,
       gatewayToken: context.connection.gatewayToken,
+      gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
       sessionKey: params.sessionKey,
     }).catch(() => null))
 
@@ -528,6 +658,7 @@ export async function updateComputerSession(
       computerId: params.computerId,
       userId: context.userId,
       accessToken: context.accessToken,
+      serverSecret: context.serverSecret,
       sessionKey: latestSessionModel?.sessionKey ?? params.sessionKey,
       requestedModelId: resolvedModelId,
       requestedModelRef: resolvedModelRef ?? undefined,
@@ -569,6 +700,7 @@ export async function deleteComputerSession(
   const deleted = await callGatewayRequest<GatewaySessionsDeletePayload>({
     ip: context.connection.hetznerServerIp,
     gatewayToken: context.connection.gatewayToken,
+    gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
     method: 'sessions.delete',
     params: {
       key: deletedSessionKey,
@@ -646,25 +778,52 @@ export async function deleteComputerSession(
 export async function listComputerWorkspaceFiles(
   computerId: string,
   toolAuth?: ComputerToolAuth,
-): Promise<{ workspace: string; files: ComputerWorkspaceFileItem[] }> {
+): Promise<{ workspace: string; files: ComputerWorkspaceFileItem[]; unavailableReason?: string | null }> {
   const context = toolAuth
     ? await getAuthenticatedComputerContextWithToken({ computerId, ...toolAuth })
     : await getAuthenticatedComputerContext(computerId)
-  const payload = await callGatewayRequest<{
+  let payload: {
     workspace?: string
     files?: ComputerWorkspaceFileItem[]
-  }>({
-    ip: context.connection.hetznerServerIp,
-    gatewayToken: context.connection.gatewayToken,
-    method: 'agents.files.list',
-    params: {
-      agentId: MAIN_AGENT_ID,
-    },
-  })
+  } | null = null
+  let unavailableReason: string | null = null
+
+  try {
+    payload = await callGatewayRequest<{
+      workspace?: string
+      files?: ComputerWorkspaceFileItem[]
+    }>({
+      ip: context.connection.hetznerServerIp,
+      gatewayToken: context.connection.gatewayToken,
+      gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
+      method: 'agents.files.list',
+      params: {
+        agentId: MAIN_AGENT_ID,
+      },
+    })
+  } catch (error) {
+    if (!shouldIgnoreGatewaySessionReadError(error)) {
+      throw error
+    }
+    if (
+      getErrorMessage(error).toLowerCase().includes('missing scope: operator.read') ||
+      isGatewayReachabilityError(error)
+    ) {
+      return {
+        workspace: DEFAULT_COMPUTER_WORKSPACE_PATH,
+        files: buildStaticComputerWorkspaceFallbackFiles(DEFAULT_COMPUTER_WORKSPACE_PATH),
+        unavailableReason: isGatewayReachabilityError(error)
+          ? getGatewayReadUnavailableReason(error, 'workspace files')
+          : null,
+      }
+    }
+    unavailableReason = getGatewayReadUnavailableReason(error, 'workspace files')
+  }
 
   return {
-    workspace: payload?.workspace?.trim() || '~/.openclaw/workspace',
+    workspace: payload?.workspace?.trim() || DEFAULT_COMPUTER_WORKSPACE_PATH,
     files: Array.isArray(payload?.files) ? payload.files : [],
+    unavailableReason,
   }
 }
 
@@ -674,31 +833,100 @@ export async function getComputerWorkspaceFile(
     name: string
   },
   toolAuth?: ComputerToolAuth,
-): Promise<{ workspace: string; file: ComputerWorkspaceFileItem }> {
+): Promise<{ workspace: string; file: ComputerWorkspaceFileItem; unavailableReason?: string | null }> {
   const context = toolAuth
     ? await getAuthenticatedComputerContextWithToken({ computerId: params.computerId, ...toolAuth })
     : await getAuthenticatedComputerContext(params.computerId)
-  const payload = await callGatewayRequest<{
+  let payload: {
     workspace?: string
     file?: ComputerWorkspaceFileItem
-  }>({
-    ip: context.connection.hetznerServerIp,
-    gatewayToken: context.connection.gatewayToken,
-    method: 'agents.files.get',
-    params: {
-      agentId: MAIN_AGENT_ID,
-      name: params.name,
-    },
-  })
+  } | null = null
+  let unavailableReason: string | null = null
+
+  try {
+    payload = await callGatewayRequest<{
+      workspace?: string
+      file?: ComputerWorkspaceFileItem
+    }>({
+      ip: context.connection.hetznerServerIp,
+      gatewayToken: context.connection.gatewayToken,
+      gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
+      method: 'agents.files.get',
+      params: {
+        agentId: MAIN_AGENT_ID,
+        name: params.name,
+      },
+    })
+  } catch (error) {
+    if (!shouldIgnoreGatewaySessionReadError(error)) {
+      throw error
+    }
+    const fallbackFile = buildStaticComputerWorkspaceFallbackFile(
+      params.name,
+      DEFAULT_COMPUTER_WORKSPACE_PATH,
+    )
+    if (fallbackFile) {
+      return {
+        workspace: DEFAULT_COMPUTER_WORKSPACE_PATH,
+        file: fallbackFile,
+        unavailableReason: getErrorMessage(error).toLowerCase().includes('missing scope: operator.read')
+          ? null
+          : getGatewayReadUnavailableReason(error, 'workspace file contents'),
+      }
+    }
+    unavailableReason = getGatewayReadUnavailableReason(error, 'workspace file contents')
+  }
 
   return {
-    workspace: payload?.workspace?.trim() || '~/.openclaw/workspace',
+    workspace: payload?.workspace?.trim() || DEFAULT_COMPUTER_WORKSPACE_PATH,
     file: payload?.file ?? {
       name: params.name,
       path: params.name,
       missing: true,
       content: '',
     },
+    unavailableReason,
+  }
+}
+
+export async function reconfigureComputerGatewayAccess(
+  computerId: string,
+  toolAuth?: ComputerToolAuth,
+): Promise<{ ok: boolean; message: string }> {
+  const context = toolAuth
+    ? await getAuthenticatedComputerContextWithToken({ computerId, ...toolAuth })
+    : await getAuthenticatedComputerContext(computerId)
+
+  try {
+    const result = await convex.action<{ queued?: boolean; status?: string }>(
+      'computers:repairComputerInstance',
+      {
+        computerId,
+        userId: context.userId,
+        accessToken: context.accessToken,
+      },
+      { throwOnError: true, timeoutMs: 30_000 }
+    )
+
+    if (result?.queued) {
+      return {
+        ok: true,
+        message: 'A fresh computer instance is being provisioned. This will take a few minutes — workspace files and all sessions will be fully available once it completes.',
+      }
+    }
+
+    return {
+      ok: false,
+      message: 'Unable to queue a reprovision for this computer. Please try again.',
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error && error.message.trim()
+          ? error.message.trim()
+          : 'Unable to reprovision this computer. Please try again.',
+    }
   }
 }
 
@@ -719,6 +947,7 @@ export async function setComputerWorkspaceFile(
   }>({
     ip: context.connection.hetznerServerIp,
     gatewayToken: context.connection.gatewayToken,
+    gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
     method: 'agents.files.set',
     params: {
       agentId: MAIN_AGENT_ID,
@@ -728,7 +957,7 @@ export async function setComputerWorkspaceFile(
   })
 
   return {
-    workspace: payload?.workspace?.trim() || '~/.openclaw/workspace',
+    workspace: payload?.workspace?.trim() || DEFAULT_COMPUTER_WORKSPACE_PATH,
     file: payload?.file ?? {
       name: params.name,
       path: params.name,
@@ -741,11 +970,13 @@ export async function setComputerWorkspaceFile(
 export async function readGatewaySessionModel(params: {
   ip: string
   gatewayToken: string
+  gatewayDeviceIdentity?: GatewayDeviceIdentity
   sessionKey: string
 }): Promise<GatewaySessionModelState | null> {
   const payload = await callGatewayRequest<GatewaySessionListPayload>({
     ip: params.ip,
     gatewayToken: params.gatewayToken,
+    gatewayDeviceIdentity: params.gatewayDeviceIdentity,
     method: 'sessions.list',
     params: {
       includeGlobal: false,
@@ -788,6 +1019,7 @@ export async function callComputerGatewayMethod<T>(
   return await callGatewayRequest<T>({
     ip: context.connection.hetznerServerIp,
     gatewayToken: context.connection.gatewayToken,
+    gatewayDeviceIdentity: context.connection.gatewayDeviceIdentity,
     method: params.method,
     params: params.params,
   })
@@ -807,7 +1039,11 @@ export async function runComputerGatewayCommand(
   const ws = await openGatewaySocket(context.connection.hetznerServerIp)
 
   try {
-    await connectGatewaySocket(ws, context.connection.gatewayToken)
+    await connectGatewaySocket(
+      ws,
+      context.connection.gatewayToken,
+      context.connection.gatewayDeviceIdentity
+    )
     return await runGatewayChatStream(ws, {
       message: params.message,
       sessionKey: params.sessionKey,
@@ -820,6 +1056,7 @@ export async function runComputerGatewayCommand(
 export async function applyPreferredModel(params: {
   ip: string
   gatewayToken: string
+  gatewayDeviceIdentity?: GatewayDeviceIdentity
   sessionKey: string
   modelId: string
   modelRef: string | null
@@ -832,6 +1069,7 @@ export async function applyPreferredModel(params: {
       const payload = await callGatewayRequest<GatewaySessionsPatchPayload>({
         ip: params.ip,
         gatewayToken: params.gatewayToken,
+        gatewayDeviceIdentity: params.gatewayDeviceIdentity,
         method: 'sessions.patch',
         params: {
           key: params.sessionKey,
@@ -846,6 +1084,16 @@ export async function applyPreferredModel(params: {
       }
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(getErrorMessage(error))
+      if (shouldIgnoreGatewayModelPatchError(lastError)) {
+        console.warn('[Computer OpenClaw] Ignoring model sync failure:', {
+          sessionKey: params.sessionKey,
+          modelId: params.modelId,
+          attemptedModel: candidate,
+          modelRef: params.modelRef,
+          error: getErrorMessage(lastError),
+        })
+        return null
+      }
     }
   }
 
@@ -859,25 +1107,51 @@ export async function applyPreferredModel(params: {
 async function callGatewayRequest<T>(params: {
   ip: string
   gatewayToken: string
+  gatewayDeviceIdentity?: GatewayDeviceIdentity
   method: string
   params?: unknown
 }): Promise<T> {
+  const requestId = crypto.randomUUID()
+  const startedAt = Date.now()
+  debugGateway('rpc:start', {
+    ip: params.ip,
+    method: params.method,
+    requestId,
+  })
+
   const ws = await openGatewaySocket(params.ip)
   try {
-    await connectGatewaySocket(ws, params.gatewayToken)
+    await connectGatewaySocket(ws, params.gatewayToken, params.gatewayDeviceIdentity)
     const response = await waitForGatewayResponse(ws, {
-      requestId: crypto.randomUUID(),
+      requestId,
       method: params.method,
       params: params.params,
     })
     if (response.ok === false) {
-      throw new Error(response.error?.message || `OpenClaw ${params.method} failed`)
+      throw buildGatewayResponseError(response, `OpenClaw ${params.method} failed`)
     }
+    debugGateway('rpc:success', {
+      ip: params.ip,
+      method: params.method,
+      requestId,
+      durationMs: Date.now() - startedAt,
+    })
     return (response.payload ?? {}) as T
+  } catch (error) {
+    console.error('[Computer OpenClaw][Gateway] rpc:failure', {
+      ip: params.ip,
+      method: params.method,
+      requestId,
+      durationMs: Date.now() - startedAt,
+      error: getErrorMessage(error),
+      detail: extractErrorDetail(error),
+    })
+    throw error
   } finally {
     ws.close()
   }
 }
+
 
 async function runGatewayChatStream(
   ws: WebSocket,
@@ -932,7 +1206,10 @@ async function runGatewayChatStream(
       }
 
       if (isGatewayEventFrame(frame) && frame.event === 'chat') {
-        const payload = frame.payload
+        const payload =
+          frame.payload && typeof frame.payload === 'object'
+            ? (frame.payload as GatewayChatEventPayload)
+            : null
         if (!accepted || !runId || payload?.runId !== runId) {
           return
         }
@@ -1023,6 +1300,7 @@ async function runGatewayChatStream(
 }
 
 async function openGatewaySocket(ip: string): Promise<WebSocket> {
+  const startedAt = Date.now()
   const ws = new WebSocket(`ws://${ip}:18789`)
   await new Promise<void>((resolve, reject) => {
     const timeoutId = setTimeout(() => {
@@ -1038,12 +1316,16 @@ async function openGatewaySocket(ip: string): Promise<WebSocket> {
 
     const handleOpen = () => {
       cleanup()
+      debugGateway('socket:open', {
+        ip,
+        durationMs: Date.now() - startedAt,
+      })
       resolve()
     }
 
-    const handleError = () => {
+    const handleError = (event: Event) => {
       cleanup()
-      reject(new Error('Failed to open OpenClaw gateway websocket.'))
+      reject(new Error(`Failed to open OpenClaw gateway websocket. ${summarizeEvent(event)}`.trim()))
     }
 
     ws.addEventListener('open', handleOpen, { once: true })
@@ -1052,26 +1334,88 @@ async function openGatewaySocket(ip: string): Promise<WebSocket> {
   return ws
 }
 
-async function connectGatewaySocket(ws: WebSocket, gatewayToken: string): Promise<void> {
-  const response = await waitForGatewayResponse(ws, {
-    requestId: crypto.randomUUID(),
-    method: 'connect',
-    params: {
-      minProtocol: GATEWAY_PROTOCOL_VERSION,
-      maxProtocol: GATEWAY_PROTOCOL_VERSION,
-      client: {
-        id: 'gateway-client',
-        version: '1.0.0',
-        platform: 'overlay-nextjs',
-        mode: 'backend',
-      },
-      role: 'operator',
-      scopes: ['operator.admin', 'operator.read', 'operator.write'],
-      auth: {
-        token: gatewayToken,
-      },
-    },
+async function connectGatewaySocket(
+  ws: WebSocket,
+  gatewayToken: string,
+  gatewayDeviceIdentity?: GatewayDeviceIdentity
+): Promise<void> {
+  const challenge = await waitForGatewayConnectChallenge(ws)
+  const nonce = challenge?.nonce?.trim() || ''
+  debugGateway('socket:challenge', {
+    noncePresent: Boolean(nonce),
+    challengeTs: challenge?.ts ?? null,
   })
+
+  const authVariants = [
+    { token: gatewayToken, password: gatewayToken },
+    { password: gatewayToken },
+    { token: gatewayToken },
+  ]
+  const clientId = gatewayDeviceIdentity?.clientId?.trim() || 'gateway-client'
+  const clientMode = gatewayDeviceIdentity?.clientMode?.trim() || 'backend'
+  const platform = gatewayDeviceIdentity?.platform?.trim() || process.platform
+  const deviceFamily = gatewayDeviceIdentity?.deviceFamily?.trim() || undefined
+  let response: GatewayResponseFrame | null = null
+  let lastError: unknown = null
+
+  for (const auth of authVariants) {
+    try {
+      const signedAtMs = Date.now()
+      const device = gatewayDeviceIdentity
+        ? buildGatewayConnectDevice({
+            identity: gatewayDeviceIdentity,
+            clientId,
+            clientMode,
+            role: 'operator',
+            scopes: ['operator.admin', 'operator.read', 'operator.write'],
+            signedAtMs,
+            token: 'token' in auth ? auth.token : null,
+            nonce,
+            platform,
+            deviceFamily,
+          })
+        : undefined
+
+      response = await waitForGatewayResponse(ws, {
+        requestId: crypto.randomUUID(),
+        method: 'connect',
+        params: {
+          minProtocol: GATEWAY_PROTOCOL_VERSION,
+          maxProtocol: GATEWAY_PROTOCOL_VERSION,
+          client: {
+            id: clientId,
+            version: '1.0.0',
+            platform,
+            deviceFamily,
+            mode: clientMode,
+          },
+          caps: [],
+          commands: [],
+          permissions: {},
+          role: 'operator',
+          scopes: ['operator.admin', 'operator.read', 'operator.write'],
+          auth,
+          device,
+        },
+      })
+      break
+    } catch (error) {
+      lastError = error
+      const message = getErrorMessage(error).toLowerCase()
+      const shouldRetry =
+        message.includes('provide gateway auth password') ||
+        message.includes('gateway password missing') ||
+        message.includes('provide gateway auth token') ||
+        message.includes('gateway token missing')
+      if (!shouldRetry) {
+        throw error
+      }
+    }
+  }
+
+  if (!response) {
+    throw (lastError instanceof Error ? lastError : new Error(getErrorMessage(lastError)))
+  }
 
   const payload =
     response.payload && typeof response.payload === 'object'
@@ -1081,6 +1425,10 @@ async function connectGatewaySocket(ws: WebSocket, gatewayToken: string): Promis
   if (payload?.type !== 'hello-ok') {
     throw new Error('OpenClaw gateway websocket handshake failed.')
   }
+
+  debugGateway('socket:connected', {
+    helloType: payload?.type ?? null,
+  })
 }
 
 async function waitForGatewayResponse(
@@ -1154,6 +1502,52 @@ function parseGatewayFrame(value: unknown): GatewayResponseFrame | GatewayEventF
   }
 }
 
+async function waitForGatewayConnectChallenge(
+  ws: WebSocket,
+): Promise<{ nonce?: string; ts?: number } | null> {
+  return await new Promise<{ nonce?: string; ts?: number } | null>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      cleanup()
+      reject(new Error('Timed out waiting for OpenClaw connect.challenge event.'))
+    }, 5_000)
+
+    const cleanup = () => {
+      clearTimeout(timeoutId)
+      ws.removeEventListener('message', handleMessage)
+      ws.removeEventListener('error', handleError)
+      ws.removeEventListener('close', handleClose)
+    }
+
+    const handleError = (event: Event) => {
+      cleanup()
+      reject(new Error(`OpenClaw websocket errored before connect.challenge. ${summarizeEvent(event)}`.trim()))
+    }
+
+    const handleClose = (event: Event) => {
+      cleanup()
+      reject(new Error(`OpenClaw websocket closed before connect.challenge. ${summarizeEvent(event)}`.trim()))
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const frame = parseGatewayFrame(event.data)
+      if (!frame || !isGatewayEventFrame(frame) || frame.event !== 'connect.challenge') {
+        return
+      }
+
+      cleanup()
+      const payload =
+        frame.payload && typeof frame.payload === 'object'
+          ? (frame.payload as { nonce?: string; ts?: number })
+          : null
+      resolve(payload)
+    }
+
+    ws.addEventListener('message', handleMessage)
+    ws.addEventListener('error', handleError)
+    ws.addEventListener('close', handleClose)
+  })
+}
+
 function getComputerSessionTitle(row: GatewaySessionRow): string {
   return (
     row.label?.trim() ||
@@ -1164,6 +1558,31 @@ function getComputerSessionTitle(row: GatewaySessionRow): string {
   )
 }
 
+function buildStaticComputerWorkspaceFallbackFiles(workspace: string): ComputerWorkspaceFileItem[] {
+  return COMPUTER_WORKSPACE_FALLBACK_FILE_NAMES.map((name) => ({
+    name,
+    path: `${workspace}/${name}`,
+    missing: false,
+  }))
+}
+
+function buildStaticComputerWorkspaceFallbackFile(
+  name: string,
+  workspace: string,
+): ComputerWorkspaceFileItem | null {
+  const normalizedName = name.trim()
+  if (!COMPUTER_WORKSPACE_FALLBACK_FILE_NAMES.includes(normalizedName as typeof COMPUTER_WORKSPACE_FALLBACK_FILE_NAMES[number])) {
+    return null
+  }
+
+  return {
+    name: normalizedName,
+    path: `${workspace}/${normalizedName}`,
+    missing: false,
+    content: '',
+  }
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.name === 'AbortError') {
     return 'OpenClaw request timed out after 4 minutes.'
@@ -1171,8 +1590,96 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Computer request failed'
 }
 
+function extractErrorDetail(error: unknown): unknown {
+  if (!(error instanceof Error)) {
+    return null
+  }
+
+  const value = error as Error & { cause?: unknown }
+  return value.cause ?? null
+}
+
+function getGatewayReadUnavailableReason(error: unknown, resourceLabel: string): string {
+  const message = getErrorMessage(error)
+  const normalized = message.toLowerCase()
+
+  if (normalized.includes('missing scope: operator.read')) {
+    return `OpenClaw gateway denied read access (operator.read), so ${resourceLabel} are unavailable on this computer.`
+  }
+
+  if (
+    normalized.includes('gateway token mismatch') ||
+    normalized.includes('provide gateway auth token') ||
+    normalized.includes('provide gateway auth password') ||
+    normalized.includes('gateway password missing')
+  ) {
+    return `OpenClaw gateway authentication failed, so ${resourceLabel} are unavailable on this computer.`
+  }
+
+  if (isGatewayReachabilityError(error)) {
+    return `OpenClaw gateway is unreachable from Overlay, so ${resourceLabel} are unavailable on this computer.`
+  }
+
+  return message
+}
+
+function shouldIgnoreGatewayModelPatchError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase()
+  return (
+    message.includes('missing scope: operator.admin') ||
+    message.includes('gateway token mismatch') ||
+    message.includes('provide gateway auth token') ||
+    message.includes('provide gateway auth password') ||
+    message.includes('gateway password missing')
+  )
+}
+
+function shouldIgnoreGatewaySessionReadError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase()
+  return (
+    message.includes('missing scope: operator.read') ||
+    message.includes('gateway token mismatch') ||
+    message.includes('provide gateway auth token') ||
+    message.includes('provide gateway auth password') ||
+    message.includes('gateway password missing') ||
+    isGatewayReachabilityError(error)
+  )
+}
+
+function shouldIgnoreGatewaySessionMutationError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase()
+  return (
+    message.includes('missing scope: operator.write') ||
+    message.includes('missing scope: operator.admin') ||
+    message.includes('gateway token mismatch') ||
+    message.includes('provide gateway auth token') ||
+    message.includes('provide gateway auth password') ||
+    message.includes('gateway password missing')
+  )
+}
+
 function buildGatewayResponseError(frame: GatewayResponseFrame, fallbackMessage: string): Error {
-  return new Error(frame.error?.message || fallbackMessage)
+  const parts = [
+    frame.error?.message?.trim(),
+    frame.error?.code ? `code=${frame.error.code}` : '',
+    frame.error?.details ? `details=${safeJson(frame.error.details)}` : '',
+  ].filter(Boolean)
+
+  return new Error(parts.join(' | ') || fallbackMessage)
+}
+
+function isGatewayReachabilityError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase()
+  return (
+    message.includes('timed out opening openclaw gateway websocket') ||
+    message.includes('failed to open openclaw gateway websocket') ||
+    message.includes('timed out waiting for openclaw connect.challenge event') ||
+    message.includes('openclaw websocket errored before connect.challenge') ||
+    message.includes('openclaw websocket closed before connect.challenge') ||
+    message.includes('timed out waiting for openclaw websocket response') ||
+    message.includes('openclaw websocket errored during') ||
+    message.includes('openclaw websocket closed during')
+  )
 }
 
 function extractGatewayResultText(result: unknown): string {
@@ -1204,4 +1711,23 @@ function isGatewayResponseFrame(frame: GatewayResponseFrame | GatewayEventFrame)
 
 function isGatewayEventFrame(frame: GatewayResponseFrame | GatewayEventFrame): frame is GatewayEventFrame {
   return frame.type === 'event'
+}
+
+function debugGateway(event: string, data: Record<string, unknown>): void {
+  console.log('[Computer OpenClaw][Gateway]', event, data)
+}
+
+function summarizeEvent(event: Event): string {
+  if (typeof CloseEvent !== 'undefined' && event instanceof CloseEvent) {
+    return `close_code=${event.code} close_reason=${event.reason || 'none'}`
+  }
+  return event.type ? `event=${event.type}` : 'event=unknown'
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return '[unserializable]'
+  }
 }

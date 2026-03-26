@@ -5,6 +5,18 @@ import {
   setComputerWorkspaceFile,
 } from '@/lib/computer-openclaw'
 
+const DEFAULT_WORKSPACE_PATH = '~/.openclaw/workspace'
+const DEFAULT_WORKSPACE_FILES = [
+  'AGENTS.md',
+  'SOUL.md',
+  'TOOLS.md',
+  'IDENTITY.md',
+  'USER.md',
+  'HEARTBEAT.md',
+  'BOOTSTRAP.md',
+  'MEMORY.md',
+]
+
 export async function GET(request: NextRequest) {
   try {
     const computerId = request.nextUrl.searchParams.get('computerId')
@@ -22,8 +34,39 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(result)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to fetch computer workspace'
-    const status = message === 'Unauthorized' ? 401 : 500
-    return NextResponse.json({ error: message }, { status })
+    if (message === 'Unauthorized') {
+      return NextResponse.json({ error: message }, { status: 401 })
+    }
+
+    const name = request.nextUrl.searchParams.get('name')?.trim()
+    if (message === 'Computer is not ready') {
+      if (name) {
+        return NextResponse.json({
+          workspace: DEFAULT_WORKSPACE_PATH,
+          file: {
+            name,
+            path: `${DEFAULT_WORKSPACE_PATH}/${name}`,
+            missing: true,
+            content: '',
+          },
+          unavailableReason:
+            'This computer is still starting up. Workspace files will appear once the OpenClaw gateway is ready.',
+        })
+      }
+
+      return NextResponse.json({
+        workspace: DEFAULT_WORKSPACE_PATH,
+        files: DEFAULT_WORKSPACE_FILES.map((fileName) => ({
+          name: fileName,
+          path: `${DEFAULT_WORKSPACE_PATH}/${fileName}`,
+          missing: false,
+        })),
+        unavailableReason:
+          'This computer is still starting up. Workspace files will appear once the OpenClaw gateway is ready.',
+      })
+    }
+
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 

@@ -293,6 +293,8 @@ export default defineSchema({
     computerId: v.id('computers'),
     type: v.string(),    // "status_change" | "provision_log" | "error" | "payment_event"
     message: v.string(),
+    sessionKey: v.optional(v.string()),
+    sessionTitle: v.optional(v.string()),
     createdAt: v.number(),
   }).index('by_computerId_createdAt', ['computerId', 'createdAt']),
 

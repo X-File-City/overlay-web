@@ -4,8 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { DefaultChatTransport, type UIMessage } from 'ai'
 import { useChat } from '@ai-sdk/react'
-import { AlertCircle, ChevronDown, Loader2, Plus, Send } from 'lucide-react'
-import { convex } from '@/lib/convex'
+import { AlertCircle, ChevronDown, Loader2, Plus, Send, Terminal } from 'lucide-react'
 import { MarkdownMessage } from '@/components/app/MarkdownMessage'
 import { DelayedTooltip } from '@/components/app/DelayedTooltip'
 import { AVAILABLE_MODELS, DEFAULT_MODEL_ID } from '@/lib/models'
@@ -252,12 +251,8 @@ function ProvisioningView({ step, logs }: { step?: string; logs: LogEvent[] }) {
 
 export default function ComputerDetailClient({
   computerId,
-  userId,
-  accessToken,
 }: {
   computerId: string
-  userId: string
-  accessToken: string
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -266,6 +261,7 @@ export default function ComputerDetailClient({
   const requestedSessionKey = searchParams.get('sessionKey')?.trim() || null
   const isWorkspaceFileView = currentView === 'file' && Boolean(requestedFileName)
   const justPaid = searchParams.get('paid') === '1'
+  const checkoutSessionId = searchParams.get('session_id')?.trim() || null
   const [now] = useState(Date.now)
   const [computer, setComputer] = useState<Computer | null | undefined>(undefined)
   const [logs, setLogs] = useState<LogEvent[]>([])
@@ -278,13 +274,20 @@ export default function ComputerDetailClient({
   const [hydratedTranscriptKey, setHydratedTranscriptKey] = useState<string | null>(null)
   const [isCreatingSession, setIsCreatingSession] = useState(false)
   const [isEditingMarkdownFile, setIsEditingMarkdownFile] = useState(false)
+  const [isOpeningTerminal, setIsOpeningTerminal] = useState(false)
+  const [showTerminalPanel, setShowTerminalPanel] = useState(false)
+  const [terminalUrl, setTerminalUrl] = useState<string | null>(null)
+  const [terminalError, setTerminalError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [activeSlashIndex, setActiveSlashIndex] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const terminalFrameRef = useRef<HTMLIFrameElement>(null)
   const selectedModelRef = useRef(selectedModel)
   const activeSessionKeyRef = useRef(activeSessionKey)
   const hydrateRequestIdRef = useRef(0)
+  const activatedCheckoutSessionRef = useRef<string | null>(null)
+  const latestComputerStatusRef = useRef<ComputerStatus | null>(null)
 
   useEffect(() => {
     selectedModelRef.current = selectedModel
@@ -354,59 +357,63 @@ export default function ComputerDetailClient({
       getMessageText(lastMessage).trim().length > 0
     )
 
-  const fetchComputer = useCallback(async () => {
-    const result = await convex.query<Computer>('computers:get', {
-      computerId,
-      userId,
-      accessToken,
-    })
-    if (result !== null) {
-      setComputer(result)
+  const fetchComputerPayload = useCallback(async (options?: { includeLogs?: boolean; background?: boolean }) => {
+    try {
+      const query = options?.includeLogs ? '?logs=1' : ''
+      const response = await fetch(`/api/app/computers/${computerId}${query}`, {
+        cache: 'no-store',
+      })
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          setComputer(null)
+        }
+        return null
+      }
+
+      const payload = await response.json() as { computer?: Computer | null; logs?: LogEvent[] }
+      const nextComputer = payload.computer ?? null
+      setComputer(nextComputer)
+      const nextStatus = nextComputer?.status ?? null
+      if (latestComputerStatusRef.current !== nextStatus) {
+        latestComputerStatusRef.current = nextStatus
+        window.dispatchEvent(
+          new CustomEvent('overlay:computers-updated', {
+            detail: {
+              computerId,
+              type: 'updated',
+              status: nextStatus,
+            },
+          })
+        )
+      }
+      if (Array.isArray(payload.logs)) {
+        setLogs(payload.logs)
+      }
+      return payload
+    } catch {
+      if (!options?.background) {
+        setComputer(null)
+      }
+      return null
     }
-  }, [accessToken, computerId, userId])
+  }, [computerId])
+
+  const fetchComputer = useCallback(async () => {
+    await fetchComputerPayload()
+  }, [fetchComputerPayload])
 
   const fetchComputerInBackground = useCallback(async () => {
-    const result = await convex.query<Computer>(
-      'computers:get',
-      {
-        computerId,
-        userId,
-        accessToken,
-      },
-      {
-        background: true,
-        suppressNetworkConsoleError: true,
-      }
-    )
-    if (result !== null) {
-      setComputer(result)
-    }
-  }, [accessToken, computerId, userId])
+    await fetchComputerPayload({ background: true })
+  }, [fetchComputerPayload])
 
   const fetchLogs = useCallback(async () => {
-    const result = await convex.query<LogEvent[]>('computers:listEvents', {
-      computerId,
-      userId,
-      accessToken,
-    })
-    if (result) setLogs(result)
-  }, [accessToken, computerId, userId])
+    await fetchComputerPayload({ includeLogs: true })
+  }, [fetchComputerPayload])
 
   const fetchLogsInBackground = useCallback(async () => {
-    const result = await convex.query<LogEvent[]>(
-      'computers:listEvents',
-      {
-        computerId,
-        userId,
-        accessToken,
-      },
-      {
-        background: true,
-        suppressNetworkConsoleError: true,
-      }
-    )
-    if (result) setLogs(result)
-  }, [accessToken, computerId, userId])
+    await fetchComputerPayload({ includeLogs: true, background: true })
+  }, [fetchComputerPayload])
 
   const loadSessions = useCallback(async () => {
     const response = await fetch(`/api/app/computer-sessions?computerId=${computerId}`)
@@ -517,8 +524,7 @@ export default function ComputerDetailClient({
       sessionKey,
       title,
     })
-    await refreshSessions(sessionKey)
-  }, [computerId, refreshSessions])
+  }, [computerId])
 
   const requestNewSession = useCallback(async (modelIdOverride?: string) => {
     const response = await fetch('/api/app/computer-sessions', {
@@ -593,6 +599,31 @@ export default function ComputerDetailClient({
   useEffect(() => {
     void fetchComputer()
   }, [fetchComputer])
+
+  useEffect(() => {
+    if (!justPaid || !checkoutSessionId) return
+    if (activatedCheckoutSessionRef.current === checkoutSessionId) return
+    activatedCheckoutSessionRef.current = checkoutSessionId
+
+    async function activatePaidComputer() {
+      const response = await fetch(`/api/app/computers/${computerId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sessionId: checkoutSessionId }),
+      })
+
+      if (!response.ok) {
+        return
+      }
+
+      await fetchComputer()
+      await fetchLogs()
+    }
+
+    void activatePaidComputer()
+  }, [checkoutSessionId, computerId, fetchComputer, fetchLogs, justPaid])
 
   useEffect(() => {
     if (computer === undefined) return
@@ -754,6 +785,21 @@ export default function ComputerDetailClient({
   }, [requestedFileName])
 
   useEffect(() => {
+    if (computer?.status === 'ready') return
+    setShowTerminalPanel(false)
+    setTerminalUrl(null)
+    setTerminalError(null)
+  }, [computer?.status])
+
+  useEffect(() => {
+    if (!showTerminalPanel || !terminalUrl) return
+    const timeoutId = window.setTimeout(() => {
+      terminalFrameRef.current?.focus()
+    }, 150)
+    return () => window.clearTimeout(timeoutId)
+  }, [showTerminalPanel, terminalUrl])
+
+  useEffect(() => {
     if (computer?.status !== 'ready' || isWorkspaceFileView || !activeSessionKey) return
     if (hydratedTranscriptKey === activeSessionKey) return
     void hydrateMessages(activeSessionKey)
@@ -843,7 +889,7 @@ export default function ComputerDetailClient({
         await refreshSessions(payload.sessionKey)
         return payload
       } catch (error) {
-        console.error('[Computer Page] Failed to apply model selection:', {
+        console.warn('[Computer Page] Failed to apply model selection:', {
           computerId,
           modelId,
           error: error instanceof Error ? error.message : String(error),
@@ -853,6 +899,33 @@ export default function ComputerDetailClient({
     },
     [activeSessionKey, computerId, fetchComputer, refreshSessions, syncComputerRuntime]
   )
+
+  const openTerminal = useCallback(async () => {
+    if (showTerminalPanel) {
+      setShowTerminalPanel(false)
+      return
+    }
+
+    setShowTerminalPanel(true)
+    setTerminalError(null)
+    if (terminalUrl || isOpeningTerminal) return
+
+    setIsOpeningTerminal(true)
+    try {
+      const response = await fetch(`/api/app/computer-terminal?computerId=${computerId}`)
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null
+        setTerminalError(payload?.error || 'Terminal is not available yet. Try again in a moment.')
+        return
+      }
+      const { terminalUrl } = await response.json() as { terminalUrl: string }
+      setTerminalUrl(terminalUrl)
+    } catch {
+      setTerminalError('Failed to load terminal. Please try again.')
+    } finally {
+      setIsOpeningTerminal(false)
+    }
+  }, [computerId, isOpeningTerminal, showTerminalPanel, terminalUrl])
 
   const appendLocalCommandResult = useCallback((
     sessionKey: string,
@@ -1131,6 +1204,21 @@ export default function ComputerDetailClient({
 
         {computer.status === 'ready' && !isWorkspaceFileView && (
           <div className="flex items-center gap-2">
+            <DelayedTooltip label="Open terminal" side="bottom">
+              <button
+                type="button"
+                onClick={() => void openTerminal()}
+                disabled={isOpeningTerminal}
+                className={`flex items-center justify-center rounded-md p-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  showTerminalPanel
+                    ? 'bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222]'
+                    : 'bg-[#f0f0f0] text-[#525252] hover:bg-[#e8e8e8]'
+                }`}
+              >
+                {isOpeningTerminal ? <Loader2 size={13} className="animate-spin" /> : <Terminal size={13} />}
+              </button>
+            </DelayedTooltip>
+
             <DelayedTooltip label="New chat session" side="bottom">
               <button
                 type="button"
@@ -1185,6 +1273,20 @@ export default function ComputerDetailClient({
                 {isEditingMarkdownFile ? 'Preview' : 'Edit'}
               </button>
             )}
+            <DelayedTooltip label="Open terminal" side="bottom">
+              <button
+                type="button"
+                onClick={() => void openTerminal()}
+                disabled={isOpeningTerminal}
+                className={`flex items-center justify-center rounded-md p-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  showTerminalPanel
+                    ? 'bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222]'
+                    : 'bg-[#f0f0f0] text-[#525252] hover:bg-[#e8e8e8]'
+                }`}
+              >
+                {isOpeningTerminal ? <Loader2 size={13} className="animate-spin" /> : <Terminal size={13} />}
+              </button>
+            </DelayedTooltip>
           </div>
         )}
 
@@ -1218,18 +1320,19 @@ export default function ComputerDetailClient({
         ))}
 
       {computer.status === 'ready' && (
-        isWorkspaceFileView ? (
-          <ComputerWorkspaceFileView
-            key={requestedFileName}
-            computerId={computerId}
-            fileName={requestedFileName}
-            isEditingMarkdown={isEditingMarkdownFile}
-            onEditingMarkdownChange={setIsEditingMarkdownFile}
-          />
-        ) : (
-          <div className="flex min-h-0 flex-1 flex-col bg-[#fbfbfb]">
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-              <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
+        <div className="flex min-h-0 flex-1 flex-col">
+          {isWorkspaceFileView ? (
+            <ComputerWorkspaceFileView
+              key={requestedFileName}
+              computerId={computerId}
+              fileName={requestedFileName}
+              isEditingMarkdown={isEditingMarkdownFile}
+              onEditingMarkdownChange={setIsEditingMarkdownFile}
+            />
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col bg-[#fbfbfb]">
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
                 {messages.length === 0 && !isLoading && (
                   <div className="rounded-2xl border border-dashed border-[#ddd] bg-white px-5 py-6 text-center">
                     <p className="text-sm text-[#444]">Your computer is ready.</p>
@@ -1310,116 +1413,173 @@ export default function ComputerDetailClient({
                   </div>
                 )}
                 <div ref={messagesEndRef} />
+                </div>
               </div>
-            </div>
 
-            <div className="px-4 pb-4">
-              <div className="mx-auto w-full max-w-4xl">
-                <div className="relative">
-                  {showSlashCommands && (
-                    <div
-                      ref={slashMenuRef}
-                      className="absolute bottom-full left-0 right-0 z-10 mb-2 overflow-y-auto rounded-2xl border border-[#e5e5e5] bg-white p-1 shadow-lg"
-                      style={{ maxHeight: '205px' }}
-                    >
-                      {slashCommands.map((entry, index) => (
-                        <button
-                          key={entry.name}
-                          type="button"
-                          data-command-index={index}
-                          onClick={() => insertSlashCommand(getComputerCommandLabel(entry))}
-                          className={`flex w-full items-center justify-between gap-4 rounded-xl px-3 py-2 text-left transition-colors ${
-                            index === activeSlashIndex ? 'bg-[#f5f5f5]' : 'hover:bg-[#fafafa]'
-                          }`}
-                        >
-                          <span className="whitespace-nowrap text-xs font-medium text-[#0a0a0a]">
-                            {getComputerCommandLabel(entry)}
-                          </span>
-                          <span className="min-w-0 truncate text-right text-[11px] text-[#8a8a8a]">
-                            {entry.description}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+              <div className="px-4 pb-4">
+                <div className="mx-auto w-full max-w-4xl">
+                  <div className="relative">
+                    {showSlashCommands && (
+                      <div
+                        ref={slashMenuRef}
+                        className="absolute bottom-full left-0 right-0 z-10 mb-2 overflow-y-auto rounded-2xl border border-[#e5e5e5] bg-white p-1 shadow-lg"
+                        style={{ maxHeight: '205px' }}
+                      >
+                        {slashCommands.map((entry, index) => (
+                          <button
+                            key={entry.name}
+                            type="button"
+                            data-command-index={index}
+                            onClick={() => insertSlashCommand(getComputerCommandLabel(entry))}
+                            className={`flex w-full items-center justify-between gap-4 rounded-xl px-3 py-2 text-left transition-colors ${
+                              index === activeSlashIndex ? 'bg-[#f5f5f5]' : 'hover:bg-[#fafafa]'
+                            }`}
+                          >
+                            <span className="whitespace-nowrap text-xs font-medium text-[#0a0a0a]">
+                              {getComputerCommandLabel(entry)}
+                            </span>
+                            <span className="min-w-0 truncate text-right text-[11px] text-[#8a8a8a]">
+                              {entry.description}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
 
-                  <div className="flex items-center gap-2 rounded-2xl bg-[#f0f0f0] px-4 py-2.5">
-                    <DelayedTooltip
-                      className="min-w-0 flex-1"
-                      label="Slash commands (/) · focus from elsewhere (/)"
-                      side="bottom"
-                    >
-                      <textarea
-                        ref={textareaRef}
-                        value={input}
-                        onChange={(event) => {
-                          setInput(event.target.value)
-                          setActiveSlashIndex(0)
-                        }}
-                        placeholder="Ask the computer to do something or type / for OpenClaw commands..."
-                        rows={1}
-                        onKeyDown={(event) => {
-                          if (showSlashCommands && event.key === 'ArrowDown') {
-                            event.preventDefault()
-                            setActiveSlashIndex((current) => (current + 1) % slashCommands.length)
-                            return
-                          }
-
-                          if (showSlashCommands && event.key === 'ArrowUp') {
-                            event.preventDefault()
-                            setActiveSlashIndex((current) => (current - 1 + slashCommands.length) % slashCommands.length)
-                            return
-                          }
-
-                          if (showSlashCommands && (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey))) {
-                            event.preventDefault()
-                            const activeCommand = slashCommands[activeSlashIndex]
-                            if (activeCommand) {
-                              insertSlashCommand(getComputerCommandLabel(activeCommand))
+                    <div className="flex items-center gap-2 rounded-2xl bg-[#f0f0f0] px-4 py-2.5">
+                      <DelayedTooltip
+                        className="min-w-0 flex-1"
+                        label="Slash commands (/) · focus from elsewhere (/)"
+                        side="bottom"
+                      >
+                        <textarea
+                          ref={textareaRef}
+                          value={input}
+                          onChange={(event) => {
+                            setInput(event.target.value)
+                            setActiveSlashIndex(0)
+                          }}
+                          placeholder="Ask the computer to do something or type / for OpenClaw commands..."
+                          rows={1}
+                          onKeyDown={(event) => {
+                            if (showSlashCommands && event.key === 'ArrowDown') {
+                              event.preventDefault()
+                              setActiveSlashIndex((current) => (current + 1) % slashCommands.length)
+                              return
                             }
-                            return
-                          }
 
-                          if (event.key === 'Enter' && !event.shiftKey) {
-                            event.preventDefault()
-                            void submitMessage()
-                          }
-                        }}
-                        className="w-full min-w-0 resize-none bg-transparent py-1.5 text-sm leading-6 text-[#0a0a0a] outline-none placeholder:text-[#aaa]"
-                      />
-                    </DelayedTooltip>
-                    {isLoading ? (
-                      <DelayedTooltip label="Stop generating (/stop)" side="top">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (activeSessionKey) {
-                              void executeComputerCommand('/stop', activeSessionKey)
+                            if (showSlashCommands && event.key === 'ArrowUp') {
+                              event.preventDefault()
+                              setActiveSlashIndex((current) => (current - 1 + slashCommands.length) % slashCommands.length)
+                              return
+                            }
+
+                            if (showSlashCommands && (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey))) {
+                              event.preventDefault()
+                              const activeCommand = slashCommands[activeSlashIndex]
+                              if (activeCommand) {
+                                insertSlashCommand(getComputerCommandLabel(activeCommand))
+                              }
+                              return
+                            }
+
+                            if (event.key === 'Enter' && !event.shiftKey) {
+                              event.preventDefault()
+                              void submitMessage()
                             }
                           }}
-                          className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333]"
-                        >
-                          <div className="h-3.5 w-3.5 rounded-sm bg-[#fafafa]" />
-                        </button>
+                          className="w-full min-w-0 resize-none bg-transparent py-1.5 text-sm leading-6 text-[#0a0a0a] outline-none placeholder:text-[#aaa]"
+                        />
                       </DelayedTooltip>
-                    ) : (
-                      <DelayedTooltip label="Send (↵) · new line (⇧↵)" side="top">
-                        <button
-                          type="button"
-                          onClick={() => void submitMessage()}
-                          disabled={!input.trim() || !activeSessionKey}
-                          className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333] disabled:opacity-40"
-                        >
-                          <Send size={14} />
-                        </button>
-                      </DelayedTooltip>
-                    )}
+                      {isLoading ? (
+                        <DelayedTooltip label="Stop generating (/stop)" side="top">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (activeSessionKey) {
+                                void executeComputerCommand('/stop', activeSessionKey)
+                              }
+                            }}
+                            className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333]"
+                          >
+                            <div className="h-3.5 w-3.5 rounded-sm bg-[#fafafa]" />
+                          </button>
+                        </DelayedTooltip>
+                      ) : (
+                        <DelayedTooltip label="Send (↵) · new line (⇧↵)" side="top">
+                          <button
+                            type="button"
+                            onClick={() => void submitMessage()}
+                            disabled={!input.trim() || !activeSessionKey}
+                            className="shrink-0 rounded-lg bg-[#0a0a0a] p-1.5 text-[#fafafa] transition-colors hover:bg-[#333] disabled:opacity-40"
+                          >
+                            <Send size={14} />
+                          </button>
+                        </DelayedTooltip>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        )
+          )}
+
+          {showTerminalPanel && (
+            <div className="h-[40vh] min-h-[280px] shrink-0 border-t border-[#dcdcdc] bg-[#111]">
+              <div className="flex h-10 items-center justify-between border-b border-white/10 px-4 text-xs text-[#d6d6d6]">
+                <div className="flex items-center gap-2">
+                  <Terminal size={13} />
+                  <span>VPS Terminal</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTerminalPanel(false)}
+                  className="rounded-md px-2 py-1 text-[#b8b8b8] transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="h-[calc(100%-2.5rem)]">
+                {isOpeningTerminal && !terminalUrl ? (
+                  <div className="flex h-full items-center justify-center gap-2 text-sm text-[#b8b8b8]">
+                    <Loader2 size={16} className="animate-spin" />
+                    Connecting terminal...
+                  </div>
+                ) : terminalError ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                    <p className="max-w-md text-sm text-[#d6d6d6]">{terminalError}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTerminalUrl(null)
+                        setShowTerminalPanel(false)
+                        void openTerminal()
+                      }}
+                      className="rounded-md border border-white/15 px-3 py-1.5 text-xs text-white transition-colors hover:bg-white/10"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : terminalUrl ? (
+                  <iframe
+                    key={terminalUrl}
+                    ref={terminalFrameRef}
+                    src={terminalUrl}
+                    title="Computer terminal"
+                    className="h-full w-full border-0 bg-[#111]"
+                    allow="clipboard-read; clipboard-write"
+                    onLoad={() => terminalFrameRef.current?.focus()}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-[#b8b8b8]">
+                    Terminal is not available yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {computer.status === 'past_due' && (

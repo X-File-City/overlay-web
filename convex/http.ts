@@ -224,21 +224,18 @@ http.route({
     }
 
     try {
-      console.log(`[HTTP] /computer/ready: calling setReady for computerId=${computerId}`)
-      await ctx.runMutation(internal.computers.setReady, {
+      console.log(`[HTTP] /computer/ready: calling confirmGatewayReadyExternally for computerId=${computerId}`)
+      const result = await ctx.runAction(internal.computers.confirmGatewayReadyExternally, {
         computerId: computerId as Id<'computers'>,
         readySecret,
       })
-      await ctx.runMutation(internal.computers.logEvent, {
-        computerId: computerId as Id<'computers'>,
-        type: 'status_change',
-        message: 'OpenClaw gateway is ready.',
-      })
-      console.log(`[HTTP] /computer/ready: success — computerId=${computerId} is now ready`)
+      console.log(
+        `[HTTP] /computer/ready: result for computerId=${computerId} ok=${result?.ok === true ? 'yes' : 'no'}`
+      )
       return new Response('OK', { status: 200 })
     } catch (err) {
       // Wrong secret or already deleted — reject
-      console.error(`[HTTP] /computer/ready: setReady failed for computerId=${computerId}:`, err)
+      console.error(`[HTTP] /computer/ready: readiness confirmation failed for computerId=${computerId}:`, err)
       return new Response('Unauthorized', { status: 401 })
     }
   }),

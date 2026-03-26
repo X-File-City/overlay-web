@@ -73,8 +73,31 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(result)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to fetch computer sessions'
-    const status = message === 'Unauthorized' ? 401 : 500
-    return NextResponse.json({ error: message }, { status })
+    if (message === 'Unauthorized') {
+      return NextResponse.json({ error: message }, { status: 401 })
+    }
+
+    if (message === 'Computer is not ready') {
+      const sessionKey = request.nextUrl.searchParams.get('sessionKey')?.trim()
+      const includeMessages = request.nextUrl.searchParams.get('messages') === 'true'
+
+      if (sessionKey && includeMessages) {
+        return NextResponse.json({
+          sessionKey,
+          messages: [],
+        })
+      }
+
+      return NextResponse.json({
+        activeSessionKey: null,
+        storePath: null,
+        sessions: [],
+        unavailableReason:
+          'This computer is still starting up. Chat sessions will appear once the OpenClaw gateway is ready.',
+      })
+    }
+
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
