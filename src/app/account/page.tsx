@@ -605,22 +605,12 @@ function AccountPageContent() {
                       <h2 className="text-lg font-medium mb-4">Weekly Usage</h2>
 
                       <div className="space-y-4">
-                        {(() => {
-                          const totalUsed =
-                            entitlements.usage.ask + entitlements.usage.agent + entitlements.usage.write
-                          const totalLimit =
-                            entitlements.limits.askPerDay +
-                            entitlements.limits.agentPerDay +
-                            entitlements.limits.writePerDay
-                          return (
-                            <ProgressBar
-                              used={totalUsed}
-                              total={totalLimit}
-                              label="Weekly Requests"
-                              showAsPercentage={true}
-                            />
-                          )
-                        })()}
+                        <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3">
+                          <p className="text-sm font-medium text-zinc-900">Auto model requests</p>
+                          <p className="mt-1 text-sm text-zinc-500">
+                            Unlimited on the free tier when you use Auto.
+                          </p>
+                        </div>
 
                         <ProgressBar
                           used={entitlements.usage.transcriptionSeconds}
@@ -631,7 +621,7 @@ function AccountPageContent() {
                       </div>
 
                       <p className="mt-4 text-xs text-[var(--muted)]">
-                        Usage resets weekly. Upgrade for unlimited usage.
+                        Auto is unlimited on free. Upgrade to Pro to use premium models.
                       </p>
                     </div>
                   )}

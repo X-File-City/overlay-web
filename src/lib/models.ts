@@ -32,6 +32,8 @@ export interface VideoModel {
   defaultAspectRatio?: string
 }
 
+export const FREE_TIER_AUTO_MODEL_ID = 'openrouter/free'
+
 export const AVAILABLE_MODELS: ChatModel[] = [
   // Google Models
   { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', provider: 'google', openClawRef: 'vercel-ai-gateway/google/gemini-3.1-pro-preview', description: 'Most capable', intelligence: 2, cost: 3, supportsVision: true, supportsReasoning: true, supportsSearch: false },
@@ -55,7 +57,7 @@ export const AVAILABLE_MODELS: ChatModel[] = [
   { id: 'openai/gpt-oss-20b', name: 'GPT OSS 20B', provider: 'groq', openClawRef: 'vercel-ai-gateway/openai/gpt-oss-20b', description: 'Open weights', intelligence: 0.75, cost: 1, supportsVision: false, supportsReasoning: true, supportsSearch: false },
 
   // OpenRouter (free) — only the auto router; API id stays `openrouter/free` (do not send bare `free`).
-  { id: 'openrouter/free', name: 'Auto', provider: 'openrouter', openClawRef: 'openrouter/free', description: 'Auto-selects a free model', intelligence: 1.25, cost: 0, supportsVision: true, supportsReasoning: true, supportsSearch: false },
+  { id: FREE_TIER_AUTO_MODEL_ID, name: 'Auto', provider: 'openrouter', openClawRef: 'openrouter/free', description: 'Auto-selects a free model', intelligence: 1.25, cost: 0, supportsVision: true, supportsReasoning: true, supportsSearch: false },
 ]
 
 export const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
@@ -80,7 +82,7 @@ export const CHAT_MODEL_QUALITY_PRIORITY: string[] = [
   'moonshotai/kimi-k2-0905',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
-  'openrouter/free',
+  FREE_TIER_AUTO_MODEL_ID,
 ]
 
 export function pickBestModelForAct(selectedAskModelIds: string[]): string {
@@ -120,7 +122,7 @@ export function getModelsByIntelligence(isFreeTier: boolean): ChatModel[] {
     (a, b) => (idxMap.get(a.id) ?? 999) - (idxMap.get(b.id) ?? 999),
   )
   if (isFreeTier) {
-    const freeIdx = sorted.findIndex((m) => m.id === 'openrouter/free')
+    const freeIdx = sorted.findIndex((m) => m.id === FREE_TIER_AUTO_MODEL_ID)
     if (freeIdx > 0) {
       const [free] = sorted.splice(freeIdx, 1)
       sorted.unshift(free!)

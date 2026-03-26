@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { mutation, query, internalMutation, internalQuery } from './_generated/server'
 import { requireAccessToken, requireServerSecret, validateServerSecret } from './lib/auth'
 import { logAuthDebug, summarizeJwtForLog } from './lib/authDebug'
+import { FREE_TIER_AUTO_MODEL_ID } from '../src/lib/models'
 
 function getPastWeekDates(): string[] {
   const dates: string[] = []
@@ -12,6 +13,14 @@ function getPastWeekDates(): string[] {
     dates.push(date.toISOString().split('T')[0])
   }
   return dates
+}
+
+function countsTowardFreeTierMessageLimit(event: {
+  type: 'ask' | 'write' | 'agent' | 'embedding' | 'transcription' | 'generation'
+  modelId?: string
+}): boolean {
+  if (event.type !== 'ask' && event.type !== 'write' && event.type !== 'agent') return false
+  return event.modelId !== FREE_TIER_AUTO_MODEL_ID
 }
 
 async function authorizeUserAccess(params: {
@@ -301,10 +310,11 @@ export const recordBatch = mutation({
     let transcriptionSecondsDelta = 0
 
     for (const event of events) {
-      if (event.type === 'ask') askDelta++
-      else if (event.type === 'write') writeDelta++
-      else if (event.type === 'agent') agentDelta++
-      else if (event.type === 'transcription') {
+      if (countsTowardFreeTierMessageLimit(event)) {
+        if (event.type === 'ask') askDelta++
+        else if (event.type === 'write') writeDelta++
+        else if (event.type === 'agent') agentDelta++
+      } else if (event.type === 'transcription') {
         transcriptionSecondsDelta += Math.max(0, Math.round(event.cost))
       }
     }
@@ -432,12 +442,14 @@ export const recordUsage = mutation({
     }
 
     if (dailyUsage) {
-      if (args.type === 'ask') {
-        await ctx.db.patch(dailyUsage._id, { askCount: dailyUsage.askCount + 1 })
-      } else if (args.type === 'write') {
-        await ctx.db.patch(dailyUsage._id, { writeCount: dailyUsage.writeCount + 1 })
-      } else if (args.type === 'agent') {
-        await ctx.db.patch(dailyUsage._id, { agentCount: dailyUsage.agentCount + 1 })
+      if (countsTowardFreeTierMessageLimit(args)) {
+        if (args.type === 'ask') {
+          await ctx.db.patch(dailyUsage._id, { askCount: dailyUsage.askCount + 1 })
+        } else if (args.type === 'write') {
+          await ctx.db.patch(dailyUsage._id, { writeCount: dailyUsage.writeCount + 1 })
+        } else if (args.type === 'agent') {
+          await ctx.db.patch(dailyUsage._id, { agentCount: dailyUsage.agentCount + 1 })
+        }
       } else if (args.type === 'transcription') {
         const additionalSeconds = Math.max(0, Math.round(args.cost))
         await ctx.db.patch(dailyUsage._id, {

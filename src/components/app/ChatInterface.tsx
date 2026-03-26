@@ -27,6 +27,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import {
   CHAT_MODEL_QUALITY_PRIORITY,
   DEFAULT_MODEL_ID,
+  FREE_TIER_AUTO_MODEL_ID,
   IMAGE_MODELS,
   VIDEO_MODELS,
   DEFAULT_IMAGE_MODEL_ID,
@@ -1500,21 +1501,17 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       : selectedModels.every((id) => getModel(id)?.supportsVision ?? false)
 
   const isFreeTier = entitlements?.tier === 'free'
-  const weeklyUsed = isFreeTier
-    ? (entitlements?.dailyUsage.ask ?? 0) + (entitlements?.dailyUsage.write ?? 0) + (entitlements?.dailyUsage.agent ?? 0)
-    : 0
-  const weeklyLimitReached = isFreeTier && weeklyUsed >= 15
   const premiumModelBlocked =
     isFreeTier &&
     (composerMode === 'act'
-      ? getModel(selectedActModel)?.provider !== 'openrouter'
-      : selectedModels.some((id) => getModel(id)?.provider !== 'openrouter'))
+      ? selectedActModel !== FREE_TIER_AUTO_MODEL_ID
+      : selectedModels.some((id) => id !== FREE_TIER_AUTO_MODEL_ID))
   const creditsExhausted =
     !isFreeTier &&
     entitlements != null &&
     entitlements.creditsTotal > 0 &&
     entitlements.creditsUsed >= entitlements.creditsTotal * 100
-  const isSendBlocked = weeklyLimitReached || premiumModelBlocked || creditsExhausted
+  const isSendBlocked = premiumModelBlocked || creditsExhausted
 
   useEffect(() => {
     persistActiveRuntimeUiState()
@@ -3322,9 +3319,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             {isSendBlocked && !isActiveLoading ? (
               <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-[#fafafa] border border-[#e5e5e5] text-xs text-[#888]">
                 <AlertCircle size={13} className="text-amber-500 shrink-0" />
-                {weeklyLimitReached
-                  ? 'Weekly limit reached. Upgrade to Pro for unlimited messages.'
-                  : premiumModelBlocked
+                {premiumModelBlocked
                   ? 'This model requires Pro. Switch to a free model or upgrade.'
                   : 'No credits remaining. Please top up your account.'}
               </div>

@@ -8,6 +8,7 @@ import { getGatewayLanguageModel, getGatewayPerplexitySearchTool } from '@/lib/a
 import { userFacingOpenRouterError } from '@/lib/openrouter-service'
 import { createBrowserUnifiedTools } from '@/lib/composio-tools'
 import { createWebTools } from '@/lib/web-tools'
+import { FREE_TIER_AUTO_MODEL_ID } from '@/lib/models'
 import { MAX_TOOL_STEPS_ACT } from '@/lib/tools/policy'
 import { calculateTokenCost, isPremiumModel } from '@/lib/model-pricing'
 import { buildAutoRetrievalBundle } from '@/lib/ask-knowledge-context'
@@ -96,22 +97,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { tier, dailyUsage, creditsUsed, creditsTotal } = entitlements
+    const { tier, creditsUsed, creditsTotal } = entitlements
     const creditsTotalCents = creditsTotal * 100
     const remainingCents = creditsTotalCents - creditsUsed
 
     if (tier === 'free') {
-      if (isPremiumModel(effectiveModelId)) {
+      if (effectiveModelId !== FREE_TIER_AUTO_MODEL_ID) {
         return NextResponse.json(
-          { error: 'premium_model_not_allowed', message: 'Upgrade to Pro to use premium models' },
+          { error: 'premium_model_not_allowed', message: 'Free tier is limited to the Auto model. Upgrade to Pro to use premium models.' },
           { status: 403 },
-        )
-      }
-      const totalWeekly = dailyUsage.ask + dailyUsage.write + dailyUsage.agent
-      if (totalWeekly >= 15) {
-        return NextResponse.json(
-          { error: 'weekly_limit_exceeded', message: 'Weekly message limit reached. Upgrade to Pro for unlimited messages.' },
-          { status: 429 },
         )
       }
     } else {

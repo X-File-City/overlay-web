@@ -43,28 +43,10 @@ function UsageBar({ entitlements }: { entitlements: Entitlements | null }) {
     return <p className="text-[11px] text-[#aaa]">Loading...</p>
   }
 
-  const { tier, creditsUsed, creditsTotal, dailyUsage } = entitlements
+  const { tier, creditsUsed, creditsTotal } = entitlements
 
   if (tier === 'free') {
-    const used = dailyUsage.ask + dailyUsage.write + dailyUsage.agent
-    const pct = Math.min(100, Math.round((used / 15) * 100))
-    const exhausted = used >= 15
-    const warning = pct >= 80
-    return (
-      <div className={`flex flex-col gap-1 text-xs ${exhausted ? 'text-red-500' : warning ? 'text-amber-500' : 'text-[#aaa]'}`}>
-        <div className="flex items-center justify-between">
-          <span>{used}/15 weekly messages</span>
-          {exhausted && <AlertCircle size={11} />}
-        </div>
-        <div className="h-1 rounded-full bg-[#e5e5e5] overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${exhausted ? 'bg-red-400' : warning ? 'bg-amber-400' : 'bg-[#0a0a0a]'}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        {exhausted && <span className="text-red-500 font-medium text-[10px]">Limit reached — upgrade to Pro</span>}
-      </div>
-    )
+    return <p className="text-[11px] text-[#aaa]">Auto model messages are unlimited. Upgrade to Pro to use premium models and credits.</p>
   }
 
   const creditsTotalCents = creditsTotal * 100
