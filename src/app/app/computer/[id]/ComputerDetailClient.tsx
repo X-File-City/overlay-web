@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { DefaultChatTransport, type UIMessage } from 'ai'
 import { useChat } from '@ai-sdk/react'
-import { AlertCircle, ChevronDown, Loader2, Plus, Send, Terminal } from 'lucide-react'
+import { AlertCircle, ChevronDown, Loader2, Plus, Send } from 'lucide-react'
 import { MarkdownMessage } from '@/components/app/MarkdownMessage'
 import { DelayedTooltip } from '@/components/app/DelayedTooltip'
 import { AVAILABLE_MODELS, DEFAULT_MODEL_ID } from '@/lib/models'
@@ -274,15 +274,10 @@ export default function ComputerDetailClient({
   const [hydratedTranscriptKey, setHydratedTranscriptKey] = useState<string | null>(null)
   const [isCreatingSession, setIsCreatingSession] = useState(false)
   const [isEditingMarkdownFile, setIsEditingMarkdownFile] = useState(false)
-  const [isOpeningTerminal, setIsOpeningTerminal] = useState(false)
-  const [showTerminalPanel, setShowTerminalPanel] = useState(false)
-  const [terminalUrl, setTerminalUrl] = useState<string | null>(null)
-  const [terminalError, setTerminalError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [activeSlashIndex, setActiveSlashIndex] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const terminalFrameRef = useRef<HTMLIFrameElement>(null)
   const selectedModelRef = useRef(selectedModel)
   const activeSessionKeyRef = useRef(activeSessionKey)
   const hydrateRequestIdRef = useRef(0)
@@ -785,21 +780,6 @@ export default function ComputerDetailClient({
   }, [requestedFileName])
 
   useEffect(() => {
-    if (computer?.status === 'ready') return
-    setShowTerminalPanel(false)
-    setTerminalUrl(null)
-    setTerminalError(null)
-  }, [computer?.status])
-
-  useEffect(() => {
-    if (!showTerminalPanel || !terminalUrl) return
-    const timeoutId = window.setTimeout(() => {
-      terminalFrameRef.current?.focus()
-    }, 150)
-    return () => window.clearTimeout(timeoutId)
-  }, [showTerminalPanel, terminalUrl])
-
-  useEffect(() => {
     if (computer?.status !== 'ready' || isWorkspaceFileView || !activeSessionKey) return
     if (hydratedTranscriptKey === activeSessionKey) return
     void hydrateMessages(activeSessionKey)
@@ -899,39 +879,6 @@ export default function ComputerDetailClient({
     },
     [activeSessionKey, computerId, fetchComputer, refreshSessions, syncComputerRuntime]
   )
-
-  const openTerminal = useCallback(async () => {
-    if (showTerminalPanel) {
-      setShowTerminalPanel(false)
-      setTerminalUrl(null)
-      setTerminalError(null)
-      return
-    }
-
-    setShowTerminalPanel(true)
-    setTerminalError(null)
-    if (terminalUrl || isOpeningTerminal) return
-
-    setIsOpeningTerminal(true)
-    try {
-      await fetch('/api/app/computer-terminal/socket', { cache: 'no-store' })
-
-      const response = await fetch(`/api/app/computer-terminal?computerId=${computerId}`, {
-        cache: 'no-store',
-      })
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null
-        setTerminalError(payload?.error || 'Terminal is not available yet. Try again in a moment.')
-        return
-      }
-      const { terminalUrl } = await response.json() as { terminalUrl: string }
-      setTerminalUrl(terminalUrl)
-    } catch {
-      setTerminalError('Failed to load terminal. Please try again.')
-    } finally {
-      setIsOpeningTerminal(false)
-    }
-  }, [computerId, isOpeningTerminal, showTerminalPanel, terminalUrl])
 
   const appendLocalCommandResult = useCallback((
     sessionKey: string,
@@ -1210,21 +1157,6 @@ export default function ComputerDetailClient({
 
         {computer.status === 'ready' && !isWorkspaceFileView && (
           <div className="flex items-center gap-2">
-            <DelayedTooltip label="Open terminal" side="bottom">
-              <button
-                type="button"
-                onClick={() => void openTerminal()}
-                disabled={isOpeningTerminal}
-                className={`flex items-center justify-center rounded-md p-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  showTerminalPanel
-                    ? 'bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222]'
-                    : 'bg-[#f0f0f0] text-[#525252] hover:bg-[#e8e8e8]'
-                }`}
-              >
-                {isOpeningTerminal ? <Loader2 size={13} className="animate-spin" /> : <Terminal size={13} />}
-              </button>
-            </DelayedTooltip>
-
             <DelayedTooltip label="New chat session" side="bottom">
               <button
                 type="button"
@@ -1279,20 +1211,6 @@ export default function ComputerDetailClient({
                 {isEditingMarkdownFile ? 'Preview' : 'Edit'}
               </button>
             )}
-            <DelayedTooltip label="Open terminal" side="bottom">
-              <button
-                type="button"
-                onClick={() => void openTerminal()}
-                disabled={isOpeningTerminal}
-                className={`flex items-center justify-center rounded-md p-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  showTerminalPanel
-                    ? 'bg-[#0a0a0a] text-[#fafafa] hover:bg-[#222]'
-                    : 'bg-[#f0f0f0] text-[#525252] hover:bg-[#e8e8e8]'
-                }`}
-              >
-                {isOpeningTerminal ? <Loader2 size={13} className="animate-spin" /> : <Terminal size={13} />}
-              </button>
-            </DelayedTooltip>
           </div>
         )}
 
@@ -1524,82 +1442,6 @@ export default function ComputerDetailClient({
                         </DelayedTooltip>
                       )}
                     </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {showTerminalPanel && (
-            <div className="shrink-0 px-4 pb-4">
-              <div className="overflow-hidden rounded-[22px] border border-[#e7e7e7] bg-white shadow-[0_18px_44px_rgba(0,0,0,0.07)]">
-                <div className="flex items-center justify-between border-b border-[#ececec] bg-[#fcfcfc] px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f1f1] text-[#202020]">
-                      <Terminal size={14} />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[12px] font-medium tracking-[-0.01em] text-[#111]">VPS Terminal</p>
-                      <p className="text-[11px] text-[#8a8a8a]">Interactive shell rooted in the computer workspace</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1 rounded-full border border-[#ececec] bg-white px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] text-[#7a7a7a]">
-                      <span className="h-1.5 w-1.5 rounded-full bg-[#0a0a0a]" />
-                      Live
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowTerminalPanel(false)
-                        setTerminalUrl(null)
-                        setTerminalError(null)
-                      }}
-                      className="rounded-full border border-[#e8e8e8] bg-white px-3 py-1.5 text-[11px] font-medium text-[#555] transition-colors hover:border-[#d8d8d8] hover:bg-[#f7f7f7] hover:text-[#111]"
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-[linear-gradient(180deg,#17181c_0%,#0d0d0f_100%)] p-2.5">
-                  <div className="h-[40vh] min-h-[300px] overflow-hidden rounded-[16px] border border-white/10 bg-[#111] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-                    {isOpeningTerminal && !terminalUrl ? (
-                      <div className="flex h-full items-center justify-center gap-2 text-sm text-[#b8b8b8]">
-                        <Loader2 size={16} className="animate-spin" />
-                        Connecting terminal...
-                      </div>
-                    ) : terminalError ? (
-                      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-                        <p className="max-w-md text-sm text-[#d6d6d6]">{terminalError}</p>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setTerminalUrl(null)
-                            setShowTerminalPanel(false)
-                            void openTerminal()
-                          }}
-                          className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-white transition-colors hover:bg-white/10"
-                        >
-                          Retry
-                        </button>
-                      </div>
-                    ) : terminalUrl ? (
-                      <iframe
-                        key={terminalUrl}
-                        ref={terminalFrameRef}
-                        src={terminalUrl}
-                        title="Computer terminal"
-                        className="h-full w-full border-0 bg-[#111]"
-                        allow="clipboard-read; clipboard-write"
-                        onLoad={() => terminalFrameRef.current?.focus()}
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-sm text-[#b8b8b8]">
-                        Terminal is not available yet.
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
