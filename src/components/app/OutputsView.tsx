@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { ImageIcon, Video, Download, RefreshCw, AlertCircle, Clock } from 'lucide-react'
+import { ImageIcon, Video, Download, RefreshCw, AlertCircle, Clock, Info, X } from 'lucide-react'
 
 interface Output {
   _id: string
@@ -31,6 +31,7 @@ export default function OutputsView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<Output | null>(null)
+  const [detailsOutput, setDetailsOutput] = useState<Output | null>(null)
 
   const load = useCallback(async (type?: FilterType) => {
     setLoading(true)
@@ -133,6 +134,7 @@ export default function OutputsView() {
                 key={output._id}
                 output={output}
                 onExpand={() => setLightbox(output)}
+                onDetails={() => setDetailsOutput(output)}
               />
             ))}
           </div>
@@ -157,7 +159,17 @@ export default function OutputsView() {
               <video src={lightbox.url} controls className="max-h-[80vh] max-w-full" />
             )}
             <div className="p-4 space-y-1">
-              <p className="text-sm text-[#0a0a0a] line-clamp-2">{lightbox.prompt}</p>
+              <div className="flex items-start gap-3">
+                <p className="min-w-0 flex-1 text-sm text-[#0a0a0a] line-clamp-2">{lightbox.prompt}</p>
+                <button
+                  type="button"
+                  onClick={() => setDetailsOutput(lightbox)}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#e5e5e5] px-2 py-1 text-[11px] font-medium text-[#525252] transition-colors hover:bg-[#f5f5f5] hover:text-[#0a0a0a]"
+                >
+                  <Info size={12} />
+                  Details
+                </button>
+              </div>
               <div className="flex items-center gap-3 text-xs text-[#888]">
                 <span>{lightbox.modelId}</span>
                 <span><Clock size={10} className="inline mr-0.5" />{timeAgo(lightbox.createdAt)}</span>
@@ -175,11 +187,79 @@ export default function OutputsView() {
           </div>
         </div>
       )}
+
+      {detailsOutput && (
+        <div className="fixed inset-0 z-[60] flex justify-end bg-black/25" onClick={() => setDetailsOutput(null)}>
+          <div
+            className="h-full w-full max-w-md overflow-y-auto border-l border-[#e5e5e5] bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[#e5e5e5] px-5 py-4">
+              <div>
+                <h2 className="text-sm font-medium text-[#0a0a0a]">Output details</h2>
+                <p className="mt-0.5 text-xs text-[#888]">{detailsOutput.type} generation</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailsOutput(null)}
+                className="rounded-md p-1.5 text-[#888] transition-colors hover:bg-[#f5f5f5] hover:text-[#0a0a0a]"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="space-y-5 px-5 py-5">
+              <section className="space-y-2">
+                <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#9a9a9a]">Prompt</p>
+                <p className="rounded-xl border border-[#e5e5e5] bg-[#fafafa] px-3 py-3 text-sm leading-relaxed text-[#0a0a0a]">
+                  {detailsOutput.prompt}
+                </p>
+              </section>
+              <section className="grid grid-cols-2 gap-3">
+                <DetailItem label="Model" value={detailsOutput.modelId} />
+                <DetailItem label="Status" value={detailsOutput.status} />
+                <DetailItem label="Type" value={detailsOutput.type} />
+                <DetailItem label="Created" value={new Date(detailsOutput.createdAt).toLocaleString()} />
+                <DetailItem label="Completed" value={detailsOutput.completedAt ? new Date(detailsOutput.completedAt).toLocaleString() : 'Not completed'} />
+                <DetailItem label="Output ID" value={detailsOutput._id} />
+              </section>
+              {detailsOutput.errorMessage && (
+                <section className="space-y-2">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#9a9a9a]">Error</p>
+                  <p className="rounded-xl border border-red-100 bg-red-50 px-3 py-3 text-sm leading-relaxed text-red-600">
+                    {detailsOutput.errorMessage}
+                  </p>
+                </section>
+              )}
+              {detailsOutput.url && (
+                <div className="flex items-center justify-end">
+                  <a
+                    href={detailsOutput.url}
+                    download={detailsOutput.type === 'image' ? 'generated.png' : 'generated.mp4'}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-[#0a0a0a] px-3 py-2 text-xs font-medium text-[#fafafa] transition-colors hover:bg-[#222]"
+                  >
+                    <Download size={12} />
+                    Download
+                  </a>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function OutputCard({ output, onExpand }: { output: Output; onExpand: () => void }) {
+function DetailItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-[#e5e5e5] bg-[#fafafa] px-3 py-3">
+      <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-[#9a9a9a]">{label}</p>
+      <p className="mt-1 break-words text-sm leading-relaxed text-[#0a0a0a]">{value}</p>
+    </div>
+  )
+}
+
+function OutputCard({ output, onExpand, onDetails }: { output: Output; onExpand: () => void; onDetails: () => void }) {
   const isCompleted = output.status === 'completed'
   const isFailed = output.status === 'failed'
   const isPending = output.status === 'pending'
@@ -234,8 +314,23 @@ function OutputCard({ output, onExpand }: { output: Output; onExpand: () => void
       </div>
       {/* Caption */}
       <div className="px-3 py-2">
-        <p className="text-xs text-[#525252] line-clamp-2 leading-relaxed">{output.prompt}</p>
-        <p className="text-[10px] text-[#aaa] mt-1">{timeAgo(output.createdAt)}</p>
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-[#525252] line-clamp-2 leading-relaxed">{output.prompt}</p>
+            <p className="mt-1 text-[10px] text-[#aaa]">{timeAgo(output.createdAt)}</p>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDetails()
+            }}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#e5e5e5] px-2 py-1 text-[11px] font-medium text-[#525252] transition-colors hover:bg-[#f5f5f5] hover:text-[#0a0a0a]"
+          >
+            <Info size={12} />
+            Details
+          </button>
+        </div>
       </div>
     </div>
   )

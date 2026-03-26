@@ -19,6 +19,7 @@ import {
   BrainCircuit,
   ArrowUp,
   Globe,
+  Play,
 } from 'lucide-react'
 import { Chat, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, getToolName, isToolUIPart, type UIMessage } from 'ai'
@@ -1142,21 +1143,40 @@ function MediaCompletedReveal({
         <video
           src={url}
           controls
+          preload="metadata"
+          playsInline
           onLoadedData={markReady}
+          onLoadedMetadata={markReady}
+          onCanPlay={markReady}
           onError={markReady}
           className={`absolute inset-0 z-20 block h-full w-full rounded-xl ${isMulti ? 'object-contain object-center' : 'border border-[#e5e5e5]'} transition-opacity duration-300 ease-out ${
             ready ? 'opacity-100' : 'opacity-0'
           }`}
         />
       )}
-      <a
-        href={url}
-        download={genType === 'image' ? 'generated.png' : 'generated.mp4'}
-        className="absolute top-2 right-2 z-30 rounded-full bg-white/90 p-1.5 shadow opacity-0 transition-opacity hover:bg-white group-hover:opacity-100"
-        title="Download"
-      >
-        <Download size={13} className="text-[#0a0a0a]" />
-      </a>
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 h-16 bg-gradient-to-b from-black/55 via-black/18 to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+      <div className="absolute inset-x-0 top-0 z-40 flex items-start justify-between gap-3 p-2.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+        <span className="min-w-0 rounded-full bg-black/30 px-2.5 py-1 text-[11px] font-medium leading-none text-white/95 backdrop-blur-[1px]">
+          <span className="block truncate">{modelName}</span>
+        </span>
+        <a
+          href={url}
+          download={genType === 'image' ? 'generated.png' : 'generated.mp4'}
+          className="pointer-events-auto shrink-0 rounded-full bg-white/92 p-1.5 shadow-sm transition-colors hover:bg-white"
+          title="Download"
+        >
+          <Download size={13} className="text-[#0a0a0a]" />
+        </a>
+      </div>
+      {genType === 'video' && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300 ease-out group-hover:opacity-0">
+          <span className={`inline-flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-white shadow-sm transition-opacity duration-300 ${
+            ready ? 'opacity-100' : 'opacity-0'
+          }`}>
+            <Play size={16} fill="currentColor" />
+          </span>
+        </div>
+      )}
     </div>
   )
 }
