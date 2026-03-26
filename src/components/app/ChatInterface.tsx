@@ -20,7 +20,7 @@ import {
   ArrowUp,
   Globe,
 } from 'lucide-react'
-import { useChat } from '@ai-sdk/react'
+import { Chat, useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, getToolName, isToolUIPart, type UIMessage } from 'ai'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
@@ -887,6 +887,123 @@ interface GenerationResult {
   error?: string
 }
 
+interface ConversationUiState {
+  composerMode: 'ask' | 'act'
+  selectedActModel: string
+  selectedModels: string[]
+  exchangeModes: ('ask' | 'act')[]
+  exchangeModels: string[][]
+  selectedTabPerExchange: number[]
+  activeChatTitle: string | null
+  generationResults: Map<number, GenerationResult[]>
+  exchangeGenTypes: ('text' | 'image' | 'video')[]
+  isFirstMessage: boolean
+  orphanModelThreads: Map<string, UIMessage[]>
+  lastGeneratedImageUrl: string | null
+}
+
+interface ConversationRuntime {
+  askChats: [Chat<UIMessage>, Chat<UIMessage>, Chat<UIMessage>, Chat<UIMessage>]
+  actChat: Chat<UIMessage>
+  hydrated: boolean
+  ui: ConversationUiState
+}
+
+function cloneGenerationResultsMap(source: Map<number, GenerationResult[]>): Map<number, GenerationResult[]> {
+  return new Map(
+    Array.from(source.entries()).map(([idx, results]) => [
+      idx,
+      results.map((result) => ({ ...result })),
+    ]),
+  )
+}
+
+function cloneOrphanModelThreadsMap(source: Map<string, UIMessage[]>): Map<string, UIMessage[]> {
+  return new Map(
+    Array.from(source.entries()).map(([modelId, thread]) => [
+      modelId,
+      thread.map((msg) => cloneUiMessageForThread(msg)),
+    ]),
+  )
+}
+
+function cloneConversationUiState(state: ConversationUiState): ConversationUiState {
+  return {
+    composerMode: state.composerMode,
+    selectedActModel: state.selectedActModel,
+    selectedModels: [...state.selectedModels],
+    exchangeModes: [...state.exchangeModes],
+    exchangeModels: state.exchangeModels.map((models) => [...models]),
+    selectedTabPerExchange: [...state.selectedTabPerExchange],
+    activeChatTitle: state.activeChatTitle,
+    generationResults: cloneGenerationResultsMap(state.generationResults),
+    exchangeGenTypes: [...state.exchangeGenTypes],
+    isFirstMessage: state.isFirstMessage,
+    orphanModelThreads: cloneOrphanModelThreadsMap(state.orphanModelThreads),
+    lastGeneratedImageUrl: state.lastGeneratedImageUrl,
+  }
+}
+
+function createConversationUiState(
+  overrides: Partial<ConversationUiState> = {},
+): ConversationUiState {
+  return {
+    composerMode: overrides.composerMode ?? 'ask',
+    selectedActModel: overrides.selectedActModel ?? DEFAULT_MODEL_ID,
+    selectedModels: [...(overrides.selectedModels ?? [DEFAULT_MODEL_ID])],
+    exchangeModes: [...(overrides.exchangeModes ?? [])],
+    exchangeModels: (overrides.exchangeModels ?? []).map((models) => [...models]),
+    selectedTabPerExchange: [...(overrides.selectedTabPerExchange ?? [])],
+    activeChatTitle: overrides.activeChatTitle ?? null,
+    generationResults: overrides.generationResults
+      ? cloneGenerationResultsMap(overrides.generationResults)
+      : new Map(),
+    exchangeGenTypes: [...(overrides.exchangeGenTypes ?? [])],
+    isFirstMessage: overrides.isFirstMessage ?? true,
+    orphanModelThreads: overrides.orphanModelThreads
+      ? cloneOrphanModelThreadsMap(overrides.orphanModelThreads)
+      : new Map(),
+    lastGeneratedImageUrl: overrides.lastGeneratedImageUrl ?? null,
+  }
+}
+
+function createConversationRuntime(
+  chatId: string,
+  uiOverrides: Partial<ConversationUiState> = {},
+): ConversationRuntime {
+  const askChats: ConversationRuntime['askChats'] = [
+    new Chat({
+      id: `${chatId}:ask:0`,
+      transport: new DefaultChatTransport({ api: '/api/app/conversations/ask' }),
+    }),
+    new Chat({
+      id: `${chatId}:ask:1`,
+      transport: new DefaultChatTransport({ api: '/api/app/conversations/ask' }),
+    }),
+    new Chat({
+      id: `${chatId}:ask:2`,
+      transport: new DefaultChatTransport({ api: '/api/app/conversations/ask' }),
+    }),
+    new Chat({
+      id: `${chatId}:ask:3`,
+      transport: new DefaultChatTransport({ api: '/api/app/conversations/ask' }),
+    }),
+  ]
+
+  return {
+    askChats,
+    actChat: new Chat({
+      id: `${chatId}:act`,
+      transport: new DefaultChatTransport({ api: '/api/app/conversations/act' }),
+      onFinish: ({ messages }) => {
+        askChats[0].messages = [...messages]
+      },
+    }),
+    hydrated: false,
+    ui: createConversationUiState(uiOverrides),
+  }
+}
+
 /** Single image/video cell: mesh placeholder while generating; crossfade → media after load. */
 function MediaSlotOutput({
   genType,
@@ -1088,6 +1205,8 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   const { begin, done } = useNavigationProgress()
   const activeChatIdRef = useRef<string | null>(null)
   const loadChatRequestRef = useRef(0)
+  const runtimesRef = useRef(new Map<string, ConversationRuntime>())
+  const emptyRuntimeRef = useRef(createConversationRuntime('__empty__'))
 
   // Clear active viewer + ref when this tab unmounts so any in-flight .then() sees isActive=false
   useEffect(() => {
@@ -1178,18 +1297,94 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   // Stores the pending title so loadChats() never overwrites it before the PATCH lands
   const pendingTitleRef = useRef<{ chatId: string; title: string } | null>(null)
 
-  // ── 4 fixed chat instances ────────────────────────────────────────────────
-  const transport0 = useMemo(() => new DefaultChatTransport({ api: '/api/app/conversations/ask' }), [])
-  const transport1 = useMemo(() => new DefaultChatTransport({ api: '/api/app/conversations/ask' }), [])
-  const transport2 = useMemo(() => new DefaultChatTransport({ api: '/api/app/conversations/ask' }), [])
-  const transport3 = useMemo(() => new DefaultChatTransport({ api: '/api/app/conversations/ask' }), [])
-  const actTransport = useMemo(() => new DefaultChatTransport({ api: '/api/app/conversations/act' }), [])
+  const ensureConversationRuntime = useCallback((chatId: string, uiOverrides?: Partial<ConversationUiState>) => {
+    const existing = runtimesRef.current.get(chatId)
+    if (existing) {
+      if (uiOverrides) {
+        existing.ui = createConversationUiState({
+          ...existing.ui,
+          ...uiOverrides,
+          generationResults: uiOverrides.generationResults ?? existing.ui.generationResults,
+          orphanModelThreads: uiOverrides.orphanModelThreads ?? existing.ui.orphanModelThreads,
+        })
+      }
+      return existing
+    }
 
-  const chat0 = useChat({ transport: transport0 })
-  const chat1 = useChat({ transport: transport1 })
-  const chat2 = useChat({ transport: transport2 })
-  const chat3 = useChat({ transport: transport3 })
-  const actChat = useChat({ transport: actTransport })
+    const runtime = createConversationRuntime(chatId, uiOverrides)
+    runtimesRef.current.set(chatId, runtime)
+    return runtime
+  }, [])
+
+  const applyUiStateToView = useCallback((ui: ConversationUiState) => {
+    setComposerMode(ui.composerMode)
+    setSelectedActModel(ui.selectedActModel)
+    setSelectedModels([...ui.selectedModels])
+    setExchangeModes([...ui.exchangeModes])
+    setExchangeModels(ui.exchangeModels.map((models) => [...models]))
+    setSelectedTabPerExchange([...ui.selectedTabPerExchange])
+    setActiveChatTitle(ui.activeChatTitle)
+    setGenerationResults(cloneGenerationResultsMap(ui.generationResults))
+    setExchangeGenTypes([...ui.exchangeGenTypes])
+    setIsFirstMessage(ui.isFirstMessage)
+    lastGeneratedImageUrlRef.current = ui.lastGeneratedImageUrl
+  }, [])
+
+  const buildActiveUiStateSnapshot = useCallback((): ConversationUiState => {
+    const activeRuntime = activeChatId ? ensureConversationRuntime(activeChatId) : null
+    return createConversationUiState({
+      composerMode,
+      selectedActModel,
+      selectedModels,
+      exchangeModes,
+      exchangeModels,
+      selectedTabPerExchange,
+      activeChatTitle,
+      generationResults,
+      exchangeGenTypes,
+      isFirstMessage,
+      orphanModelThreads: activeRuntime?.ui.orphanModelThreads,
+      lastGeneratedImageUrl: lastGeneratedImageUrlRef.current,
+    })
+  }, [
+    activeChatId,
+    activeChatTitle,
+    composerMode,
+    ensureConversationRuntime,
+    exchangeGenTypes,
+    exchangeModels,
+    exchangeModes,
+    generationResults,
+    isFirstMessage,
+    selectedActModel,
+    selectedModels,
+    selectedTabPerExchange,
+  ])
+
+  const persistActiveRuntimeUiState = useCallback(() => {
+    if (!activeChatId) return
+    const runtime = ensureConversationRuntime(activeChatId)
+    runtime.ui = buildActiveUiStateSnapshot()
+    runtime.hydrated = true
+  }, [activeChatId, buildActiveUiStateSnapshot, ensureConversationRuntime])
+
+  const updateRuntimeUiState = useCallback((
+    chatId: string,
+    updater: (prev: ConversationUiState) => ConversationUiState,
+  ) => {
+    const runtime = ensureConversationRuntime(chatId)
+    runtime.ui = updater(cloneConversationUiState(runtime.ui))
+    if (activeChatIdRef.current === chatId) {
+      applyUiStateToView(runtime.ui)
+    }
+  }, [applyUiStateToView, ensureConversationRuntime])
+
+  const activeRuntime = activeChatId ? ensureConversationRuntime(activeChatId) : emptyRuntimeRef.current
+  const chat0 = useChat({ chat: activeRuntime.askChats[0] })
+  const chat1 = useChat({ chat: activeRuntime.askChats[1] })
+  const chat2 = useChat({ chat: activeRuntime.askChats[2] })
+  const chat3 = useChat({ chat: activeRuntime.askChats[3] })
+  const actChat = useChat({ chat: activeRuntime.actChat })
 
   useEffect(() => {
     if (composerMode !== 'act') {
@@ -1205,17 +1400,15 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   }, [composerMode, actChat.status, actChat.messages, chat0])
 
   const chatInstances = useMemo(() => [chat0, chat1, chat2, chat3], [chat0, chat1, chat2, chat3])
-
-  /** Full threads for models removed from the picker — keyed by model id so past exchanges stay correct */
-  const orphanModelThreadsRef = useRef(new Map<string, UIMessage[]>())
+  const activeAskChats = activeRuntime.askChats
 
   const remapChatSlotsForNewModelOrder = useCallback((prevOrder: string[], nextOrder: string[]) => {
-    const snapshots = chatInstances.map((c) => [...c.messages])
+    const snapshots = activeAskChats.map((chat) => [...chat.messages])
     const byModel = new Map<string, UIMessage[]>()
     prevOrder.forEach((id, j) => {
       byModel.set(id, snapshots[j]!)
     })
-    const orphan = orphanModelThreadsRef.current
+    const orphan = activeRuntime.ui.orphanModelThreads
     for (const id of prevOrder) {
       if (!nextOrder.includes(id)) {
         const j = prevOrder.indexOf(id)
@@ -1234,7 +1427,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             orphan.delete(mid)
           }
         }
-        if (thread) chatInstances[i].setMessages(thread)
+        if (thread) activeAskChats[i].messages = thread
         else {
           const synth = buildSynthesizedThreadForPickerSlot(
             prevOrder,
@@ -1242,16 +1435,16 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             CHAT_MODEL_QUALITY_PRIORITY,
             i,
           )
-          chatInstances[i].setMessages(synth)
+          activeAskChats[i].messages = synth
         }
       } else {
-        chatInstances[i].setMessages([])
+        activeAskChats[i].messages = []
       }
     }
-  }, [chatInstances])
+  }, [activeAskChats, activeRuntime.ui.orphanModelThreads])
 
-  const isAnyLoading =
-    chatInstances
+  const isActiveLoading =
+    activeAskChats
       .slice(0, selectedModels.length)
       .some((c) => c.status === 'streaming' || c.status === 'submitted') ||
     actChat.status === 'streaming' ||
@@ -1278,6 +1471,10 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     entitlements.creditsTotal > 0 &&
     entitlements.creditsUsed >= entitlements.creditsTotal * 100
   const isSendBlocked = weeklyLimitReached || premiumModelBlocked || creditsExhausted
+
+  useEffect(() => {
+    persistActiveRuntimeUiState()
+  }, [persistActiveRuntimeUiState])
 
   // ── data loading ──────────────────────────────────────────────────────────
 
@@ -1321,10 +1518,13 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       }
       return prev.map((c) => (c._id === chatId ? { ...c, title: nextTitle } : c))
     })
-    setActiveChatTitle((prev) => prev !== null ? nextTitle : prev)
+    updateRuntimeUiState(chatId, (prev) => ({ ...prev, activeChatTitle: nextTitle }))
+    if (activeChatIdRef.current === chatId) {
+      setActiveChatTitle((prev) => prev !== null ? nextTitle : prev)
+    }
     dispatchChatTitleUpdated({ chatId, title: nextTitle })
     return nextTitle
-  }, [])
+  }, [updateRuntimeUiState])
 
   // Called on the first message of a new chat. Immediately shows a fallback title,
   // then replaces it with the GPT OSS 20B-generated title once it arrives.
@@ -1371,16 +1571,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   useEffect(() => { if (idParam) void loadChat(idParam) }, [idParam])
 
   useEffect(() => {
-    const isStreaming =
-      chatInstances.some((c) => c.status === 'streaming' || c.status === 'submitted') ||
-      actChat.status === 'streaming' ||
-      actChat.status === 'submitted'
-    if (wasStreamingRef.current && !isStreaming && chat0.messages.length > 0) {
+    if (wasStreamingRef.current && !isActiveLoading && chat0.messages.length > 0) {
       loadSubscription()
     }
-    wasStreamingRef.current = isStreaming
+    wasStreamingRef.current = isActiveLoading
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat0.status, chat1.status, chat2.status, chat3.status, actChat.status])
+  }, [isActiveLoading, chat0.messages.length])
 
   useEffect(() => {
     if (shouldScrollRef.current) {
@@ -1434,8 +1630,8 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     const liveIdx = selectedModels.indexOf(modelId)
     const msgs =
       liveIdx >= 0
-        ? chatInstances[liveIdx].messages
-        : orphanModelThreadsRef.current.get(modelId) ?? []
+        ? activeAskChats[liveIdx].messages
+        : activeRuntime.ui.orphanModelThreads.get(modelId) ?? []
     let uCount = 0
     for (let i = 0; i < msgs.length; i++) {
       if (msgs[i].role === 'user') {
@@ -1505,23 +1701,24 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
   // ── chat management ────────────────────────────────────────────────────────
 
-  function resetChatState() {
-    setExchangeModels([])
-    setExchangeModes([])
-    setSelectedTabPerExchange([])
-    setGenerationResults(new Map())
-    setExchangeGenTypes([])
+  function clearTransientComposerState() {
     setPendingChatDocuments([])
-    lastGeneratedImageUrlRef.current = null
     setSelectedImageModels([DEFAULT_IMAGE_MODEL_ID])
     setSelectedVideoModels([DEFAULT_VIDEO_MODEL_ID])
     setReplyContext(null)
-    orphanModelThreadsRef.current.clear()
-    chatInstances.forEach((c) => c.setMessages([]))
-    actChat.setMessages([])
+    setAttachmentError(null)
+    setComposerNotice(null)
+  }
+
+  function resetRuntimeState(runtime: ConversationRuntime, uiOverrides: Partial<ConversationUiState> = {}) {
+    runtime.askChats.forEach((chat) => { chat.messages = [] })
+    runtime.actChat.messages = []
+    runtime.ui = createConversationUiState(uiOverrides)
+    runtime.hydrated = true
   }
 
   async function createNewChat(): Promise<string | null> {
+    persistActiveRuntimeUiState()
     const res = await fetch('/api/app/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1544,12 +1741,25 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         actModelId: selectedActModel,
       }
       setChats((prev) => [newChat, ...prev])
+      const runtime = ensureConversationRuntime(data.id, {
+        composerMode,
+        selectedActModel,
+        selectedModels,
+        activeChatTitle: DEFAULT_CHAT_TITLE,
+        isFirstMessage: true,
+      })
+      resetRuntimeState(runtime, {
+        composerMode,
+        selectedActModel,
+        selectedModels,
+        activeChatTitle: DEFAULT_CHAT_TITLE,
+        isFirstMessage: true,
+      })
       activeChatIdRef.current = data.id
       setActiveViewer(data.id)
       setActiveChatId(data.id)
-      setActiveChatTitle(DEFAULT_CHAT_TITLE)
-      setIsFirstMessage(true)
-      resetChatState()
+      applyUiStateToView(runtime.ui)
+      clearTransientComposerState()
       return data.id
     }
     return null
@@ -1558,29 +1768,23 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   async function loadChat(chatId: string) {
     const requestId = ++loadChatRequestRef.current
     const progressToken = begin('secondary')
+    persistActiveRuntimeUiState()
+    clearTransientComposerState()
     markRead(chatId)
     activeChatIdRef.current = chatId
     setActiveViewer(chatId)
     setActiveChatId(chatId)
+    const runtime = ensureConversationRuntime(chatId)
     const existingChat = chats.find((chat) => chat._id === chatId)
-    if (existingChat) {
-      setActiveChatTitle(existingChat.title)
-      setIsFirstMessage(existingChat.title === DEFAULT_CHAT_TITLE)
-      if (existingChat.lastMode) setComposerMode(existingChat.lastMode)
-      if (existingChat.askModelIds?.length) {
-        setSelectedModels(existingChat.askModelIds.slice(0, 4))
-        localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify(existingChat.askModelIds.slice(0, 4)))
-      }
-      if (existingChat.actModelId) {
-        setSelectedActModel(existingChat.actModelId)
-        localStorage.setItem(ACT_MODEL_KEY, existingChat.actModelId)
-      }
-    } else {
-      setActiveChatTitle(null)
-    }
     pendingTitleRef.current = null
     setIsSwitchingChat(true)
     try {
+      if (runtime.hydrated) {
+        applyUiStateToView(runtime.ui)
+        if (requestId === loadChatRequestRef.current) setIsSwitchingChat(false)
+        return
+      }
+
       const [messagesRes, outputsRes, metaRes] = await Promise.all([
         fetch(`/api/app/conversations?conversationId=${chatId}&messages=true`),
         fetch(`/api/app/outputs?conversationId=${chatId}`),
@@ -1626,8 +1830,11 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         }))
       }
 
-      setIsFirstMessage(!rawMessages.some((msg) => msg.role === 'user'))
-
+      const hasUserMessages = rawMessages.some((msg) => msg.role === 'user')
+      let resolvedTitle = existingChat?.title ?? null
+      let resolvedComposerMode = existingChat?.lastMode ?? composerMode
+      let resolvedSelectedModels = existingChat?.askModelIds?.slice(0, 4) ?? selectedModels
+      let resolvedActModel = existingChat?.actModelId ?? selectedActModel
       if (metaRes.ok) {
         const meta = await metaRes.json() as {
           title?: string
@@ -1635,14 +1842,14 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           askModelIds?: string[]
           actModelId?: string
         }
-        if (meta.title) setActiveChatTitle(meta.title)
-        if (meta.lastMode) setComposerMode(meta.lastMode)
+        if (meta.title) resolvedTitle = meta.title
+        if (meta.lastMode) resolvedComposerMode = meta.lastMode
         if (meta.askModelIds?.length) {
-          setSelectedModels(meta.askModelIds.slice(0, 4))
-          localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify(meta.askModelIds.slice(0, 4)))
+          resolvedSelectedModels = meta.askModelIds.slice(0, 4)
+          localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify(resolvedSelectedModels))
         }
         if (meta.actModelId) {
-          setSelectedActModel(meta.actModelId)
+          resolvedActModel = meta.actModelId
           localStorage.setItem(ACT_MODEL_KEY, meta.actModelId)
         }
       }
@@ -1690,8 +1897,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         if (cur) exchanges.push(cur)
       }
 
-      setExchangeModes(exchanges.map((e) => e.mode))
-
+      const exchangeModesFromServer = exchanges.map((e) => e.mode)
       const uniqueModels: string[] = []
       for (const ex of exchanges) {
         for (const { model } of ex.responses) {
@@ -1699,7 +1905,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         }
       }
 
-      resetChatState()
+      resetRuntimeState(runtime)
 
       if (uniqueModels.length === 0) {
         const linear: RawMsg[] = []
@@ -1708,11 +1914,11 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           for (const r of ex.responses) linear.push(r.msg)
         }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        chat0.setMessages(linear as any)
+        runtime.askChats[0].messages = linear as any
       } else {
         const slotModels = uniqueModels.slice(0, 4)
-        setSelectedModels(slotModels)
         localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify(slotModels))
+        resolvedSelectedModels = slotModels
 
         slotModels.forEach((modelId, slotIdx) => {
           const msgs: RawMsg[] = []
@@ -1727,10 +1933,8 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             }
           }
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          chatInstances[slotIdx].setMessages(msgs as any)
+          runtime.askChats[slotIdx].messages = msgs as any
         })
-
-        setExchangeModels(exchanges.map((ex) => ex.responses.map((r) => r.model)))
       }
 
       const actLinear: RawMsg[] = []
@@ -1740,7 +1944,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         if (ex.responses[0]) actLinear.push(ex.responses[0].msg)
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      actChat.setMessages(actLinear as any)
+      runtime.actChat.messages = actLinear as any
 
       const restoredGenTypes: ('text' | 'image' | 'video')[] = exchanges.map(() => 'text')
       const restoredResults = new Map<number, GenerationResult[]>()
@@ -1761,10 +1965,21 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         restoredExchangeModels[idx] = group.modelIds
       }
 
-      setExchangeModels(restoredExchangeModels)
-      setSelectedTabPerExchange(exchanges.map(() => 0))
-      setExchangeGenTypes(restoredGenTypes)
-      setGenerationResults(restoredResults)
+      runtime.ui = createConversationUiState({
+        composerMode: resolvedComposerMode,
+        selectedActModel: resolvedActModel,
+        selectedModels: resolvedSelectedModels,
+        exchangeModes: exchangeModesFromServer,
+        exchangeModels: restoredExchangeModels,
+        selectedTabPerExchange: exchanges.map(() => 0),
+        activeChatTitle: resolvedTitle,
+        generationResults: restoredResults,
+        exchangeGenTypes: restoredGenTypes,
+        isFirstMessage: !hasUserMessages,
+      })
+      runtime.hydrated = true
+      if (requestId !== loadChatRequestRef.current) return
+      applyUiStateToView(runtime.ui)
     } catch { /* already cleared */ }
     finally {
       if (requestId === loadChatRequestRef.current) setIsSwitchingChat(false)
@@ -1794,6 +2009,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         window.setTimeout(() => setComposerNotice(null), 5000)
         return
       }
+      runtimesRef.current.delete(cid)
       await loadChat(cid)
     } catch {
       setComposerNotice('Could not delete this turn.')
@@ -1806,10 +2022,18 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   async function deleteChat(chatId: string, e: React.MouseEvent) {
     e.stopPropagation()
     await fetch(`/api/app/conversations?conversationId=${chatId}`, { method: 'DELETE' })
+    runtimesRef.current.delete(chatId)
     if (activeChatId === chatId) {
       setActiveChatId(null)
+      activeChatIdRef.current = null
       pendingTitleRef.current = null
-      resetChatState()
+      applyUiStateToView(createConversationUiState({
+        composerMode,
+        selectedActModel,
+        selectedModels,
+      }))
+      clearTransientComposerState()
+      setActiveViewer(null)
     }
     await loadChats()
   }
@@ -1892,7 +2116,13 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     const replyCtxSnapshot = replyContext
     const text = input.trim()
     const hasReadyDocs = pendingChatDocuments.some((d) => d.status === 'ready')
-    if (isAnyLoading) return
+    const composerModeSnapshot = composerMode
+    const selectedModelsSnapshot = [...selectedModels]
+    const selectedActModelSnapshot = selectedActModel
+    const activeChatTitleSnapshot = activeChatTitle
+    const selectedImageModelsSnapshot = [...selectedImageModels]
+    const selectedVideoModelsSnapshot = [...selectedVideoModels]
+    if (isActiveLoading) return
 
     if (pendingChatDocuments.some((d) => d.status === 'uploading')) {
       setAttachmentError('Wait for documents to finish indexing.')
@@ -1909,6 +2139,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       if (isSendBlocked) return
       const chatId = activeChatId || await createNewChat()
       if (!chatId) return
+      const targetRuntime = ensureConversationRuntime(chatId)
 
       setInput('')
       setGenerationChip(null)
@@ -1923,17 +2154,24 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           : text
 
       // Inject a placeholder user message into the primary chat slot so the exchange renders
-      const exchIdx = exchangeModels.length
+      const exchIdx = targetRuntime.ui.exchangeModels.length
       const mediaTurnId = crypto.randomUUID()
-      const activeModels = effectiveGenType === 'image' ? selectedImageModels : selectedVideoModels
-      setExchangeModes((prev) => [...prev, composerMode])
-      setExchangeModels((prev) => [...prev, [...activeModels]])
-      setSelectedTabPerExchange((prev) => [...prev, 0])
-      setExchangeGenTypes((prev) => [...prev, effectiveGenType])
-      setGenerationResults((prev) => {
-        const next = new Map(prev)
-        next.set(exchIdx, activeModels.map(() => ({ type: effectiveGenType as 'image' | 'video', status: 'generating' as const })))
-        return next
+      const activeModels = effectiveGenType === 'image' ? selectedImageModelsSnapshot : selectedVideoModelsSnapshot
+      updateRuntimeUiState(chatId, (prev) => {
+        const nextGenerationResults = cloneGenerationResultsMap(prev.generationResults)
+        nextGenerationResults.set(
+          exchIdx,
+          activeModels.map(() => ({ type: effectiveGenType as 'image' | 'video', status: 'generating' as const })),
+        )
+        return {
+          ...prev,
+          exchangeModes: [...prev.exchangeModes, composerModeSnapshot],
+          exchangeModels: [...prev.exchangeModels, [...activeModels]],
+          selectedTabPerExchange: [...prev.selectedTabPerExchange, 0],
+          exchangeGenTypes: [...prev.exchangeGenTypes, effectiveGenType],
+          generationResults: nextGenerationResults,
+          isFirstMessage: false,
+        }
       })
 
       const mediaUserMessage = {
@@ -1949,12 +2187,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             }
           : {}),
       }
-      chatInstances.slice(0, selectedModels.length).forEach((chat) => {
-        chat.setMessages((prev) => [
-          ...prev,
+      targetRuntime.askChats.slice(0, selectedModelsSnapshot.length).forEach((chat) => {
+        chat.messages = [
+          ...chat.messages,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           mediaUserMessage as any,
-        ])
+        ]
       })
       void fetch('/api/app/conversations/message', {
         method: 'POST',
@@ -1962,11 +2200,11 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         body: JSON.stringify({
           conversationId: chatId,
           turnId: mediaTurnId,
-          mode: composerMode,
+          mode: composerModeSnapshot,
           role: 'user',
           content: text,
           parts: [{ type: 'text', text }],
-          modelId: selectedModels[0],
+          modelId: selectedModelsSnapshot[0],
           ...(replyCtxSnapshot?.replyToTurnId
             ? { replyToTurnId: replyCtxSnapshot.replyToTurnId, replySnippet: replyCtxSnapshot.snippet }
             : {}),
@@ -1976,7 +2214,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       if (wasFirst && text) startFirstMessageRename(chatId, text)
 
       if (effectiveGenType === 'image') {
-        const imageUrl = lastGeneratedImageUrlRef.current
+        const imageUrl = targetRuntime.ui.lastGeneratedImageUrl
         const generationTasks = activeModels.map((modelId, mIdx) =>
           fetch('/api/app/generate-image', {
             method: 'POST',
@@ -1986,16 +2224,43 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             .then(async (res) => {
               if (!res.ok) {
                 const err = await res.json().catch(() => ({ message: 'Generation failed' }))
-                setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'image' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'image', status: 'failed', error: (err as { message?: string }).message }; n.set(exchIdx, arr); return n })
+                updateRuntimeUiState(chatId, (prev) => {
+                  const next = cloneGenerationResultsMap(prev.generationResults)
+                  const arr = [...(next.get(exchIdx) ?? activeModels.map(() => ({ type: 'image' as const, status: 'generating' as const })))]
+                  arr[mIdx] = { type: 'image', status: 'failed', error: (err as { message?: string }).message }
+                  next.set(exchIdx, arr)
+                  return { ...prev, generationResults: next }
+                })
                 return { ok: false as const, modelId }
               }
               const data = await res.json() as { url?: string; modelUsed?: string; outputId?: string }
-              if (data.url && mIdx === 0) lastGeneratedImageUrlRef.current = data.url
-              setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'image' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'image', status: 'completed', url: data.url, modelUsed: data.modelUsed, outputId: data.outputId }; n.set(exchIdx, arr); return n })
+              updateRuntimeUiState(chatId, (prev) => {
+                const next = cloneGenerationResultsMap(prev.generationResults)
+                const arr = [...(next.get(exchIdx) ?? activeModels.map(() => ({ type: 'image' as const, status: 'generating' as const })))]
+                arr[mIdx] = {
+                  type: 'image',
+                  status: 'completed',
+                  url: data.url,
+                  modelUsed: data.modelUsed,
+                  outputId: data.outputId,
+                }
+                next.set(exchIdx, arr)
+                return {
+                  ...prev,
+                  generationResults: next,
+                  lastGeneratedImageUrl: data.url && mIdx === 0 ? data.url : prev.lastGeneratedImageUrl,
+                }
+              })
               return { ok: true as const, modelId: data.modelUsed ?? modelId }
             })
             .catch((err) => {
-              setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'image' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'image', status: 'failed', error: String(err) }; n.set(exchIdx, arr); return n })
+              updateRuntimeUiState(chatId, (prev) => {
+                const next = cloneGenerationResultsMap(prev.generationResults)
+                const arr = [...(next.get(exchIdx) ?? activeModels.map(() => ({ type: 'image' as const, status: 'generating' as const })))]
+                arr[mIdx] = { type: 'image', status: 'failed', error: String(err) }
+                next.set(exchIdx, arr)
+                return { ...prev, generationResults: next }
+              })
               return { ok: false as const, modelId }
             })
         )
@@ -2008,12 +2273,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             role: 'assistant',
             parts: [{ type: 'text', text: summary }],
           }
-          chatInstances.slice(0, selectedModels.length).forEach((chat) => {
-            chat.setMessages((prev) => [
-              ...prev,
+          targetRuntime.askChats.slice(0, selectedModelsSnapshot.length).forEach((chat) => {
+            chat.messages = [
+              ...chat.messages,
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               assistantMessage as any,
-            ])
+            ]
           })
           void fetch('/api/app/conversations/message', {
             method: 'POST',
@@ -2021,7 +2286,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             body: JSON.stringify({
               conversationId: chatId,
               turnId: mediaTurnId,
-              mode: composerMode,
+              mode: composerModeSnapshot,
               role: 'assistant',
               content: summary,
               contentType: 'text',
@@ -2038,7 +2303,13 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           })
             .then(async (res) => {
               if (!res.ok) {
-                setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'video', status: 'failed', error: 'Request failed' }; n.set(exchIdx, arr); return n })
+                updateRuntimeUiState(chatId, (prev) => {
+                  const next = cloneGenerationResultsMap(prev.generationResults)
+                  const arr = [...(next.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]
+                  arr[mIdx] = { type: 'video', status: 'failed', error: 'Request failed' }
+                  next.set(exchIdx, arr)
+                  return { ...prev, generationResults: next }
+                })
                 return { ok: false as const, modelId }
               }
               const reader = res.body?.getReader()
@@ -2056,10 +2327,28 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                   try {
                     const evt = JSON.parse(line.slice(6)) as { type: string; url?: string; modelUsed?: string; outputId?: string; error?: string }
                     if (evt.type === 'completed') {
-                      setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'video', status: 'completed', url: evt.url, modelUsed: evt.modelUsed, outputId: evt.outputId }; n.set(exchIdx, arr); return n })
+                      updateRuntimeUiState(chatId, (prev) => {
+                        const next = cloneGenerationResultsMap(prev.generationResults)
+                        const arr = [...(next.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]
+                        arr[mIdx] = {
+                          type: 'video',
+                          status: 'completed',
+                          url: evt.url,
+                          modelUsed: evt.modelUsed,
+                          outputId: evt.outputId,
+                        }
+                        next.set(exchIdx, arr)
+                        return { ...prev, generationResults: next }
+                      })
                       return { ok: true as const, modelId: evt.modelUsed ?? modelId }
                     } else if (evt.type === 'failed') {
-                      setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'video', status: 'failed', error: evt.error }; n.set(exchIdx, arr); return n })
+                      updateRuntimeUiState(chatId, (prev) => {
+                        const next = cloneGenerationResultsMap(prev.generationResults)
+                        const arr = [...(next.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]
+                        arr[mIdx] = { type: 'video', status: 'failed', error: evt.error }
+                        next.set(exchIdx, arr)
+                        return { ...prev, generationResults: next }
+                      })
                       return { ok: false as const, modelId }
                     }
                   } catch { /* ignore */ }
@@ -2068,7 +2357,13 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
               return { ok: false as const, modelId }
             })
             .catch((err) => {
-              setGenerationResults((prev) => { const n = new Map(prev); const arr = [...(n.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]; arr[mIdx] = { type: 'video', status: 'failed', error: String(err) }; n.set(exchIdx, arr); return n })
+              updateRuntimeUiState(chatId, (prev) => {
+                const next = cloneGenerationResultsMap(prev.generationResults)
+                const arr = [...(next.get(exchIdx) ?? activeModels.map(() => ({ type: 'video' as const, status: 'generating' as const })))]
+                arr[mIdx] = { type: 'video', status: 'failed', error: String(err) }
+                next.set(exchIdx, arr)
+                return { ...prev, generationResults: next }
+              })
               return { ok: false as const, modelId }
             })
         )
@@ -2081,12 +2376,12 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             role: 'assistant',
             parts: [{ type: 'text', text: summary }],
           }
-          chatInstances.slice(0, selectedModels.length).forEach((chat) => {
-            chat.setMessages((prev) => [
-              ...prev,
+          targetRuntime.askChats.slice(0, selectedModelsSnapshot.length).forEach((chat) => {
+            chat.messages = [
+              ...chat.messages,
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               assistantMessage as any,
-            ])
+            ]
           })
           void fetch('/api/app/conversations/message', {
             method: 'POST',
@@ -2094,7 +2389,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             body: JSON.stringify({
               conversationId: chatId,
               turnId: mediaTurnId,
-              mode: composerMode,
+              mode: composerModeSnapshot,
               role: 'assistant',
               content: summary,
               contentType: 'text',
@@ -2118,6 +2413,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     const wasFirst = isFirstMessage
     const chatId = activeChatId || await createNewChat()
     if (!chatId) return
+    const targetRuntime = ensureConversationRuntime(chatId)
 
     shouldScrollRef.current = true
     const textTurnId = crypto.randomUUID()
@@ -2166,25 +2462,30 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       startFirstMessageRename(chatId, text || indexedFileNames[0] || 'Documents')
     }
 
-    const msgCountBeforeSend = chat0.messages.length
+    const msgCountBeforeSend = targetRuntime.askChats[0].messages.length
     activeChatIdRef.current = chatId
 
-    if (composerMode === 'act') {
-      setExchangeModes((prev) => [...prev, 'act'])
-      setExchangeModels((prev) => [...prev, [selectedActModel]])
-      setSelectedTabPerExchange((prev) => [...prev, 0])
-      setExchangeGenTypes((prev) => [...prev, 'text'])
+    if (composerModeSnapshot === 'act') {
+      updateRuntimeUiState(chatId, (prev) => ({
+        ...prev,
+        exchangeModes: [...prev.exchangeModes, 'act'],
+        exchangeModels: [...prev.exchangeModels, [selectedActModelSnapshot]],
+        selectedTabPerExchange: [...prev.selectedTabPerExchange, 0],
+        exchangeGenTypes: [...prev.exchangeGenTypes, 'text'],
+        isFirstMessage: false,
+      }))
 
-      startSession(chatId, 'act', activeChatTitle ?? '', msgCountBeforeSend)
+      startSession(chatId, 'act', activeChatTitleSnapshot ?? '', msgCountBeforeSend)
 
       // Assistant replies stream only into actChat; chat0 would still be user-only without this.
       // Base the next transcript on actChat so prior act assistant messages are not dropped.
       const actThreadBase: UIMessage[] =
-        actChat.messages.length > 0 ? actChat.messages : chat0.messages
+        targetRuntime.actChat.messages.length > 0
+          ? targetRuntime.actChat.messages
+          : targetRuntime.askChats[0].messages
       const nextTranscript = [...actThreadBase, userUIMessage as UIMessage]
-      chat0.setMessages(nextTranscript)
-      // actChat.sendMessage({ messageId }) resolves the id against actChat.messages — keep in sync with chat0
-      actChat.setMessages(nextTranscript)
+      targetRuntime.askChats[0].messages = nextTranscript
+      targetRuntime.actChat.messages = nextTranscript
 
       setInput('')
       setAttachedImages([])
@@ -2194,7 +2495,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
       setIsFirstMessage(false)
 
       /* eslint-disable @typescript-eslint/no-explicit-any -- UIMessage / sendMessage payload */
-      void actChat.sendMessage(
+      void targetRuntime.actChat.sendMessage(
         {
           role: 'user',
           parts: partsForModel as any,
@@ -2205,7 +2506,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           body: {
             conversationId: chatId,
             turnId: textTurnId,
-            modelId: selectedActModel,
+            modelId: selectedActModelSnapshot,
             ...(indexedFileNames.length > 0 ? { indexedFileNames } : {}),
             ...(replyCtxSnapshot?.bodyForModel ? { replyContextForModel: replyCtxSnapshot.bodyForModel } : {}),
           },
@@ -2214,32 +2515,39 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
         .then(() => {
           completeSession(chatId, activeChatIdRef.current === chatId)
           loadChats()
+          loadSubscription()
         })
         .catch((err) => {
           console.error('[ChatInterface] Act sendMessage failed', err)
           completeSession(chatId, activeChatIdRef.current === chatId)
-          setComposerNotice(
-            err instanceof Error ? err.message : 'Could not complete Act request. Try again.',
-          )
-          window.setTimeout(() => setComposerNotice(null), 8000)
+          if (activeChatIdRef.current === chatId) {
+            setComposerNotice(
+              err instanceof Error ? err.message : 'Could not complete Act request. Try again.',
+            )
+            window.setTimeout(() => setComposerNotice(null), 8000)
+          }
         })
       /* eslint-enable @typescript-eslint/no-explicit-any */
       return
     }
 
-    setExchangeModes((prev) => [...prev, 'ask'])
-    setExchangeModels((prev) => [...prev, [...selectedModels]])
-    setSelectedTabPerExchange((prev) => [...prev, 0])
-    setExchangeGenTypes((prev) => [...prev, 'text'])
+    updateRuntimeUiState(chatId, (prev) => ({
+      ...prev,
+      exchangeModes: [...prev.exchangeModes, 'ask'],
+      exchangeModels: [...prev.exchangeModels, [...selectedModelsSnapshot]],
+      selectedTabPerExchange: [...prev.selectedTabPerExchange, 0],
+      exchangeGenTypes: [...prev.exchangeGenTypes, 'text'],
+      isFirstMessage: false,
+    }))
 
-    startSession(chatId, 'ask', activeChatTitle ?? '', msgCountBeforeSend)
+    startSession(chatId, 'ask', activeChatTitleSnapshot ?? '', msgCountBeforeSend)
 
-    const multiAsk = selectedModels.length > 1
-    selectedModels.forEach((_, idx) => {
+    const multiAsk = selectedModelsSnapshot.length > 1
+    selectedModelsSnapshot.forEach((_, idx) => {
       const variantUserId = multiAsk ? `${textTurnId}::v${idx}` : textTurnId
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const u = { ...userUIMessage, id: variantUserId } as any
-      chatInstances[idx].setMessages((prev) => [...prev, u])
+      targetRuntime.askChats[idx].messages = [...targetRuntime.askChats[idx].messages, u]
     })
 
     setInput('')
@@ -2261,7 +2569,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
           role: 'user',
           content: persistedContent,
           parts: partsForPersist,
-          modelId: selectedModels[0],
+          modelId: selectedModelsSnapshot[0],
           ...(replyCtxSnapshot?.replyToTurnId
             ? { replyToTurnId: replyCtxSnapshot.replyToTurnId, replySnippet: replyCtxSnapshot.snippet }
             : {}),
@@ -2277,8 +2585,8 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
 
     /* eslint-disable @typescript-eslint/no-explicit-any -- UIMessage / sendMessage payload */
     void Promise.all(
-      selectedModels.map((modelId, idx) =>
-        chatInstances[idx].sendMessage(
+      selectedModelsSnapshot.map((modelId, idx) =>
+        targetRuntime.askChats[idx].sendMessage(
           {
             role: 'user',
             parts: partsForModel as any,
@@ -2301,6 +2609,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     ).then(() => {
       completeSession(chatId, activeChatIdRef.current === chatId)
       loadChats()
+      loadSubscription()
     })
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
@@ -2311,22 +2620,22 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     localStorage.setItem(CHAT_GEN_MODE_KEY, mode)
   }, [])
 
-  const isAnyLoadingRef = useRef(isAnyLoading)
-  isAnyLoadingRef.current = isAnyLoading
+  const isActiveLoadingRef = useRef(isActiveLoading)
+  isActiveLoadingRef.current = isActiveLoading
 
   useEffect(() => {
     function onGlobalKeyDown(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey
 
       if (meta && e.shiftKey && (e.key === '/' || e.key === '?')) {
-        if (isAnyLoadingRef.current) return
+        if (isActiveLoadingRef.current) return
         e.preventDefault()
         setShowModelPicker((v) => !v)
         return
       }
 
       if (meta && e.shiftKey && e.key === '.') {
-        if (isAnyLoadingRef.current) return
+        if (isActiveLoadingRef.current) return
         e.preventDefault()
         setGenerationMode((prev) => {
           const order: GenerationMode[] = ['text', 'image', 'video']
@@ -2353,7 +2662,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
   }, [])
 
   function toggleModel(modelId: string) {
-    if (isAnyLoading || composerMode === 'act') return
+    if (isActiveLoading || composerMode === 'act') return
     const isSelected = selectedModels.includes(modelId)
     if (isSelected) {
       if (selectedModels.length === 1) return
@@ -2372,9 +2681,9 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
     }
   }
 
-  function stopAll() {
-    chatInstances.slice(0, selectedModels.length).forEach((c) => c.stop())
-    actChat.stop()
+  function stopActiveChat() {
+    activeAskChats.slice(0, selectedModels.length).forEach((chat) => chat.stop())
+    activeRuntime.actChat.stop()
   }
 
   // ── derived values for header ─────────────────────────────────────────────
@@ -2512,10 +2821,10 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
               <DelayedTooltip label="Choose model (⇧⌘/)" side="bottom">
                 <button
                   type="button"
-                  onClick={() => !isAnyLoading && setShowModelPicker((v) => !v)}
-                  disabled={isAnyLoading}
+                  onClick={() => !isActiveLoading && setShowModelPicker((v) => !v)}
+                  disabled={isActiveLoading}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs bg-[#f0f0f0] transition-colors ${
-                    isAnyLoading ? 'text-[#aaa] cursor-not-allowed' : 'text-[#525252] hover:bg-[#e8e8e8]'
+                    isActiveLoading ? 'text-[#aaa] cursor-not-allowed' : 'text-[#525252] hover:bg-[#e8e8e8]'
                   }`}
                 >
                   {modelPickerLabel}
@@ -2612,7 +2921,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
             </div>
             <DelayedTooltip label="Cycle text / image / video (⇧⌘.)" side="bottom">
               <span className="inline-flex">
-                <GenerationModeToggle mode={generationMode} onChange={handleModeChange} disabled={isAnyLoading} />
+                <GenerationModeToggle mode={generationMode} onChange={handleModeChange} disabled={isActiveLoading} />
               </span>
             </DelayedTooltip>
           </div>
@@ -2864,7 +3173,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                     exchModelList={exchModelList}
                     selectedTab={selectedTab}
                     onTabSelect={(tabIdx) => handleTabSelect(curExchIdx, tabIdx)}
-                    isLoadingTabs={isAnyLoading}
+                    isLoadingTabs={isActiveLoading}
                     responseInProgress={instLoading}
                     sourceCitations={sourceCitations}
                     turnIdForActions={textTurnIdForActions}
@@ -2876,7 +3185,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                     onReply={() =>
                       beginReplyToAssistantText(assistantPlainForReply, getUserTurnId(msg))
                     }
-                    actionsLocked={isLatest && isAnyLoading}
+                    actionsLocked={isLatest && isActiveLoading}
                     isExiting={textIsExiting}
                     replyThreadMeta={getUserReplyThreadMeta(msg)}
                     onJumpToReply={jumpToReplyTarget}
@@ -2952,7 +3261,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                 {composerNotice}
               </div>
             )}
-            {isSendBlocked && !isAnyLoading ? (
+            {isSendBlocked && !isActiveLoading ? (
               <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-[#fafafa] border border-[#e5e5e5] text-xs text-[#888]">
                 <AlertCircle size={13} className="text-amber-500 shrink-0" />
                 {weeklyLimitReached
@@ -3085,7 +3394,7 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                       <AskActModeToggle
                         mode={composerMode}
                         onChange={handleComposerModeChange}
-                        disabled={isAnyLoading}
+                        disabled={isActiveLoading}
                       />
                     </span>
                   </DelayedTooltip>
@@ -3100,11 +3409,11 @@ export default function ChatInterface({ userId: _userId, hideSidebar, projectNam
                   )}
                   <div className="min-w-0 flex-1" />
                   <div className="flex shrink-0 items-center gap-2">
-                    {isAnyLoading ? (
+                    {isActiveLoading ? (
                       <DelayedTooltip label="Stop generating" side="top">
                         <button
                           type="button"
-                          onClick={stopAll}
+                          onClick={stopActiveChat}
                           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#0a0a0a] text-[#fafafa] transition-colors hover:bg-[#333]"
                         >
                           <div className="h-3.5 w-3.5 rounded-sm bg-[#fafafa]" />
