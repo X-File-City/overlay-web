@@ -1,0 +1,322 @@
+{
+  "id": "overlay-onboarding",
+  "title": "Overlay Codebase Onboarding",
+  "description": "A guided tour of the Overlay web application — a Next.js + Convex full-stack AI workspace with chat, knowledge management, media generation, and hosted computers.",
+  "version": "1.0.0",
+  "audience": "New Developers",
+  "prerequisites": [
+    "Familiarity with Next.js App Router",
+    "Basic understanding of React and TypeScript",
+    "Awareness of serverless backends (Convex)"
+  ],
+  "steps": [
+    {
+      "id": "step-1-overview",
+      "title": "Welcome to Overlay",
+      "description": "Overlay is a full-stack AI workspace built with Next.js 15 and Convex. It provides multi-model AI chat, voice transcription, knowledge search, note-taking, media generation, and hosted computer sessions — all in one app. This tour walks you through the key areas of the codebase.",
+      "estimatedTime": 60,
+      "colorMode": "fileTypes"
+    },
+    {
+      "id": "step-2-frontend-routing",
+      "title": "Frontend — App Router",
+      "description": "The App Router is organized into three route groups: the public marketing site (pricing, manifesto, privacy, terms), public feature pages, and the authenticated workspace. Authentication is handled by WorkOS — unauthenticated users are redirected to the sign-in page.",
+      "estimatedTime": 120,
+      "focusDirectory": "src/app",
+      "highlightLayers": [
+        {
+          "id": "public-routes",
+          "name": "Public Pages",
+          "color": "#10b981",
+          "items": [
+            { "path": "src/app/home", "type": "directory" },
+            { "path": "src/app/pricing", "type": "directory" },
+            { "path": "src/app/manifesto", "type": "directory" },
+            { "path": "src/app/privacy", "type": "directory" },
+            { "path": "src/app/terms", "type": "directory" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "auth-workspace",
+          "name": "Authenticated Workspace",
+          "color": "#3b82f6",
+          "items": [
+            { "path": "src/app/app", "type": "directory" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "api-routes",
+          "name": "API Routes",
+          "color": "#f59e0b",
+          "items": [
+            { "path": "src/app/api", "type": "directory" }
+          ],
+          "opacity": 0.7
+        }
+      ],
+      "colorMode": "fileTypes"
+    },
+    {
+      "id": "step-3-ui-components",
+      "title": "UI Components",
+      "description": "Chat Core is the heart of the product — multi-model conversations with tool calling and streaming responses. Workspace Views cover hosted desktops, the knowledge base, the notebook editor, memories, and generated outputs. Navigation and Layout provides the sidebar and project organization.",
+      "estimatedTime": 120,
+      "focusDirectory": "src/components",
+      "highlightLayers": [
+        {
+          "id": "chat-core",
+          "name": "Chat Core",
+          "color": "#8b5cf6",
+          "items": [
+            { "path": "src/components/app/ChatInterface.tsx", "type": "file" },
+            { "path": "src/components/app/VoiceRecorder.tsx", "type": "file" },
+            { "path": "src/components/app/MarkdownMessage.tsx", "type": "file" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "workspace-views",
+          "name": "Workspace Views",
+          "color": "#ec4899",
+          "items": [
+            { "path": "src/components/app/ComputerView.tsx", "type": "file" },
+            { "path": "src/components/app/KnowledgeView.tsx", "type": "file" },
+            { "path": "src/components/app/NotebookEditor.tsx", "type": "file" },
+            { "path": "src/components/app/MemoriesView.tsx", "type": "file" },
+            { "path": "src/components/app/OutputsView.tsx", "type": "file" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "navigation",
+          "name": "Navigation & Layout",
+          "color": "#06b6d4",
+          "items": [
+            { "path": "src/components/app/AppSidebar.tsx", "type": "file" },
+            { "path": "src/components/app/ProjectsSidebar.tsx", "type": "file" },
+            { "path": "src/components/app/ToolsSidebar.tsx", "type": "file" }
+          ],
+          "opacity": 0.7
+        }
+      ],
+      "colorMode": "fileTypes"
+    },
+    {
+      "id": "step-4-core-library",
+      "title": "Core Library",
+      "description": "Shared business logic lives here. AI and Models defines the model catalog, token cost calculation, and gateway routing. Auth and Billing covers WorkOS authentication and Stripe payment processing. Integrations handles external tool connections through Composio and the OpenClaw gateway for hosted computers.",
+      "estimatedTime": 120,
+      "focusDirectory": "src/lib",
+      "highlightLayers": [
+        {
+          "id": "ai-models",
+          "name": "AI & Models",
+          "color": "#f59e0b",
+          "items": [
+            { "path": "src/lib/models.ts", "type": "file" },
+            { "path": "src/lib/model-pricing.ts", "type": "file" },
+            { "path": "src/lib/ai-gateway.ts", "type": "file" },
+            { "path": "src/lib/openrouter-service.ts", "type": "file" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "auth-billing",
+          "name": "Auth & Billing",
+          "color": "#ef4444",
+          "items": [
+            { "path": "src/lib/workos-auth.ts", "type": "file" },
+            { "path": "src/lib/stripe.ts", "type": "file" },
+            { "path": "src/lib/app-api-auth.ts", "type": "file" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "integrations",
+          "name": "Integrations",
+          "color": "#10b981",
+          "items": [
+            { "path": "src/lib/composio-tools.ts", "type": "file" },
+            { "path": "src/lib/computer-openclaw.ts", "type": "file" },
+            { "path": "src/lib/computer-commands.ts", "type": "file" }
+          ],
+          "opacity": 0.7
+        }
+      ],
+      "colorMode": "fileTypes"
+    },
+    {
+      "id": "step-5-tool-system",
+      "title": "AI Tool Execution System",
+      "description": "The engine behind Overlay's AI capabilities. Orchestration coordinates the Ask and Act modes — Ask is read-only (knowledge search, memory recall) while Act enables full mutations (create notes, save memories, computer commands). Tool Implementations contains the executors: built-in Overlay tools, computer and browser automation, notes, and Composio integrations.",
+      "estimatedTime": 120,
+      "focusDirectory": "src/lib/tools",
+      "highlightLayers": [
+        {
+          "id": "tool-orchestration",
+          "name": "Orchestration",
+          "color": "#3b82f6",
+          "items": [
+            { "path": "src/lib/tools/build.ts", "type": "file" },
+            { "path": "src/lib/tools/policy.ts", "type": "file" },
+            { "path": "src/lib/tools/types.ts", "type": "file" },
+            { "path": "src/lib/tools/tool-buckets.ts", "type": "file" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "tool-implementations",
+          "name": "Tool Implementations",
+          "color": "#a855f7",
+          "items": [
+            { "path": "src/lib/tools/overlay-executes.ts", "type": "file" },
+            { "path": "src/lib/tools/computer-executes.ts", "type": "file" },
+            { "path": "src/lib/tools/browser-executes.ts", "type": "file" },
+            { "path": "src/lib/tools/notes-executes.ts", "type": "file" },
+            { "path": "src/lib/tools/composio-filter.ts", "type": "file" }
+          ],
+          "opacity": 0.7
+        }
+      ],
+      "colorMode": "fileTypes"
+    },
+    {
+      "id": "step-6-api-routes",
+      "title": "API Routes — Server Actions",
+      "description": "The AI Conversation Endpoints are the two most critical routes — one for read-only Ask mode with knowledge retrieval, and one for Act mode with full tool execution. Knowledge and Files handles uploads and hybrid search combining vector similarity with keyword matching. Authentication manages sign-in, OAuth callbacks, and session lifecycle.",
+      "estimatedTime": 120,
+      "focusDirectory": "src/app/api",
+      "highlightLayers": [
+        {
+          "id": "ai-endpoints",
+          "name": "AI Conversation Endpoints",
+          "color": "#8b5cf6",
+          "items": [
+            { "path": "src/app/api/app/conversations", "type": "directory" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "knowledge-files",
+          "name": "Knowledge & Files",
+          "color": "#10b981",
+          "items": [
+            { "path": "src/app/api/app/knowledge", "type": "directory" },
+            { "path": "src/app/api/app/files", "type": "directory" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "auth-endpoints",
+          "name": "Authentication",
+          "color": "#ef4444",
+          "items": [
+            { "path": "src/app/api/auth", "type": "directory" }
+          ],
+          "opacity": 0.7
+        }
+      ],
+      "colorMode": "fileTypes"
+    },
+    {
+      "id": "step-7-convex-backend",
+      "title": "Convex Backend",
+      "description": "The serverless backend powers all of Overlay's data and logic. The Data Model defines every table — subscriptions, conversations, messages, notes, memories, knowledge chunks with vector embeddings, files, computers, and usage tracking. Core Modules implement queries, mutations, and actions across those tables. Billing and Infrastructure handles payments, credit tracking, and a state machine for provisioning hosted VMs.",
+      "estimatedTime": 180,
+      "focusDirectory": "convex",
+      "highlightLayers": [
+        {
+          "id": "data-model",
+          "name": "Data Model",
+          "color": "#ef4444",
+          "items": [
+            { "path": "convex/schema.ts", "type": "file" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "core-modules",
+          "name": "Core Modules",
+          "color": "#3b82f6",
+          "items": [
+            { "path": "convex/conversations.ts", "type": "file" },
+            { "path": "convex/knowledge.ts", "type": "file" },
+            { "path": "convex/memories.ts", "type": "file" },
+            { "path": "convex/notes.ts", "type": "file" },
+            { "path": "convex/files.ts", "type": "file" },
+            { "path": "convex/users.ts", "type": "file" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "billing-infra",
+          "name": "Billing & Infrastructure",
+          "color": "#f59e0b",
+          "items": [
+            { "path": "convex/subscriptions.ts", "type": "file" },
+            { "path": "convex/stripe.ts", "type": "file" },
+            { "path": "convex/usage.ts", "type": "file" },
+            { "path": "convex/computers.ts", "type": "file" }
+          ],
+          "opacity": 0.7
+        }
+      ],
+      "colorMode": "fileTypes"
+    },
+    {
+      "id": "step-8-config-infra",
+      "title": "Configuration & Infrastructure",
+      "description": "The Configuration group at the project root controls the build pipeline, TypeScript strict mode with path aliases, linting rules, and dependency management. Observability is powered by Sentry for error tracking, Vercel Analytics for performance, and Mixpanel for product analytics. The highlighted instrumentation files initialize server-side and client-side monitoring at startup.",
+      "estimatedTime": 60,
+      "focusDirectory": "",
+      "highlightLayers": [
+        {
+          "id": "config-files",
+          "name": "Configuration",
+          "color": "#6366f1",
+          "items": [
+            { "path": "package.json", "type": "file" },
+            { "path": "next.config.ts", "type": "file" },
+            { "path": "tsconfig.json", "type": "file" },
+            { "path": "eslint.config.mjs", "type": "file" }
+          ],
+          "opacity": 0.7
+        },
+        {
+          "id": "observability",
+          "name": "Observability",
+          "color": "#f97316",
+          "items": [
+            { "path": "src/instrumentation.ts", "type": "file" },
+            { "path": "src/instrumentation-client.ts", "type": "file" },
+            { "path": "src/sentry.server.config.ts", "type": "file" },
+            { "path": "src/sentry.edge.config.ts", "type": "file" }
+          ],
+          "opacity": 0.7
+        }
+      ],
+      "colorMode": "fileTypes"
+    },
+    {
+      "id": "step-9-full-picture",
+      "title": "The Full Picture",
+      "description": "You've now seen the major layers of Overlay: the frontend (routing, components, API routes), the shared library (models, tools, auth, integrations), and the serverless backend (data model, real-time queries, billing). The key data flow is: the user sends a message, the chat interface calls the appropriate API route, which builds a tool set, streams a response from the AI model, executes any tool calls, persists the result, and pushes a real-time update back to the UI.",
+      "estimatedTime": 60,
+      "focusDirectory": "",
+      "colorMode": "fileTypes"
+    }
+  ],
+  "metadata": {
+    "author": "Overlay Team",
+    "createdAt": "2026-03-26T00:00:00.000Z",
+    "tags": [
+      "onboarding",
+      "next-js",
+      "convex",
+      "ai-workspace",
+      "full-stack"
+    ]
+  }
+}
