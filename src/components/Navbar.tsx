@@ -118,7 +118,7 @@ export function Navbar({ scrollYProgress }: NavbarProps) {
           style={{ opacity: logoOpacity, x: logoX, pointerEvents: logoPointerEvents }}
           className="absolute left-0 top-1/2 -translate-y-1/2"
         >
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/home" className="flex items-center gap-2">
             <Image
               src="/assets/overlay-logo.png"
               alt="Overlay"

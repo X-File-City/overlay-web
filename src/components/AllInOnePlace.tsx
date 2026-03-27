@@ -268,7 +268,7 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
             exit={{ opacity: 0, x: -40 }}
             transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
             className="fixed left-0 top-1/2 -translate-y-1/2 z-10"
-            style={{ marginLeft: "-180px" }}
+            style={{ marginLeft: "-280px" }}
           >
             {!imageErrors.has('note') && (
               <Image
@@ -295,7 +295,7 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
             exit={{ opacity: 0, y: -40 }}
             transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
             className="fixed left-1/2 -translate-x-1/2 top-0 z-60"
-            style={{ marginTop: "-260px" }}
+            style={{ marginTop: "-440px" }}
           >
             {!imageErrors.has('chat') && (
               <Image
@@ -322,7 +322,7 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
             exit={{ opacity: 0, x: 40 }}
             transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
             className="fixed right-0 top-1/2 -translate-y-1/2 z-10"
-            style={{ marginRight: "-200px" }}
+            style={{ marginRight: "-300px" }}
           >
             {!imageErrors.has('browser') && (
               <Image
@@ -349,7 +349,7 @@ export function AllInOnePlace({ scrollProgress = 0, isActive = false }: AllInOne
             exit={{ opacity: 0, y: 40 }}
             transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
             className="fixed left-1/2 -translate-x-1/2 bottom-0 z-10 cursor-pointer"
-            style={{ marginBottom: "-120px" }}
+            style={{ marginBottom: "-180px" }}
             onClick={resetTranscription}
           >
             {!imageErrors.has('transcription') && (

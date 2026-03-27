@@ -13,7 +13,7 @@ export function PageNavbar() {
     <header className="relative z-10 py-6 px-8">
       <nav className="max-w-6xl mx-auto flex items-center justify-between">
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-2">
+        <Link href="/home" className="flex items-center gap-2">
           <Image
             src="/assets/overlay-logo.png"
             alt="Overlay"

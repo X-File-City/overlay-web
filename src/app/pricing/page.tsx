@@ -31,37 +31,36 @@ const tiers: Tier[] = [
     name: 'Free',
     price: '$0',
     period: 'forever',
-    description: 'Get started with essential features',
+    description: 'Start with the core web app experience',
     icon: Zap,
     features: [
-      { name: 'Unlimited notes (non-AI)', included: true },
-      { name: 'Unlimited browser (non-AI)', included: true },
-      { name: '10 min cloud transcription/week', included: true },
-      { name: '5 Ask messages/day', included: true },
-      { name: '5 Agent messages/day', included: true },
-      { name: '5 Write messages/day', included: true },
-      { name: 'OpenRouter Free Router (auto) only', included: true },
+      { name: 'Unlimited auto messages', included: true },
+      { name: 'Notes, chats, and browser workspace', included: true },
+      { name: 'Basic AI tools', included: true },
+      { name: 'Standard model access', included: true },
       { name: 'Premium AI models', included: false },
-      { name: 'Cloud sync', included: false },
-      { name: 'Priority support', included: false }
+      { name: 'Search, image generation, and video generation', included: false },
+      { name: 'Advanced agents and premium workflows', included: false }
     ],
-    cta: 'Download Free',
-    ctaLink: '/api/latest-release/download',
+    cta: 'Start Free',
+    ctaLink: '/auth/sign-in?redirect=%2Fapp%2Fchat',
     highlighted: false
   },
   {
     name: 'Pro',
     price: '$20',
     period: '/month',
-    description: 'For power users who need more',
+    description: 'For people who want the full web app toolkit',
     icon: Crown,
     features: [
       { name: 'Everything in Free', included: true },
-      { name: 'Unlimited transcription', included: true },
-      { name: 'Unlimited OpenRouter Free Router usage', included: true },
+      { name: 'Search', included: true },
+      { name: 'Image generation', included: true },
+      { name: 'Video generation', included: true },
+      { name: 'More powerful agents', included: true },
       { name: 'Premium AI models', included: true, detail: '$10 token budget/mo' },
       { name: 'Prompt caching (save up to 90%)', included: true },
-      { name: 'Cloud jobs (coming soon)', included: true },
+      { name: 'Priority access to new tools', included: true },
       { name: 'Cloud sync', included: false },
       { name: 'Priority support', included: false }
     ],
@@ -73,12 +72,13 @@ const tiers: Tier[] = [
     name: 'Max',
     price: '$100',
     period: '/month',
-    description: 'For teams and heavy users',
+    description: 'Everything in Pro, plus more capacity and access',
     icon: Sparkles,
     features: [
       { name: 'Everything in Pro', included: true },
       { name: 'Premium AI models', included: true, detail: '$90 token budget/mo' },
-      { name: '10x cloud jobs', included: true },
+      { name: 'Higher limits across advanced tools', included: true },
+      { name: 'More agent capacity and premium workflows', included: true },
       { name: 'Cloud sync (coming soon)', included: true },
       { name: 'Priority support', included: true },
       { name: 'Early access to features', included: true },
@@ -200,7 +200,7 @@ export default function PricingPage() {
               Simple, transparent pricing
             </h1>
             <p className="text-lg text-zinc-500 max-w-2xl mx-auto">
-              Start free, upgrade when you need more. All plans include the core overlay experience.
+              Start free, upgrade when you need more, and unlock the tools that match how you work on the web.
             </p>
             
             {/* Auth status banner */}
@@ -279,21 +279,6 @@ export default function PricingPage() {
                                         (currentTier !== 'free' && tier.name === 'Free')
                     const canUpgrade = tierAction && !isCurrentTier && !isDowngrade
                     
-                    if (tier.ctaLink) {
-                      return (
-                        <a
-                          href={tier.ctaLink}
-                          className={`block w-full py-3 px-4 rounded-lg text-center text-sm font-medium transition-all ${
-                            tier.highlighted
-                              ? 'bg-[var(--foreground)] text-[var(--background)] hover:opacity-90'
-                              : 'bg-[var(--border)] hover:bg-[var(--muted-light)] hover:text-white'
-                          }`}
-                        >
-                          {tier.cta}
-                        </a>
-                      )
-                    }
-                    
                     if (isCurrentTier && isAuthenticated) {
                       return (
                         <div className="w-full py-3 px-4 rounded-lg text-center text-sm font-medium bg-emerald-100 text-emerald-800 border border-emerald-300">
@@ -310,6 +295,21 @@ export default function PricingPage() {
                         >
                           Contact support to downgrade
                         </button>
+                      )
+                    }
+
+                    if (tier.ctaLink) {
+                      return (
+                        <a
+                          href={tier.ctaLink}
+                          className={`block w-full py-3 px-4 rounded-lg text-center text-sm font-medium transition-all ${
+                            tier.highlighted
+                              ? 'bg-[var(--foreground)] text-[var(--background)] hover:opacity-90'
+                              : 'bg-[var(--border)] hover:bg-[var(--muted-light)] hover:text-white'
+                          }`}
+                        >
+                          {tier.cta}
+                        </a>
                       )
                     }
                     
@@ -372,11 +372,11 @@ export default function PricingPage() {
                 },
                 {
                   q: 'Which models are included in Free?',
-                  a: 'Free users get unlimited access to OpenRouter’s Free Router (auto), which picks a free upstream model for each request.'
+                  a: 'Free includes standard model access for everyday use. Upgrade for premium model access and more advanced tools.'
                 },
                 {
                   q: 'Do I need to enter payment info for Free?',
-                  a: 'No. Just download the app and start using it. Upgrade when you\'re ready.'
+                  a: 'No. Create an account and start using the web app. Upgrade when you\'re ready.'
                 }
               ].map((faq, idx) => (
                 <div key={idx} className="glass-dark rounded-xl p-6">
