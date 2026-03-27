@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Instrument_Serif } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ObservabilityClient from "@/components/ObservabilityClient";
@@ -58,6 +59,7 @@ export default function RootLayout({
           </Suspense>
           {children}
         </AuthProvider>
+        <Analytics />
         <SpeedInsights />
       </body>
     </html>
